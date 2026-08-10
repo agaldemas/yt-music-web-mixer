@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Éditeurs / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code (env/local)
+.claude/settings.local.json
+
+# Serveur local éventuel
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Pas de build ni de dépendances attendues, mais au cas où :
+node_modules/
+dist/
+build/
+
+# Sauvegardes
+*.bak
+*.tmp

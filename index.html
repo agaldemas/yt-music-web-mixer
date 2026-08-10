@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YT Music Web Mixer</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- En-tête -->
+  <header class="app-header">
+    <h1>🎵 YT Music Web Mixer</h1>
+    <div class="header-actions">
+      <button id="settings-btn" class="header-btn" type="button" aria-label="Paramètres">⚙️ Paramètres</button>
+    </div>
+  </header>
+
+  <!-- Zone principale : 2 voies côte à côte -->
+  <main class="decks">
+    <!-- Voie A (gauche) -->
+    <section class="deck deck-a" data-deck="A">
+      <header class="deck-header">
+        <span class="deck-badge deck-badge-a">A</span>
+        <h2 class="deck-title">Voie A</h2>
+        <button class="deck-mute-btn" type="button" data-deck="A" aria-pressed="false">🔇 Activer le son</button>
+      </header>
+
+      <div class="deck-search">
+        <input type="search" class="search-input" data-deck="A" placeholder="Rechercher un morceau…" aria-label="Recherche voie A" />
+        <button class="search-btn" type="button" data-deck="A">🔍</button>
+      </div>
+
+      <div class="deck-results" data-deck="A" aria-live="polite">
+        <!-- Résultats de recherche injectés ici -->
+      </div>
+
+      <div class="deck-player">
+        <!-- Lecteur YouTube injecté ici -->
+        <div class="player-placeholder" data-deck="A">
+          <span>Aucune vidéo chargée</span>
+        </div>
+        <div id="player-A"><!-- iframe YouTube --></div>
+      </div>
+
+      <div class="deck-error" data-deck="A" hidden></div>
+    </section>
+
+    <!-- Voie B (droite) -->
+    <section class="deck deck-b" data-deck="B">
+      <header class="deck-header">
+        <span class="deck-badge deck-badge-b">B</span>
+        <h2 class="deck-title">Voie B</h2>
+        <button class="deck-mute-btn" type="button" data-deck="B" aria-pressed="false">🔇 Activer le son</button>
+      </header>
+
+      <div class="deck-search">
+        <input type="search" class="search-input" data-deck="B" placeholder="Rechercher un morceau…" aria-label="Recherche voie B" />
+        <button class="search-btn" type="button" data-deck="B">🔍</button>
+      </div>
+
+      <div class="deck-results" data-deck="B" aria-live="polite">
+        <!-- Résultats de recherche injectés ici -->
+      </div>
+
+      <div class="deck-player">
+        <div class="player-placeholder" data-deck="B">
+          <span>Aucune vidéo chargée</span>
+        </div>
+        <div id="player-B"><!-- iframe YouTube --></div>
+      </div>
+
+      <div class="deck-error" data-deck="B" hidden></div>
+    </section>
+  </main>
+
+  <!-- Barre de mixage fixe en bas -->
+  <footer class="mixer-bar">
+    <div class="mixer-group mixer-transport">
+      <button id="play-both" class="mixer-btn" type="button">▶️ Play both</button>
+      <button id="pause-both" class="mixer-btn" type="button">⏸️ Pause both</button>
+    </div>
+
+    <div class="mixer-group mixer-crossfade">
+      <label for="crossfade" class="mixer-label">A <span class="xf-value" id="xf-value">50</span> B</label>
+      <input id="crossfade" class="crossfade-slider" type="range" min="0" max="100" value="50" step="1" aria-label="Crossfade A vers B" />
+    </div>
+
+    <div class="mixer-group mixer-sync">
+      <button id="sync-ba" class="mixer-btn" type="button">🔗 Sync B → A</button>
+      <button id="resync-toggle" class="mixer-btn mixer-btn-toggle" type="button" aria-pressed="false">🔁 Sync continu: OFF</button>
+    </div>
+
+    <div class="mixer-group mixer-master">
+      <label for="master-volume" class="mixer-label">Master <span id="master-value">100</span>%</label>
+      <input id="master-volume" class="master-slider" type="range" min="0" max="100" value="100" step="1" aria-label="Volume master" />
+    </div>
+  </footer>
+
+  <!-- Scripts (classiques pour compat file://) -->
+  <script src="js/config.js"></script>
+  <script src="js/youtube.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/mixer.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
