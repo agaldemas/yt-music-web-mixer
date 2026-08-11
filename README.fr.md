@@ -33,11 +33,19 @@ Double-cliquez sur `index.html` pour l'ouvrir en `file://`. Les lecteurs YouTube
 
 L'appel `fetch()` vers l'API YouTube Data peut être bloqué en `file://` (notamment sur Chrome). Pour activer la recherche, lancez un serveur statique :
 
+**Option A — Python (intégré)**
+
 ```bash
 python3 -m http.server 8000
 ```
 
-Puis ouvrez <http://localhost:8000>.
+**Option B — Node.js (via npx)**
+
+```bash
+npx serve -p 8000
+```
+
+Puis ouvrez <http://localhost:8000> dans votre navigateur.
 
 ### 3. Configurer la clé API YouTube Data (optionnel mais recommandé)
 

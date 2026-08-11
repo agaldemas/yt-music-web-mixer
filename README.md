@@ -33,11 +33,19 @@ Double-click `index.html` to open it via `file://`. The YouTube players work in 
 
 The `fetch()` call to the YouTube Data API can be blocked under `file://` (notably on Chrome). To enable search, start a static server:
 
+**Option A — Python (built-in)**
+
 ```bash
 python3 -m http.server 8000
 ```
 
-Then open <http://localhost:8000>.
+**Option B — Node.js (via npx)**
+
+```bash
+npx serve -p 8000
+```
+
+Then open <http://localhost:8000> in your browser.
 
 ### 3. Configure the YouTube Data API key (optional but recommended)
 
