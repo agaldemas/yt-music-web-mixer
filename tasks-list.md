@@ -1,13 +1,12 @@
 # 📋 YT Music Web Mixer — Tâches
 
-État du projet au 2026-08-10. Référence : `CLAUDE.md` (cahier des charges).
+État du projet au 2026-08-11. Référence : `CLAUDE.md` (cahier des charges).
 
 ## Légende
 
 - [x] Terminé · [~] Partiellement / en cours · [ ] À faire
 
-> ⚠️ **État Git** : 3 commits sur `main` (`4cdceea` scaffold, `65a70e8` READMEs, `83f42bf` tasks-list).
-> Les développements de la **phase 3** (lecteurs YouTube) sont présents dans le **working tree** mais **non commités** (`js/youtube.js`, `js/app.js`, `js/config.js`, `index.html`, `css/styles.css` modifiés). `plan.md` est non suivi.
+> **État Git** : 6 commits sur `main` (`4cdceea` scaffold → `65a70e8` READMEs → `83f42bf` tasks-list → `b9050fc`/`701f537` .gitignore → `90d04b3` implement players, search, mixer, settings). Working tree propre.
 
 ---
 
@@ -17,90 +16,99 @@
 - [x] Grille 2 colonnes responsive (`css/styles.css`)
 - [x] Voie A (gauche) et voie B (droite) : lecteur, recherche, résultats, badge, mute, erreur
 - [x] Barre de mixage : crossfader, play/pause both, sync B→A, sync continu, master volume
-- [x] Thème sombre, slider equal-power stylisé, responsive (1 colonne < 720px)
-- [x] Fichiers JS squelettes (`config.js`, `youtube.js`, `search.js`, `mixer.js`, `app.js`) avec TODOs
-- [~] **Bug à corriger** : `#api-error-banner` est dupliqué dans `index.html` (lignes 19 et 22) et la règle `.api-error-banner` est dupliquée dans `css/styles.css` (lignes 39-48 et 50-59). Les IDs dupliqués sont invalides en HTML — le second `getElementById` ne renverra jamais cet élément.
+- [x] Thème sombre, responsive (1 colonne < 720px)
+- [x] Thumb crossfade : rectangle 15×30px avec curseur `ew-resize` (séparé du master slider)
+- [x] Thumb master : rond 18px classique
+- [x] Bug `#api-error-banner` dupliqué corrigé (une seule occurrence dans `index.html` et `styles.css`)
 
 ## 2. Projet & documentation ✅
 
-- [x] `.gitignore` adapté (OS, éditeurs, `.claude/settings.local.json`, `node_modules/`, etc.)
-- [x] `git init` + premier commit staging
+- [x] `.gitignore` adapté (OS, éditeurs, `.claude/settings.local.json`, `node_modules/`, `.env`, etc.)
+- [x] `git init` + commits sur `main`
 - [x] `README.md` (anglais) — présentation, démarrage, architecture, limites
 - [x] `README.fr.md` (français) — version traduite
 
 ---
 
-## 3. Chargement IFrame API + 2 lecteurs [~] (working tree, non commité)
+## 3. Chargement IFrame API + 2 lecteurs ✅
 
-- [x] `js/youtube.js` : chargement asynchrone de l'API IFrame (`loadApiScript` + `onYouTubeIframeAPIReady`)
-- [x] `createPlayer(elementId, { onReady, onStateChange, onError })` — wrapper complet avec `wrapPlayer()`
-- [x] 2 lecteurs (A, B) créés dans `app.js` et démarrant en `muted` (politique d'autoplay)
-- [x] `playerVars` : `{ rel: 0, playsinline: 1, origin: window.location.origin, controls: 1, modestbranding: 1 }` (dans `config.js`)
+- [x] `js/youtube.js` : chargement asynchrone de l'API IFrame (`loadApi` + `onYouTubeIframeAPIReady`)
+- [x] `createPlayer(elementId, { videoId, onReady, onStateChange, onError })` — wrapper simplifié (objet literal direct, plus de `wrapPlayer()` factory)
+- [x] `mute: 1` dans `playerVars` au démarrage → autorise l'autoplay malgré la politique du navigateur
+- [x] `origin` ajoutée uniquement en `http(s):` (pas en `file://` → évite l'erreur 153)
+- [x] Timeout 10s avec fallback : vérifie `YT.Player` après timeout (certains bloqueurs interceptent le callback)
+- [x] File de chargement (`_queue`) : créations mises en cache avant `onYouTubeIframeAPIReady`
+- [x] 2 lecteurs (A, B) créés dans `app.js`, démarrant en `muted` (vidéos de test en dur dans `config.js`)
 - [x] Gestion `onError` (codes 2/5/100/101/150) → message localisé dans la voie concernée
-- [x] File de chargement (`_pending`) : appels mis en cache avant `onYouTubeIframeAPIReady`, vidés à l'init
-- [x] Vidéos de test en dur dans `config.js` (`TEST_VIDEO_A`/`B`) → chargées au bootstrap pour validation
-- [x] Timeout 10s (`API_LOAD_TIMEOUT_MS`) si l'API ne charge pas → `showGlobalError()` (banner)
-- [x] Méthodes wrapper exposées : `loadVideoById`, `cueVideoById`, `playVideo`, `pauseVideo`, `seekTo`, `setVolume`, `mute`, `unMute`, `getCurrentTime`, `getDuration`, `getPlayerState`
-- [x] Constantes d'état exposées : `YTWrapper.STATE` (UNSTARTED/ENDED/PLAYING/PAUSED/BUFFERING/CUED)
-- [x] Boutons mute/unmute par voie câblés dans `app.js` (avec `aria-pressed`)
-- [ ] **Non validé en console** : `playVideo`/`setVolume` non testés manuellement (voir Notes)
-- [ ] **Manquant** : pas de play/pause par voie, pas de play both / pause both (boutons présents dans le HTML mais non câblés dans `app.js`)
+- [x] Méthodes wrapper : `loadVideoById`, `cueVideoById`, `playVideo`, `pauseVideo`, `seekTo`, `setVolume`, `mute`, `unMute`, `getCurrentTime`, `getDuration`, `getPlayerState`
+- [x] Constantes d'état : `YTWrapper.STATE` (UNSTARTED/ENDED/PLAYING/PAUSED/BUFFERING/CUED)
+- [x] Boutons mute/unmute par voie avec helper `setDeckMuted()` : bouton toujours synchronisé avec l'état réel
+- [x] Son activé systématiquement au changement de vidéo (`setDeckMuted(deck, false)` dans `onSearchSelect`)
+- [ ] **Manquant** : pas de bouton play/pause **par voie** (seulement play/pause both dans le HTML)
+- [ ] **Manquant** : validation manuelle en console non documentée (`window.state.players.A.playVideo()` etc.)
 
 ---
 
-## 4. Crossfader [ ]
+## 4. Crossfader ✅
 
-- [ ] `js/mixer.js` : toujours un squelette vide (TODO) — aucune logique crossfade
-- [ ] Calcul equal-power : `vA = cos(p·π/2)·100`, `vB = sin(p·π/2)·100`
-- [ ] Application : `playerA.setVolume(vA·master/100)`, `playerB.setVolume(vB·master/100)`
-- [ ] Slider lié aux volumes (temps réel)
-- [ ] Affichage valeur du crossfade + master
-- [ ] Slider accessible au clavier
-
-> Note : les éléments UI (slider `#crossfade`, `#xf-value`, `#master-volume`, `#master-value`) existent déjà dans `index.html` et sont stylés dans `css/styles.css`, mais aucun `addEventListener` ne les relie. `app.js` ne câble pas la barre de mixage.
-
----
-
-## 5. Recherche [ ]
-
-- [ ] `js/search.js` : toujours un squelette vide (TODO)
-- [ ] Recherche YouTube Data API (`videoCategoryId=10` = Musique)
-- [ ] Affichage résultats : vignette + titre + durée
-- [ ] États UI du panneau : `idle`, `loading`, `results`, `error`, `no-results`
-- [ ] Gestion d'erreurs : 403/429 (quota), 400 (clé invalide), réseau/CORS, pas de résultats
-- [ ] Fallback sans clé : saisie URL (`youtu.be/...`, `watch?v=...`) ou ID brut → extraction `videoId`
-- [ ] Sélection résultat → renvoie `videoId` au lecteur de la voie (A ou B)
-- [ ] UI de configuration de la clé API (⚙️ Paramètres — bouton présent mais non câblé)
+- [x] `js/mixer.js` : implémentation complète (equal-power + contrôles de transport)
+- [x] Calcul equal-power : `vA = cos(p·π/2)·100·master`, `vB = sin(p·π/2)·100·master`
+- [x] Application temps réel via `player.setVolume()` sur `input` du slider
+- [x] Slider `#crossfade` lié aux volumes (0 = full A, 100 = full B, 50 = centre equal-power)
+- [x] Affichage valeur crossfade (`#xf-value`) + master (`#master-value`) mis à jour sur `input`
+- [x] Slider accessible au clavier (`<input type="range">` natif, flèches gauche/droite)
+- [x] Thumb rectangle 15×30px avec `cursor: ew-resize` (stylé comme un curseur de console de mixage)
 
 ---
 
-## 6. Contrôles avancés & persistance [ ]
+## 5. Recherche ✅
 
-- [ ] `js/app.js` : bootstrap minimal phase 3 uniquement, câblage transport/sync/persistance manquant
-- [ ] Play/pause par voie + play both / pause both (boutons `#play-both`/`#pause-both` présents, non câblés)
-- [ ] Sync ponctuel B→A (seek + play si A joue) — bouton `#sync-ba` présent, non câblé
-- [ ] Sync continu (optionnel, `setInterval ~1s`, re-seek si écart > 0.5s) — bouton `#resync-toggle` présent, non câblé
-- [ ] Bouton `resync off` pour désactiver le sync continu
-- [ ] Persistance `localStorage` :
-  - [~] Clés de stockage définies dans `config.js` (`STORAGE_KEYS`), mais **aucune lecture/écriture** dans `app.js` (clé API, videoIds, requêtes, positions)
-  - [ ] Au reload : `seekTo(sec)` après `loadVideoById` pour reprise à la position
+- [x] `js/search.js` : implémentation complète
+- [x] Recherche YouTube Data API (`videoCategoryId=10` = Musique, `maxResults=10`)
+- [x] Durées récupérées via `/videos?part=contentDetails` (best-effort, échec toléré)
+- [x] Affichage résultats : vignette + titre + durée formatée (`PT3M45S` → `3:45`)
+- [x] États UI du panneau : `idle`, `loading`, `results`, `error`, `no-results`
+- [x] Gestion d'erreurs : 403/429 (quota), 400 (clé invalide), réseau/CORS, pas de résultats
+- [x] Fallback sans clé : saisie URL (`youtu.be/...`, `watch?v=...`, `/shorts/...`, `/embed/...`) ou ID brut → extraction `videoId`
+- [x] Sélection résultat → `onSelect(videoId)` → `onSearchSelect(deck, videoId)` dans `app.js` → `loadVideoById`
+- [x] UI de configuration de la clé API (⚙️ Paramètres — modal complète avec validation format `AIza…`, persistance `localStorage`)
+- [x] Recherche annulable (`AbortController` : une nouvelle recherche annule la précédente)
 
 ---
 
-## 7. Polissage [ ]
+## 6. Contrôles avancés & persistance [~]
+
+- [x] Play both / pause both (`#play-both` / `#pause-both`) câblés dans `mixer.js`
+- [x] Sync ponctuel B→A (`#sync-ba`) : seek B au `currentTime` de A + play si A joue
+- [x] Sync continu (`#resync-toggle`) : `setInterval(1s)`, re-seek si drift > 0.5s, toggle on/off
+- [x] Master volume (`#master-volume`) appliqué multiplicativement au crossfade
+- [x] Persistance `localStorage` :
+  - [x] Clé API (`youtubeApiKey`) — lu/écrit dans `search.js`, modal dans `app.js`
+  - [x] Dernière requête par voie (`lastSearchQueryA/B`) — persistée dans `search.js`, restaurée dans `app.js` au démarrage
+  - [x] Dernier videoId par voie (`lastVideoIdA/B`) — persisté dans `app.js` (`persistVideoId`)
+- [ ] **Manquant** : restauration au reload — `lastVideoIdA/B` est persisté mais **jamais relu** au démarrage
+- [ ] **Manquant** : persistance des positions de lecture (`lastSeekA/B`) — clés définies dans `config.js` mais **jamais utilisées**
+- [ ] **Manquant** : `seekTo(sec)` après `loadVideoById` pour reprise à la position précédente
+- [ ] **Manquant** : play/pause par voie individuelle (pas de bouton dans le HTML)
+
+---
+
+## 7. Polissage [~]
 
 - [x] Responsive complet (grille 1 colonne < 720px, barre de mixage en flex-wrap)
-- [ ] Raccourcis clavier
-- [ ] État visuel des voies (joue / pause / buffer / erreur) — seulement erreur voie + banner global
-- [ ] Documentation des limites dans l'UI (lourdeur double lecture, sync imparfait, quotas)
-- [ ] Suppression des `console.log` non critiques (actuellement aucun log résiduel)
+- [x] Aucun `console.log` résiduel dans le code de production
+- [ ] Raccourcis clavier (play/pause, crossfade ←/→, mute) — seul Escape (modal) et Enter (input clé) sont câblés
+- [ ] État visuel des voies (joue / pause / buffer) — seulement l'erreur voie + banner global
+- [ ] Documentation des limites dans l'UI (lourdeur double lecture, sync imparfait, quotas) — seulement en commentaires de code, pas dans l'UI
 
 ---
 
 ## Notes
 
-- **Phase 3 en working tree non commitée.** Le wrapper YouTube (`js/youtube.js`) est complet et fonctionnel ; `app.js` ne couvre que la création des 2 lecteurs en muted + boutons mute/unmute. Les contrôles de transport (play/pause, sync, crossfade, master volume) ont leurs boutons dans le HTML mais ne sont **pas câblés**.
-- **Validation restante phase 3** : ouvrir `index.html` (ou servir via `python3 -m http.server`), vérifier que les 2 lecteurs chargent les vidéos de test, tester `window.state.players.A.playVideo()` / `.setVolume(50)` depuis la console, et cliquer les boutons mute/unmute. À faire avant d'attaquer la phase 4.
-- **Bugs HTML/CSS à corriger** : `#api-error-banner` dupliqué dans `index.html` (lignes 19 & 22) et `.api-error-banner` dupliquée dans `css/styles.css` (lignes 39-48 & 50-59). Les IDs dupliqués sont invalides — le second `getElementById('api-error-banner')` ne cible jamais l'élément dupliqué.
-- L'ordre suggéré dans `CLAUDE.md` : 1 (✅) → 2 (✅) → 3 (~) → 4 → 5 → 6 → 7.
-- Prochain jalon : finir la **phase 3** (câbler play/pause both + validation console), puis attaquer la **phase 4** (crossfader dans `mixer.js`).
+- **Phases 3, 4, 5 terminées et commitées** (`90d04b3`). Le wrapper YouTube (`youtube.js`) a été simplifié : plus de factory `wrapPlayer()`, objet literal direct, `mute:1` dans `playerVars` pour autoriser l'autoplay, timeout avec fallback.
+- **Bug volume corrigé** : `setVolume(0)` dans `app.js` tuait le son même après unmute. Remplacé par `Mixer.applyVolumes()`.
+- **Mute/unmute fiabilisé** : helper `setDeckMuted(deck, muted)` centralise l'état + le bouton. Le son est activé systématiquement au changement de vidéo.
+- **Validation restante** : tester l'app via `python3 -m http.server` — vérifier crossfade en temps réel, sync B→A, recherche avec clé API.
+- **Persistance incomplète** : les videoIds sont sauvés mais pas restaurés au reload ; les positions de lecture ne sont ni sauvées ni restaurées.
+- Ordre `CLAUDE.md` : 1 (✅) → 2 (✅) → 3 (✅) → 4 (✅) → 5 (✅) → 6 (~) → 7 (~).
+- Prochain jalon : **persistance au reload** (restaurer videoIds + positions), puis **polissage** (raccourcis clavier, état visuel des voies, documentation des limites dans l'UI).
