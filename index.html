@@ -15,6 +15,44 @@
     </div>
   </header>
 
+  <!-- Banner d'erreur global (chargement API YouTube) -->
+  <div id="api-error-banner" class="api-error-banner" hidden></div>
+
+  <!-- Modal Paramètres (clé API YouTube) -->
+  <div id="settings-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="modal-backdrop" data-close-modal="settings"></div>
+    <div class="modal-content" role="document">
+      <header class="modal-header">
+        <h2 id="settings-title">⚙️ Paramètres</h2>
+        <button class="modal-close" type="button" data-close-modal="settings" aria-label="Fermer">✕</button>
+      </header>
+
+      <section class="modal-section">
+        <label for="api-key-input" class="modal-label">Clé API YouTube Data v3</label>
+        <input
+          id="api-key-input"
+          class="modal-input"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="AIzaSy... (stockée localement, jamais envoyée ailleurs qu'à Google)"
+        />
+        <p class="modal-hint">
+          La clé n'est jamais embarquée dans le code ni transmise hors des appels à l'API YouTube officielle.
+          Créez-en une sur <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>
+          (API <em>YouTube Data API v3</em> activée). Quota gratuit : 10 000 unités/jour
+          (≈ 100 recherches).
+        </p>
+        <div id="api-key-status" class="modal-status" hidden></div>
+      </section>
+
+      <footer class="modal-footer">
+        <button id="api-key-clear" class="modal-btn modal-btn-secondary" type="button">Supprimer la clé</button>
+        <button id="api-key-save" class="modal-btn modal-btn-primary" type="button">Enregistrer</button>
+      </footer>
+    </div>
+  </div>
+
   <!-- Zone principale : 2 voies côte à côte -->
   <main class="decks">
     <!-- Voie A (gauche) -->

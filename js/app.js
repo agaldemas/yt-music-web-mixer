@@ -1,2 +1,279 @@
-/* app.js — bootstrap, câblage événements, état global (à implémenter étape 2+) */
-// TODO: initialiser 2 lecteurs, 2 recherches, mixer
+/* app.js — bootstrap, câblage événements, état global */
+
+(function () {
+  const CFG = window.YT_CONFIG;
+  const STATE = window.YTWrapper.STATE;
+  const SEARCH = window.YTSearch;
+  const Mixer = window.YTMixer;
+
+  // État global
+  const state = {
+    players: { A: null, B: null },
+    ready: { A: false, B: false },
+    muted: { A: true, B: true },
+    videoIds: { A: '', B: '' },
+    searches: { A: null, B: null }, // instances YTSearch par voie
+  };
+
+  // ===== Helpers UI =====
+
+  function showDeckError(deck, message) {
+    const el = document.querySelector('.deck-error[data-deck="' + deck + '"]');
+    if (!el) return;
+    el.textContent = message;
+    el.hidden = false;
+  }
+
+  function clearDeckError(deck) {
+    const el = document.querySelector('.deck-error[data-deck="' + deck + '"]');
+    if (!el) return;
+    el.textContent = '';
+    el.hidden = true;
+  }
+
+  function showGlobalError(message) {
+    const banner = document.getElementById('api-error-banner');
+    if (!banner) return;
+    banner.textContent = message;
+    banner.hidden = false;
+  }
+
+  function hidePlaceholder(deck) {
+    const ph = document.querySelector('.player-placeholder[data-deck="' + deck + '"]');
+    if (ph) ph.style.display = 'none';
+  }
+
+  // Met à jour le bouton mute/unmute selon state.muted[deck]
+  function updateMuteButtonUI(deck) {
+    var btn = document.querySelector('.deck-mute-btn[data-deck="' + deck + '"]');
+    if (!btn) return;
+    if (state.muted[deck]) {
+      btn.setAttribute('aria-pressed', 'false');
+      btn.textContent = '🔇 Activer le son';
+    } else {
+      btn.setAttribute('aria-pressed', 'true');
+      btn.textContent = '🔊 Son activé';
+    }
+  }
+
+  // Applique l'état mute/unmute sur le lecteur + bouton
+  function setDeckMuted(deck, muted) {
+    var player = state.players[deck];
+    state.muted[deck] = muted;
+    if (player && state.ready[deck]) {
+      if (muted) {
+        player.mute();
+      } else {
+        player.unMute();
+        Mixer.applyVolumes();
+      }
+    }
+    updateMuteButtonUI(deck);
+  }
+
+  // ===== Persistance =====
+
+  // Sauvegarde le dernier videoId chargé pour une voie
+  function persistVideoId(deck, videoId) {
+    const key = (deck === 'A') ? CFG.STORAGE_KEYS.LAST_VIDEO_A : CFG.STORAGE_KEYS.LAST_VIDEO_B;
+    try {
+      if (videoId) localStorage.setItem(key, videoId);
+      else localStorage.removeItem(key);
+    } catch (e) { /* ignore */ }
+  }
+
+  // ===== Sélection depuis recherche =====
+
+  // Appelé par search.js quand l'utilisateur choisit un résultat
+  function onSearchSelect(deck, videoId) {
+    state.videoIds[deck] = videoId;
+    persistVideoId(deck, videoId);
+
+    const player = state.players[deck];
+    if (!player) return;
+
+    if (!state.ready[deck]) {
+      // Lecteur pas encore prêt : on stocke pour appliquer après onReady
+      // (c'est rare car createPlayer attend l'API ready, mais defensif)
+      return;
+    }
+
+    // Charger + lancer la nouvelle vidéo
+    player.loadVideoById(videoId);
+
+    // Activer le son systématiquement au changement de vidéo
+    setDeckMuted(deck, false);
+
+    hidePlaceholder(deck);
+    clearDeckError(deck);
+  }
+
+  // ===== Bouton mute/unmute par voie =====
+
+  function wireMuteButton(deck) {
+    const btn = document.querySelector('.deck-mute-btn[data-deck="' + deck + '"]');
+    if (!btn) return;
+
+    btn.addEventListener('click', function () {
+      const player = state.players[deck];
+      if (!player || !state.ready[deck]) return;
+      setDeckMuted(deck, !state.muted[deck]);
+    });
+  }
+
+  // ===== Création des lecteurs =====
+
+  function createDeckPlayer(deck, videoId) {
+    const playerElId = 'player-' + deck;
+    state.players[deck] = window.YTWrapper.createPlayer(playerElId, {
+      videoId: videoId || '',
+      onReady: function () {
+        state.ready[deck] = true;
+        const player = state.players[deck];
+        player.mute();
+        Mixer.applyVolumes();
+        hidePlaceholder(deck);
+        clearDeckError(deck);
+      },
+      onStateChange: function () { /* silencieux */ },
+      onError: function (err) {
+        showDeckError(deck, err.message || 'Erreur de lecture YouTube.');
+      },
+    });
+  }
+
+  // ===== Recherche par voie =====
+
+  function wireSearch(deck) {
+    const search = SEARCH.create(deck, {
+      onSelect: function (videoId) {
+        onSearchSelect(deck, videoId);
+      },
+      onError: function () { /* déjà affichée dans le panneau */ },
+    });
+    state.searches[deck] = search;
+
+    // Restaurer la dernière requête dans le champ (sans relancer la recherche)
+    const key = (deck === 'A') ? CFG.STORAGE_KEYS.LAST_QUERY_A : CFG.STORAGE_KEYS.LAST_QUERY_B;
+    try {
+      const last = localStorage.getItem(key);
+      const input = document.querySelector('.search-input[data-deck="' + deck + '"]');
+      if (last && input) input.value = last;
+    } catch (e) { /* ignore */ }
+  }
+
+  // ===== Modal Paramètres (clé API) =====
+
+  function initSettingsModal() {
+    const btn = document.getElementById('settings-btn');
+    const modal = document.getElementById('settings-modal');
+    const input = document.getElementById('api-key-input');
+    const saveBtn = document.getElementById('api-key-save');
+    const clearBtn = document.getElementById('api-key-clear');
+    const status = document.getElementById('api-key-status');
+    if (!btn || !modal || !input || !saveBtn || !clearBtn || !status) return;
+
+    function updateButtonIndicator() {
+      btn.classList.toggle('has-api-key', !!SEARCH.getApiKey());
+    }
+    updateButtonIndicator();
+
+    function showStatus(message, ok) {
+      status.textContent = message;
+      status.className = 'modal-status ' + (ok ? 'modal-status-ok' : 'modal-status-err');
+      status.hidden = false;
+    }
+    function hideStatus() {
+      status.textContent = '';
+      status.className = 'modal-status';
+      status.hidden = true;
+    }
+
+    function openModal() {
+      input.value = SEARCH.getApiKey() || '';
+      hideStatus();
+      modal.hidden = false;
+      // Petit délai pour laisser le focus avant transition
+      setTimeout(function () { input.focus(); input.select(); }, 0);
+    }
+
+    function closeModal() {
+      modal.hidden = true;
+      hideStatus();
+    }
+
+    btn.addEventListener('click', openModal);
+
+    // Fermeture (backdrop, croix, Escape)
+    modal.addEventListener('click', function (e) {
+      const t = e.target;
+      if (t && t.dataset && t.dataset.closeModal === 'settings') {
+        closeModal();
+      }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !modal.hidden) closeModal();
+    });
+
+    // Enregistrer
+    saveBtn.addEventListener('click', function () {
+      const value = input.value.trim();
+      // Format basique : commence par AIza (clé publique Google)
+      if (value && !/^AIza[0-9A-Za-z_-]{30,}$/.test(value)) {
+        showStatus('Format de clé inattendu (devrait commencer par « AIza »). '
+          + 'Vérifier la clé sur Google Cloud Console.', false);
+        return;
+      }
+      SEARCH.setApiKey(value);
+      updateButtonIndicator();
+      if (value) showStatus('Clé enregistrée. Vous pouvez maintenant lancer des recherches.', true);
+      else showStatus('Clé supprimée. Seules les URL YouTube sont acceptées dans la recherche.', true);
+      // Fermer après un court délai pour laisser lire
+      setTimeout(closeModal, 1100);
+    });
+
+    // Supprimer
+    clearBtn.addEventListener('click', function () {
+      input.value = '';
+      SEARCH.setApiKey('');
+      updateButtonIndicator();
+      showStatus('Clé supprimée.', true);
+    });
+
+    // Enter dans l'input enregistre
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        saveBtn.click();
+      }
+    });
+  }
+
+  // ===== Bootstrap =====
+
+  function init() {
+    wireMuteButton('A');
+    wireMuteButton('B');
+    wireSearch('A');
+    wireSearch('B');
+    initSettingsModal();
+
+    window.YTWrapper.init(function (apiErrorMessage) {
+      showGlobalError(apiErrorMessage);
+    });
+
+    createDeckPlayer('A', CFG.TEST_VIDEO_A);
+    createDeckPlayer('B', CFG.TEST_VIDEO_B);
+
+    Mixer.init(state.players);
+  }
+
+  // Exposer pour debug console
+  window.state = state;
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
