@@ -61,7 +61,8 @@
   // Câble tous les contrôles de la barre de mixage
   function wireUI() {
     var xf = document.getElementById('crossfade');
-    var xfVal = document.getElementById('xf-value');
+    var xfValA = document.getElementById('xf-value-a');
+    var xfValB = document.getElementById('xf-value-b');
     var mv = document.getElementById('master-volume');
     var mvVal = document.getElementById('master-value');
     var playBoth = document.getElementById('play-both');
@@ -72,7 +73,8 @@
     if (xf) {
       xf.addEventListener('input', function () {
         crossfade = parseInt(xf.value, 10);
-        if (xfVal) xfVal.textContent = crossfade;
+        if (xfValA) xfValA.textContent = 100 - crossfade;
+        if (xfValB) xfValB.textContent = crossfade;
         applyVolumes();
       });
     }
