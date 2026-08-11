@@ -6,7 +6,7 @@
 
 - [x] Terminé · [~] Partiellement / en cours · [ ] À faire
 
-> **État Git** : 6 commits sur `main` (`4cdceea` scaffold → `65a70e8` READMEs → `83f42bf` tasks-list → `b9050fc`/`701f537` .gitignore → `90d04b3` implement players, search, mixer, settings). Working tree propre.
+> **État Git** : 8 commits sur `main` (`4cdceea` scaffold → `65a70e8` READMEs → `83f42bf` tasks-list → `b9050fc`/`701f537` .gitignore → `90d04b3` implement players, search, mixer, settings → `e6b541e` tasks-list → `5894e33` show A/B volume values in crossfade). Working tree propre.
 
 ---
 
@@ -55,7 +55,7 @@
 - [x] Calcul equal-power : `vA = cos(p·π/2)·100·master`, `vB = sin(p·π/2)·100·master`
 - [x] Application temps réel via `player.setVolume()` sur `input` du slider
 - [x] Slider `#crossfade` lié aux volumes (0 = full A, 100 = full B, 50 = centre equal-power)
-- [x] Affichage valeur crossfade (`#xf-value`) + master (`#master-value`) mis à jour sur `input`
+- [x] Affichage volumes A/B séparés (`#xf-value-a` = `100-crossfade`, `#xf-value-b` = `crossfade`) + master (`#master-value`) mis à jour sur `input`
 - [x] Slider accessible au clavier (`<input type="range">` natif, flèches gauche/droite)
 - [x] Thumb rectangle 15×30px avec `cursor: ew-resize` (stylé comme un curseur de console de mixage)
 
