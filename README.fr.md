@@ -13,9 +13,12 @@ Application web **sans serveur** (HTML + JS pur) permettant de charger 2 morceau
 - **Crossfader A↔B** (0 = full A, 100 = full B, 50 = équilibré) avec courbe *equal-power* pour éviter le creux de niveau au milieu.
 - **Volume master** global (0–100%).
 - **Boutons mute/unmute par voie** (obligatoire pour contourner les politiques d'autoplay des navigateurs).
-- **Contrôles de lecture** : play/pause par voie, *play both* / *pause both*.
+- **Contrôles de lecture** : *play both* / *pause both*.
 - **Sync B → A** : aligner B sur la position de A (ponctuel ou continu).
-- **Persistance** via `localStorage` : derniers morceaux, requêtes et positions de lecture retrouvés au reload.
+- **Démutage automatique au changement de vidéo** : la sélection d'un nouveau morceau active le son automatiquement (le clic compte comme geste utilisateur pour les politiques d'autoplay).
+- **Affichage séparé des volumes A/B** : la barre de crossfade affiche le pourcentage de volume de chaque voie individuellement.
+- **Curseur de crossfade style mixage** : rectangle 15×30px avec curseur `ew-resize`, comme un fader de console matérielle.
+- **Persistance** via `localStorage` : clé API, dernières requêtes et derniers videoIds sauvegardés. Les requêtes sont restaurées dans les champs de recherche au reload.
 - **Responsive** : passe en une colonne sur petit écran.
 
 ---
@@ -69,9 +72,9 @@ yt-music-web-mixer/
 
 ## 🎛️ Utilisation
 
-1. Dans la **voie A**, recherchez ou collez un morceau → sélectionnez-le → il se charge dans le lecteur A.
+1. Dans la **voie A**, recherchez ou collez un morceau → sélectionnez-le → il se charge dans le lecteur A (le son est activé automatiquement).
 2. Faites de même pour la **voie B**.
-3. Cliquez sur **🔇 Activer le son** sur chaque voie (les lecteurs démarrent en muet).
+3. (Optionnel) Basculez **🔇 / 🔊** sur une voie pour muter/démuter individuellement.
 4. Lancez la lecture (**▶️ Play both**).
 5. Bougez le **crossfader** pour passer progressivement de A à B.
 6. Ajustez le **volume master** si besoin.
@@ -89,7 +92,7 @@ yt-music-web-mixer/
 - **Quotas API YouTube Data.** 10 000 unités/jour par défaut, une recherche = 100 unités. Au-delà, la recherche est bloquée jusqu'au lendemain.
 - **Sync continu imparfait.** Un écart résiduel de 200–500ms est normal (le seek + buffering crée une micro-coupure). Pas de sync *frame-accurate* possible sur YouTube.
 - **Persistance limitée.** En navigation privée ou après vidage du cache, les données `localStorage` sont perdues.
-- **Autoplay.** Les lecteurs démarrent en `muted` ; l'activation du son doit se faire voie par voie, par clic.
+- **Autoplay.** Les lecteurs démarrent en `muted` au chargement de la page. Le son est activé automatiquement lors de la sélection d'un nouveau morceau (le clic de sélection compte comme geste utilisateur). Vous pouvez toujours muter/démuter chaque voie à tout moment.
 
 ---
 

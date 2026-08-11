@@ -13,9 +13,12 @@ A **serverless** web app (plain HTML + JS) that lets you load 2 YouTube tracks s
 - **A↔B crossfader** (0 = full A, 100 = full B, 50 = balanced) with an *equal-power* curve to avoid the level dip in the middle.
 - **Global master volume** (0–100%).
 - **Per-deck mute/unmute buttons** (required to work around browser autoplay policies).
-- **Playback controls**: per-deck play/pause, *play both* / *pause both*.
+- **Playback controls**: *play both* / *pause both*.
 - **Sync B → A**: align B to A's position (one-shot or continuous).
-- **Persistence** via `localStorage`: last tracks, queries and playback positions are restored on reload.
+- **Auto-unmute on track change**: selecting a new track automatically enables sound (the click counts as a user gesture for autoplay policies).
+- **Separate A/B volume readout**: the crossfade bar shows individual volume percentages for each deck.
+- **Mixer-style crossfade thumb**: rectangular 15×30px handle with `ew-resize` cursor, like a hardware mixer fader.
+- **Persistence** via `localStorage`: API key, last queries, and last video IDs are saved. Queries are restored in the search fields on reload.
 - **Responsive**: collapses to a single column on small screens.
 
 ---
@@ -69,9 +72,9 @@ yt-music-web-mixer/
 
 ## 🎛️ Usage
 
-1. In **deck A**, search for or paste a track → select it → it loads into player A.
+1. In **deck A**, search for or paste a track → select it → it loads into player A (sound is enabled automatically).
 2. Do the same for **deck B**.
-3. Click **🔇 Enable sound** on each deck (players start muted).
+3. (Optional) Toggle **🔇 / 🔊** on a deck to mute/unmute individually.
 4. Start playback (**▶️ Play both**).
 5. Move the **crossfader** to gradually transition from A to B.
 6. Adjust the **master volume** as needed.
@@ -89,7 +92,7 @@ yt-music-web-mixer/
 - **YouTube Data API quotas.** 10,000 units/day by default, one search = 100 units. Beyond that, search is blocked until the next day.
 - **Continuous sync is imperfect.** A residual offset of 200–500 ms is normal (seeking + buffering causes a micro-gap). No *frame-accurate* sync is possible on YouTube.
 - **Limited persistence.** In private browsing or after clearing the cache, `localStorage` data is lost.
-- **Autoplay.** Players start `muted`; sound must be enabled per deck, by click.
+- **Autoplay.** Players start `muted` on initial page load. Sound is automatically enabled when you select a new track (the selection click counts as a user gesture). You can still mute/unmute per deck at any time.
 
 ---
 
