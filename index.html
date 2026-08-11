@@ -46,6 +46,34 @@
         <div id="api-key-status" class="modal-status" hidden></div>
       </section>
 
+      <section class="modal-section">
+        <h3 class="modal-subtitle">🎚️ Crossfade progressif</h3>
+        <p class="modal-hint">
+          Atteint la valeur cible du crossfade par paliers au lieu d'être instantané.
+          Mettre le palier à 100 % ou l'intervalle à 0 ms pour un comportement instantané.
+        </p>
+
+        <div class="modal-slider-row">
+          <div class="modal-slider-head">
+            <label for="xf-step-percent" class="modal-label">Palier</label>
+            <input id="xf-step-percent-num" class="modal-num-input" type="number" min="1" max="100" value="100" step="1" aria-label="Palier du crossfade progressif en pourcentage (saisie)" />
+            <span class="modal-slider-unit">%</span>
+          </div>
+          <input id="xf-step-percent" class="modal-slider" type="range" min="1" max="100" value="100" step="1" aria-label="Palier du crossfade progressif en pourcentage" />
+        </div>
+
+        <div class="modal-slider-row">
+          <div class="modal-slider-head">
+            <label for="xf-step-interval" class="modal-label">Intervalle</label>
+            <input id="xf-step-interval-num" class="modal-num-input" type="number" min="0" max="5000" value="0" step="5" aria-label="Intervalle du crossfade progressif en millisecondes (saisie)" />
+            <span class="modal-slider-unit">ms</span>
+          </div>
+          <input id="xf-step-interval" class="modal-slider" type="range" min="0" max="5000" value="0" step="5" aria-label="Intervalle du crossfade progressif en millisecondes" />
+        </div>
+
+        <div id="xf-step-status" class="modal-status" hidden></div>
+      </section>
+
       <footer class="modal-footer">
         <button id="api-key-clear" class="modal-btn modal-btn-secondary" type="button">Supprimer la clé</button>
         <button id="api-key-save" class="modal-btn modal-btn-primary" type="button">Enregistrer</button>

@@ -94,7 +94,17 @@
 
 ---
 
-## 7. Polissage [~]
+## 7. Crossfade progressif par paliers ✅
+
+- [x] Variables de config `CROSSFADE_STEP_PERCENT` (palier en %) et `CROSSFADE_STEP_INTERVAL_MS` (intervalle en ms) dans `config.js` + clés `localStorage` (`crossfadeStepPercent`, `crossfadeStepIntervalMs`)
+- [x] `mixer.js` : crossfade progressif — la valeur cible du slider est atteinte par paliers de `x%` toutes les `y` ms via `setInterval`, au lieu d'être appliquée instantanément. Comportement instantané conservé si `stepPercent ≥ 100` ou `intervalMs ≤ 0`.
+- [x] Modal Paramètres (`index.html`) : 2 sliders (palier %, intervalle ms) avec persistance `localStorage`
+- [x] `app.js` : lecture/écriture des 2 réglages, initialisation des inputs au démarrage
+- [x] Affichage des volumes A/B toujours synchronisé avec la cible (pas avec la valeur appliquée intermédiaire)
+
+---
+
+## 8. Polissage [~]
 
 - [x] Responsive complet (grille 1 colonne < 720px, barre de mixage en flex-wrap)
 - [x] Aucun `console.log` résiduel dans le code de production

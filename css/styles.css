@@ -118,6 +118,72 @@ input { font-family: inherit; }
   line-height: 1.4;
 }
 .modal-hint a { color: #60a5fa; }
+
+/* Sous-titre de section dans la modal Paramètres */
+.modal-subtitle {
+  margin: 0 0 2px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e7e7ea;
+}
+/* Ligne slider dans la modal (label + champ numérique + range) */
+.modal-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.modal-slider-row .modal-label { font-size: 0.82rem; }
+/* En-tête de ligne slider : label + champ numérique + unité */
+.modal-slider-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.modal-slider-head .modal-label { flex: 0 0 auto; }
+.modal-slider-unit {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  flex: 0 0 auto;
+}
+.modal-num-input {
+  flex: 0 0 auto;
+  width: 64px;
+  background: #0f1115;
+  color: #e7e7ea;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 0.82rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  text-align: right;
+  margin-left: auto;
+}
+.modal-num-input:focus { outline: none; border-color: #3b82f6; }
+.modal-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: #2e3444;
+  width: 100%;
+}
+.modal-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #15181f;
+  cursor: pointer;
+}
+.modal-slider::-moz-range-thumb {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #15181f;
+  cursor: pointer;
+}
 .modal-status {
   font-size: 0.85rem;
   padding: 6px 10px;

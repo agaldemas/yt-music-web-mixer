@@ -255,6 +255,102 @@
     });
   }
 
+  // ===== Crossfade progressif (paramètres palier / intervalle) =====
+
+  // Lit les réglages depuis localStorage (avec fallback sur config.js)
+  function loadStepOptions() {
+    var percent = CFG.CROSSFADE_STEP_PERCENT;
+    var intervalMs = CFG.CROSSFADE_STEP_INTERVAL_MS;
+    try {
+      var p = localStorage.getItem(CFG.STORAGE_KEYS.CROSSFADE_STEP_PERCENT);
+      var i = localStorage.getItem(CFG.STORAGE_KEYS.CROSSFADE_STEP_INTERVAL_MS);
+      if (p !== null) percent = parseInt(p, 10);
+      if (i !== null) intervalMs = parseInt(i, 10);
+    } catch (e) { /* ignore */ }
+    return {
+      percent: Math.max(1, Math.min(100, isNaN(percent) ? 100 : percent)),
+      intervalMs: Math.max(0, isNaN(intervalMs) ? 0 : intervalMs),
+    };
+  }
+
+  // Sauvegarde les réglages dans localStorage + pousse vers le mixer
+  function saveStepOptions(percent, intervalMs) {
+    try {
+      localStorage.setItem(CFG.STORAGE_KEYS.CROSSFADE_STEP_PERCENT, String(percent));
+      localStorage.setItem(CFG.STORAGE_KEYS.CROSSFADE_STEP_INTERVAL_MS, String(intervalMs));
+    } catch (e) { /* ignore */ }
+    Mixer.setStepOptions(percent, intervalMs);
+  }
+
+  // Câble les 2 paires slider + champ numérique de la modal Paramètres
+  function initStepControls() {
+    var pSlider = document.getElementById('xf-step-percent');
+    var pNum = document.getElementById('xf-step-percent-num');
+    var iSlider = document.getElementById('xf-step-interval');
+    var iNum = document.getElementById('xf-step-interval-num');
+    if (!pSlider || !iSlider) return;
+
+    var opts = loadStepOptions();
+    pSlider.value = opts.percent;
+    pNum.value = opts.percent;
+    iSlider.value = opts.intervalMs;
+    iNum.value = opts.intervalMs;
+    Mixer.setStepOptions(opts.percent, opts.intervalMs);
+
+    function clampPercent(v) {
+      v = parseInt(v, 10);
+      if (isNaN(v)) v = 100;
+      return Math.max(1, Math.min(100, v));
+    }
+    function clampInterval(v) {
+      v = parseInt(v, 10);
+      if (isNaN(v)) v = 0;
+      return Math.max(0, Math.min(5000, v));
+    }
+
+    // Slider palier → met à jour le champ numérique + persistance
+    pSlider.addEventListener('input', function () {
+      var percent = clampPercent(pSlider.value);
+      var intervalMs = clampInterval(iNum.value);
+      pNum.value = percent;
+      saveStepOptions(percent, intervalMs);
+    });
+
+    // Champ numérique palier → met à jour le slider + persistance
+    pNum.addEventListener('input', function () {
+      var percent = clampPercent(pNum.value);
+      var intervalMs = clampInterval(iNum.value);
+      pSlider.value = percent;
+      saveStepOptions(percent, intervalMs);
+    });
+    pNum.addEventListener('blur', function () {
+      var percent = clampPercent(pNum.value);
+      pNum.value = percent;
+      pSlider.value = percent;
+    });
+
+    // Slider intervalle → met à jour le champ numérique + persistance
+    iSlider.addEventListener('input', function () {
+      var intervalMs = clampInterval(iSlider.value);
+      var percent = clampPercent(pNum.value);
+      iNum.value = intervalMs;
+      saveStepOptions(percent, intervalMs);
+    });
+
+    // Champ numérique intervalle → met à jour le slider + persistance
+    iNum.addEventListener('input', function () {
+      var intervalMs = clampInterval(iNum.value);
+      var percent = clampPercent(pNum.value);
+      iSlider.value = intervalMs;
+      saveStepOptions(percent, intervalMs);
+    });
+    iNum.addEventListener('blur', function () {
+      var intervalMs = clampInterval(iNum.value);
+      iNum.value = intervalMs;
+      iSlider.value = intervalMs;
+    });
+  }
+
   // ===== Bootstrap =====
 
   function init() {
@@ -263,6 +359,7 @@
     wireSearch('A');
     wireSearch('B');
     initSettingsModal();
+    initStepControls();
 
     window.YTWrapper.init(function (apiErrorMessage) {
       showGlobalError(apiErrorMessage);
