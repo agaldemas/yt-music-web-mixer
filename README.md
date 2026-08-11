@@ -19,6 +19,7 @@ A **serverless** web app (plain HTML + JS) that lets you load 2 YouTube tracks s
 - **Separate A/B volume readout**: the crossfade bar shows individual volume percentages for each deck.
 - **Mixer-style crossfade thumb**: rectangular 15×30px handle with `ew-resize` cursor, like a hardware mixer fader.
 - **Persistence** via `localStorage`: API key, last queries, and last video IDs are saved. Queries are restored in the search fields on reload.
+- **One-click launch scripts**: `start.sh` (macOS/Linux/WSL) and `start.bat` (Windows) start a local server on port 8000 and open the app in your default browser.
 - **Responsive**: collapses to a single column on small screens.
 
 ---
@@ -46,6 +47,15 @@ npx serve -p 8000
 ```
 
 Then open <http://localhost:8000> in your browser.
+
+**Option C — One-click launch script**
+
+Start the server and open the browser in a single command:
+
+- macOS / Linux / WSL: `./start.sh`
+- Windows: double-click `start.bat` (or run it in a terminal)
+
+The script uses Python's built-in server and opens <http://localhost:8000> automatically.
 
 ### 3. Configure the YouTube Data API key (optional but recommended)
 

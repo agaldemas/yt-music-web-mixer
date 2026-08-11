@@ -19,6 +19,7 @@ Application web **sans serveur** (HTML + JS pur) permettant de charger 2 morceau
 - **Affichage séparé des volumes A/B** : la barre de crossfade affiche le pourcentage de volume de chaque voie individuellement.
 - **Curseur de crossfade style mixage** : rectangle 15×30px avec curseur `ew-resize`, comme un fader de console matérielle.
 - **Persistance** via `localStorage` : clé API, dernières requêtes et derniers videoIds sauvegardés. Les requêtes sont restaurées dans les champs de recherche au reload.
+- **Scripts de lancement en un clic** : `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) démarrent un serveur local sur le port 8000 et ouvrent l'app dans le navigateur par défaut.
 - **Responsive** : passe en une colonne sur petit écran.
 
 ---
@@ -46,6 +47,15 @@ npx serve -p 8000
 ```
 
 Puis ouvrez <http://localhost:8000> dans votre navigateur.
+
+**Option C — Script de lancement en un clic**
+
+Démarrez le serveur et ouvrez le navigateur en une seule commande :
+
+- macOS / Linux / WSL : `./start.sh`
+- Windows : double-cliquez sur `start.bat` (ou lancez-le dans un terminal)
+
+Le script utilise le serveur intégré de Python et ouvre <http://localhost:8000> automatiquement.
 
 ### 3. Configurer la clé API YouTube Data (optionnel mais recommandé)
 

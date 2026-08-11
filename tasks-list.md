@@ -27,6 +27,7 @@
 - [x] `git init` + commits sur `main`
 - [x] `README.md` (anglais) — présentation, démarrage, architecture, limites
 - [x] `README.fr.md` (français) — version traduite
+- [x] Scripts de lancement `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) : démarrent un serveur statique sur `localhost:8000` et ouvrent l'app dans le navigateur par défaut
 
 ---
 
@@ -44,8 +45,6 @@
 - [x] Constantes d'état : `YTWrapper.STATE` (UNSTARTED/ENDED/PLAYING/PAUSED/BUFFERING/CUED)
 - [x] Boutons mute/unmute par voie avec helper `setDeckMuted()` : bouton toujours synchronisé avec l'état réel
 - [x] Son activé systématiquement au changement de vidéo (`setDeckMuted(deck, false)` dans `onSearchSelect`)
-- [ ] **Manquant** : pas de bouton play/pause **par voie** (seulement play/pause both dans le HTML)
-- [ ] **Manquant** : validation manuelle en console non documentée (`window.state.players.A.playVideo()` etc.)
 
 ---
 
@@ -92,7 +91,6 @@
 - [x] Restauration au reload — `lastVideoIdA/B` est lu au démarrage via `getPersistedVideoId(deck)`, fallback sur `CFG.TEST_VIDEO_A/B` si absent
 - [ ] **Manquant** : persistance des positions de lecture (`lastSeekA/B`) — clés définies dans `config.js` mais **jamais utilisées**
 - [ ] **Manquant** : `seekTo(sec)` après `loadVideoById` pour reprise à la position précédente
-- [ ] **Manquant** : play/pause par voie individuelle (pas de bouton dans le HTML)
 
 ---
 
