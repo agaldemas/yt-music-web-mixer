@@ -26,3 +26,5 @@ build/
 # Sauvegardes
 *.bak
 *.tmp
+# ne pas publier
+.env
