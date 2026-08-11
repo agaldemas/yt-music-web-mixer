@@ -9,7 +9,7 @@ Application web **sans serveur** (HTML + JS pur) permettant de charger 2 morceau
 ## ✨ Fonctionnalités
 
 - **2 voies côte à côte** (A à gauche, B à droite), chacune avec son lecteur YouTube et sa barre de recherche.
-- **Recherche YouTube** par mot-clé (nécessite une clé API YouTube Data) **ou** saisie manuelle d'une URL / ID vidéo.
+- **Recherche YouTube** par mot-clé (clé API YouTube Data optionnelle) **ou** saisie manuelle d'une URL / ID vidéo. Sans clé, l'app reste pleinement utilisable via le fallback URL/ID — la recherche affiche simplement un avertissement non bloquant.
 - **Crossfader A↔B** (0 = full A, 100 = full B, 50 = équilibré) avec courbe *equal-power* pour éviter le creux de niveau au milieu.
 - **Volume master** global (0–100%).
 - **Boutons mute/unmute par voie** (obligatoire pour contourner les politiques d'autoplay des navigateurs).
@@ -57,13 +57,13 @@ Démarrez le serveur et ouvrez le navigateur en une seule commande :
 
 Le script utilise le serveur intégré de Python et ouvre <http://localhost:8000> automatiquement.
 
-### 3. Configurer la clé API YouTube Data (optionnel mais recommandé)
+### 3. Configurer la clé API YouTube Data (optionnel)
 
 - Récupérez une clé sur [Google Cloud Console](https://console.cloud.google.com/) (API *YouTube Data API v3*).
 - Ouvrez l'app → ⚙️ **Paramètres** → collez votre clé.
 - La clé est stockée localement dans votre navigateur (`localStorage`), jamais envoyée ailleurs que vers Google.
 
-> Sans clé, utilisez le **fallback manuel** : collez une URL YouTube (`youtu.be/...`, `watch?v=...`) ou un ID vidéo brut dans le champ de recherche.
+> Sans clé, l'app fonctionne toujours : collez une URL YouTube (`youtu.be/...`, `watch?v=...`) ou un ID vidéo brut dans le champ de recherche. La recherche par mot-clé affiche un avertissement non bloquant. Le rate limiting (quota dépassé / 429) est aussi géré proprement — le panneau affiche un avertissement plutôt qu'une erreur, et vous pouvez basculer sur la saisie URL/ID.
 
 ---
 

@@ -9,7 +9,7 @@ A **serverless** web app (plain HTML + JS) that lets you load 2 YouTube tracks s
 ## ✨ Features
 
 - **2 side-by-side decks** (A on the left, B on the right), each with its own YouTube player and search bar.
-- **YouTube search** by keyword (requires a YouTube Data API key) **or** manual entry of a URL / video ID.
+- **YouTube search** by keyword (optional YouTube Data API key) **or** manual entry of a URL / video ID. Without a key, the app stays fully usable via the URL/ID fallback — search just shows a warning instead of blocking.
 - **A↔B crossfader** (0 = full A, 100 = full B, 50 = balanced) with an *equal-power* curve to avoid the level dip in the middle.
 - **Global master volume** (0–100%).
 - **Per-deck mute/unmute buttons** (required to work around browser autoplay policies).
@@ -57,13 +57,13 @@ Start the server and open the browser in a single command:
 
 The script uses Python's built-in server and opens <http://localhost:8000> automatically.
 
-### 3. Configure the YouTube Data API key (optional but recommended)
+### 3. Configure the YouTube Data API key (optional)
 
 - Get a key from [Google Cloud Console](https://console.cloud.google.com/) (enable the *YouTube Data API v3*).
 - Open the app → ⚙️ **Settings** → paste your key.
 - The key is stored locally in your browser (`localStorage`) and is never sent anywhere except Google.
 
-> Without a key, use the **manual fallback**: paste a YouTube URL (`youtu.be/...`, `watch?v=...`) or a raw video ID into the search field.
+> Without a key, the app still works: paste a YouTube URL (`youtu.be/...`, `watch?v=...`) or a raw video ID into the search field. Keyword search shows a non-blocking warning. Rate-limiting (quota exceeded / 429) is also handled gracefully — the panel shows a warning instead of an error, and you can fall back to URL/ID entry.
 
 ---
 

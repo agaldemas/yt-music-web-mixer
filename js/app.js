@@ -239,7 +239,7 @@
       SEARCH.setApiKey(value);
       updateButtonIndicator();
       if (value) showStatus('Clé enregistrée. Vous pouvez maintenant lancer des recherches.', true);
-      else showStatus('Clé supprimée. Seules les URL YouTube sont acceptées dans la recherche.', true);
+      else showStatus('Clé supprimée. La recherche par mot-clé est désactivée (mode URL/ID uniquement).', true);
       // Fermer après un court délai pour laisser lire
       setTimeout(closeModal, 1100);
     });

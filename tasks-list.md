@@ -68,6 +68,8 @@
 - [x] Affichage résultats : vignette + titre + durée formatée (`PT3M45S` → `3:45`)
 - [x] États UI du panneau : `idle`, `loading`, `results`, `error`, `no-results`
 - [x] Gestion d'erreurs : 403/429 (quota), 400 (clé invalide), réseau/CORS, pas de résultats
+- [x] Clé API optionnelle : sans clé, la recherche par mot-clé affiche un warning non bloquant (`UI_STATE.WARNING`) au lieu d'une erreur ; l'app reste utilisable via le fallback URL/ID
+- [x] Rate limiting géré proprement : 403/429 → warning (non bloquant) au lieu d'erreur, l'utilisateur peut basculer sur la saisie URL/ID ou réessayer plus tard
 - [x] Fallback sans clé : saisie URL (`youtu.be/...`, `watch?v=...`, `/shorts/...`, `/embed/...`) ou ID brut → extraction `videoId`
 - [x] Sélection résultat → `onSelect(videoId)` → `onSearchSelect(deck, videoId)` dans `app.js` → `loadVideoById`
 - [x] UI de configuration de la clé API (⚙️ Paramètres — modal complète avec validation format `AIza…`, persistance `localStorage`)

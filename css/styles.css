@@ -392,6 +392,16 @@ input { font-family: inherit; }
   border: 1px solid #7f1d1d;
   color: #fecaca;
 }
+.search-state-warning {
+  background: #2a2410;
+  border: 1px solid #6b5b1f;
+  color: #fde68a;
+}
+.search-state-warning {
+  background: #2a2410;
+  border: 1px solid #6b5b1f;
+  color: #fde68a;
+}
 
 /* Une carte résultat */
 .search-result {

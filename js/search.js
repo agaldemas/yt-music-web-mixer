@@ -18,6 +18,7 @@
     LOADING: 'loading',
     RESULTS: 'results',
     ERROR: 'error',
+    WARNING: 'warning', // état non bloquant (pas de clé API, quota dépassé…)
     NO_RESULTS: 'no-results',
   };
 
@@ -149,6 +150,10 @@
       case UI_STATE.NO_RESULTS:
         panelEl.innerHTML = '<div class="search-state search-state-no-results">'
           + escapeHtml(payload || 'Aucun résultat pour cette recherche.') + '</div>';
+        return;
+      case UI_STATE.WARNING:
+        panelEl.innerHTML = '<div class="search-state search-state-warning">⚠️ '
+          + escapeHtml(payload || 'Avertissement.') + '</div>';
         return;
       case UI_STATE.ERROR:
         panelEl.innerHTML = '<div class="search-state search-state-error">⚠️ '
@@ -367,9 +372,11 @@
       // 2) Sinon, recherche API — il faut une clé
       const apiKey = getApiKey();
       if (!apiKey) {
-        setState(UI_STATE.ERROR,
-          'Aucune clé API configurée. Ouvrir ⚙️ Paramètres pour en ajouter une, '
-          + 'ou coller une URL YouTube (youtu.be/…) dans le champ.');
+        // Pas de clé : non bloquant, on affiche un warning et on reste utilisable.
+        setState(UI_STATE.WARNING,
+          'Aucune clé API configurée — la recherche par mot-clé est indisponible. '
+          + 'Coller une URL YouTube (youtu.be/…, watch?v=…) ou un ID vidéo dans le champ, '
+          + 'ou ouvrir ⚙️ Paramètres pour ajouter une clé.');
         return;
       }
 
@@ -434,6 +441,13 @@
       } catch (err) {
         const info = classifyError(err);
         if (info.kind === 'abort') return; // silencieux, une nouvelle requête a pris le relais
+        // Quota / rate limiting : non bloquant. L'utilisateur peut retenter
+        // ou coller une URL directement. On affiche un warning, pas une erreur.
+        if (info.kind === 'quota') {
+          setState(UI_STATE.WARNING, info.message);
+          onError(info);
+          return;
+        }
         setState(UI_STATE.ERROR, info.message);
         onError(info);
       }
