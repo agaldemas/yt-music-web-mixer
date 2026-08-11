@@ -65,7 +65,7 @@ You only need a key for **keyword search**. It is free to create, but Google app
 2. Create a project: use the project selector at the top of the page → **New project** → give it any name (for example, `YT Music Mixer`) → **Create**. If you already have a project selected, you can use it instead.
 3. In the left menu, open **APIs & Services** → **Library**. Search for **YouTube Data API v3**, open it, then click **Enable**.
 4. Open **APIs & Services** → **Credentials** → **Create credentials** → **API key**. Google displays a new key: click the copy button.
-5. Return to the mixer, open ⚙️ **Settings**, paste the key, and save. You can now search by track name in either deck.
+5. Return to the mixer, open ⚙️ **Settings**, paste the key, and save. You can now search by text/track name in either deck.
 
 The key is stored only in this browser (`localStorage`) and is sent only to Google when the app performs a search. Do not share it or commit it to a public repository.
 
