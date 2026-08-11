@@ -89,7 +89,7 @@
   - [x] Clé API (`youtubeApiKey`) — lu/écrit dans `search.js`, modal dans `app.js`
   - [x] Dernière requête par voie (`lastSearchQueryA/B`) — persistée dans `search.js`, restaurée dans `app.js` au démarrage
   - [x] Dernier videoId par voie (`lastVideoIdA/B`) — persisté dans `app.js` (`persistVideoId`)
-- [ ] **Manquant** : restauration au reload — `lastVideoIdA/B` est persisté mais **jamais relu** au démarrage
+- [x] Restauration au reload — `lastVideoIdA/B` est lu au démarrage via `getPersistedVideoId(deck)`, fallback sur `CFG.TEST_VIDEO_A/B` si absent
 - [ ] **Manquant** : persistance des positions de lecture (`lastSeekA/B`) — clés définies dans `config.js` mais **jamais utilisées**
 - [ ] **Manquant** : `seekTo(sec)` après `loadVideoById` pour reprise à la position précédente
 - [ ] **Manquant** : play/pause par voie individuelle (pas de bouton dans le HTML)

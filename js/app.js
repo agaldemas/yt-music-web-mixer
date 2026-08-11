@@ -82,6 +82,12 @@
     } catch (e) { /* ignore */ }
   }
 
+  // Lit le dernier videoId persisté pour une voie (ou '' si absent)
+  function getPersistedVideoId(deck) {
+    const key = (deck === 'A') ? CFG.STORAGE_KEYS.LAST_VIDEO_A : CFG.STORAGE_KEYS.LAST_VIDEO_B;
+    try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
+  }
+
   // ===== Sélection depuis recherche =====
 
   // Appelé par search.js quand l'utilisateur choisit un résultat
@@ -365,8 +371,11 @@
       showGlobalError(apiErrorMessage);
     });
 
-    createDeckPlayer('A', CFG.TEST_VIDEO_A);
-    createDeckPlayer('B', CFG.TEST_VIDEO_B);
+    // Restaurer les derniers videoIds depuis localStorage, fallback sur les vidéos de test
+    var videoIdA = getPersistedVideoId('A') || CFG.TEST_VIDEO_A;
+    var videoIdB = getPersistedVideoId('B') || CFG.TEST_VIDEO_B;
+    createDeckPlayer('A', videoIdA);
+    createDeckPlayer('B', videoIdB);
 
     Mixer.init(state.players);
   }
