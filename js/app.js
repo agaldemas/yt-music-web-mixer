@@ -89,6 +89,12 @@
     state.videoIds[deck] = videoId;
     persistVideoId(deck, videoId);
 
+    // Marque le résultat comme "en cours" dans la grille (si elle est affichée)
+    const search = state.searches[deck];
+    if (search && typeof search.markActive === 'function') {
+      search.markActive(videoId);
+    }
+
     const player = state.players[deck];
     if (!player) return;
 

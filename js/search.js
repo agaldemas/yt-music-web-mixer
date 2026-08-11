@@ -97,7 +97,7 @@
   // ===== Rendu =====
 
   // Construit le DOM d'un résultat (bouton cliquable : vignette + titre + durée)
-  function buildResultEl(video, onSelect) {
+  function buildResultEl(video, onSelect, onMarkPlayed) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'search-result';
@@ -123,7 +123,11 @@
 
     btn.innerHTML = html;
     btn.addEventListener('click', function () {
+      // On NE vide PAS le panneau de résultats après sélection : on conserve
+      // la grille pour que l'utilisateur puisse changer de piste rapidement.
+      // Le panneau sera remplacé à la prochaine recherche, ou vidé via "✕ Effacer".
       onSelect(video.id);
+      if (typeof onMarkPlayed === 'function') onMarkPlayed(video.id);
     });
     return btn;
   }
@@ -246,6 +250,56 @@
 
     function setState(state, payload) {
       renderPanel(panelEl, state, payload);
+      syncClearButton(state);
+    }
+
+    // Marque un résultat comme "en cours de lecture" (badge ▶).
+    // Appelé après chaque sélection et au reload si lastVideoId est connu.
+    function markActive(videoId) {
+      if (!videoId) return;
+      panelEl.querySelectorAll('.search-result.is-active').forEach(function (el) {
+        el.classList.remove('is-active');
+        const badge = el.querySelector('.search-result-badge');
+        if (badge) badge.remove();
+      });
+      const el = panelEl.querySelector('.search-result[data-video-id="' + videoId + '"]');
+      if (!el) return;
+      el.classList.add('is-active');
+      // Ajoute un badge "▶ En cours" si pas déjà présent
+      if (!el.querySelector('.search-result-badge')) {
+        const badge = document.createElement('span');
+        badge.className = 'search-result-badge';
+        badge.textContent = '▶ En cours';
+        el.appendChild(badge);
+      }
+    }
+
+    // Bouton "✕ Effacer les résultats" : visible uniquement en état 'results'.
+    function ensureClearButton() {
+      let btn = panelEl.parentElement.querySelector('.deck-results-clear[data-deck="' + deck + '"]');
+      if (btn) return btn;
+      // On l'insère juste avant le panneau (dans .deck-search ou son parent)
+      const container = panelEl.parentElement;
+      if (!container) return null;
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'deck-results-clear';
+      btn.dataset.deck = deck;
+      btn.setAttribute('aria-label', 'Effacer les résultats de la voie ' + deck);
+      btn.title = 'Effacer les résultats';
+      btn.textContent = '✕';
+      btn.hidden = true;
+      btn.addEventListener('click', function () {
+        clear();
+      });
+      panelEl.insertAdjacentElement('beforebegin', btn);
+      return btn;
+    }
+
+    function syncClearButton(state) {
+      const btn = ensureClearButton();
+      if (!btn) return;
+      btn.hidden = state !== UI_STATE.RESULTS;
     }
 
     // Persistance de la dernière requête (par voie)
@@ -329,10 +383,11 @@
 
         setState(UI_STATE.RESULTS);
         videos.forEach(function (v) {
-          panelEl.appendChild(buildResultEl(v, function (id) {
-            setState(UI_STATE.IDLE);
-            onSelect(id);
-          }));
+          panelEl.appendChild(buildResultEl(
+            v,
+            function (id) { onSelect(id); },
+            markActive
+          ));
         });
       } catch (err) {
         const info = classifyError(err);
@@ -365,6 +420,7 @@
     return {
       search: performSearch,
       clear: clear,
+      markActive: markActive,
       setApiKey: setApiKey,
       getApiKey: getApiKey,
       UI_STATE: UI_STATE,
