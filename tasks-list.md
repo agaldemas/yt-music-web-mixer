@@ -73,7 +73,9 @@
 - [x] Sélection résultat → `onSelect(videoId)` → `onSearchSelect(deck, videoId)` dans `app.js` → `loadVideoById`
 - [x] UI de configuration de la clé API (⚙️ Paramètres — modal complète avec validation format `AIza…`, persistance `localStorage`)
 - [x] Recherche annulable (`AbortController` : une nouvelle recherche annule la précédente)
+- [x] Boutons de pagination ‹ › dans la barre d'outils résultats (à gauche du bouton `deck-results-clear`), gérant `nextPageToken`/`prevPageToken` de l'API YouTube Data. Icônes triangle SVG, tooltips adaptés, boutons `disabled` quand pas de page dispo.
 - [x] Les vignettes des résultats de recherche sont conservées après sélection d'une vidéo dans chaque voie. Le panneau est remplacé uniquement lors d'une nouvelle recherche, ou vidé manuellement via un bouton "✕ Effacer les résultats" placé sous le champ de recherche. Le résultat actuellement en lecture est marqué visuellement (`.search-result.is-active` + badge "▶ En cours") — `search.markActive(videoId)` exposé par `search.js`, appelé par `app.js#onSearchSelect`.
+- [x] Boutons flèches `<` et `>` dans la barre d'outils résultats, à gauche du bouton `deck-results-clear`, pour naviguer dans l'historique des résultats de recherche de la voie concernée (précédent / suivant). Boutons désactivés aux bornes de l'historique. ✅ Fonctionne.
 
 ---
 

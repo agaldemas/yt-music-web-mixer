@@ -321,20 +321,48 @@ input { font-family: inherit; }
 .deck-results[data-state="idle"] { display: none; }
 
 /* Bouton "✕ Effacer les résultats" : inséré juste avant .deck-results */
-.deck-results-clear {
-  display: block;
-  width: 100%;
+/* Barre d'outils résultats : pagination ‹ › + bouton effacer ✕ */
+.deck-results-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 14px;
+  border-bottom: 1px solid #232733;
+  background: transparent;
+}
+.deck-results-toolbar[hidden] { display: none; }
+
+/* Boutons pagination : icônes triangle SVG */
+.deck-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: #1f2430;
+  color: #e7e7ea;
+  border: 1px solid #2e3444;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+.deck-nav-btn:hover:not(:disabled) { background: #272d3b; border-color: #3b82f6; }
+.deck-nav-btn:disabled { opacity: 0.3; cursor: default; }
+.deck-nav-btn svg { display: block; }
+
+/* Bouton effacer : pousse à droite dans la toolbar flex */
+.deck-results-toolbar .deck-results-clear {
+  flex: 1 1 auto;
+  width: auto;
   background: transparent;
   color: #9ca3af;
   border: 0;
-  border-bottom: 1px solid #232733;
-  padding: 4px 14px;
+  padding: 4px 0;
   font-size: 0.8rem;
   text-align: right;
   cursor: pointer;
 }
-.deck-results-clear:hover { color: #e7e7ea; background: #1f2430; }
-.deck-results-clear[hidden] { display: none; }
+.deck-results-toolbar .deck-results-clear:hover { color: #e7e7ea; background: transparent; }
 
 /* État non-resultats : 1 seule colonne centrée */
 .deck-results[data-state="loading"],

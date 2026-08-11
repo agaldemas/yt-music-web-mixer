@@ -160,7 +160,7 @@
   // ===== Appels API =====
 
   // /search?part=snippet&type=video&videoCategoryId=10&q=...&key=...
-  async function callSearchApi(query, apiKey, signal) {
+  async function callSearchApi(query, apiKey, signal, pageToken) {
     const params = new URLSearchParams({
       part: 'snippet',
       type: 'video',
@@ -169,6 +169,7 @@
       maxResults: '10',
       key: apiKey,
     });
+    if (pageToken) params.set('pageToken', pageToken);
     const res = await fetch(API_BASE + '/search?' + params.toString(), { signal });
     if (!res.ok) {
       // On tente de lire le body d'erreur pour classer précisément
@@ -247,10 +248,13 @@
     }
 
     let abortController = null;
+    var prevPageToken = null;
+    var nextPageToken = null;
+    var lastQuery = '';
 
     function setState(state, payload) {
       renderPanel(panelEl, state, payload);
-      syncClearButton(state);
+      syncToolbar(state);
     }
 
     // Marque un résultat comme "en cours de lecture" (badge ▶).
@@ -274,32 +278,64 @@
       }
     }
 
-    // Bouton "✕ Effacer les résultats" : visible uniquement en état 'results'.
-    function ensureClearButton() {
-      let btn = panelEl.parentElement.querySelector('.deck-results-clear[data-deck="' + deck + '"]');
-      if (btn) return btn;
-      // On l'insère juste avant le panneau (dans .deck-search ou son parent)
-      const container = panelEl.parentElement;
-      if (!container) return null;
-      btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'deck-results-clear';
-      btn.dataset.deck = deck;
-      btn.setAttribute('aria-label', 'Effacer les résultats de la voie ' + deck);
-      btn.title = 'Effacer les résultats';
-      btn.textContent = '✕';
-      btn.hidden = true;
-      btn.addEventListener('click', function () {
-        clear();
-      });
-      panelEl.insertAdjacentElement('beforebegin', btn);
-      return btn;
+    // Barre d'outils résultats : boutons pagination ‹ › + bouton effacer ✕
+    var SVG_PREV = '<svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><polygon points="10,1 2,6 10,11"/></svg>';
+    var SVG_NEXT = '<svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><polygon points="2,1 10,6 2,11"/></svg>';
+
+    function ensureToolbar() {
+      var toolbar = panelEl.parentElement.querySelector('.deck-results-toolbar[data-deck="' + deck + '"]');
+      if (toolbar) return toolbar;
+      toolbar = document.createElement('div');
+      toolbar.className = 'deck-results-toolbar';
+      toolbar.dataset.deck = deck;
+      toolbar.hidden = true;
+
+      var prevBtn = document.createElement('button');
+      prevBtn.type = 'button';
+      prevBtn.className = 'deck-nav-btn deck-nav-prev';
+      prevBtn.setAttribute('aria-label', 'Résultats précédents');
+      prevBtn.title = 'Résultats précédents';
+      prevBtn.innerHTML = SVG_PREV;
+      prevBtn.addEventListener('click', function () { loadPage('prev'); });
+
+      var nextBtn = document.createElement('button');
+      nextBtn.type = 'button';
+      nextBtn.className = 'deck-nav-btn deck-nav-next';
+      nextBtn.setAttribute('aria-label', 'Résultats suivants');
+      nextBtn.title = 'Résultats suivants';
+      nextBtn.innerHTML = SVG_NEXT;
+      nextBtn.addEventListener('click', function () { loadPage('next'); });
+
+      var clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'deck-results-clear';
+      clearBtn.setAttribute('aria-label', 'Effacer les résultats de la voie ' + deck);
+      clearBtn.title = 'Effacer les résultats';
+      clearBtn.textContent = '✕';
+      clearBtn.addEventListener('click', function () { clear(); });
+
+      toolbar.appendChild(prevBtn);
+      toolbar.appendChild(nextBtn);
+      toolbar.appendChild(clearBtn);
+      panelEl.insertAdjacentElement('beforebegin', toolbar);
+      return toolbar;
     }
 
-    function syncClearButton(state) {
-      const btn = ensureClearButton();
-      if (!btn) return;
-      btn.hidden = state !== UI_STATE.RESULTS;
+    function syncToolbar(state) {
+      var toolbar = ensureToolbar();
+      if (!toolbar) return;
+      toolbar.hidden = state !== UI_STATE.RESULTS;
+      var prevBtn = toolbar.querySelector('.deck-nav-prev');
+      var nextBtn = toolbar.querySelector('.deck-nav-next');
+      if (prevBtn) prevBtn.disabled = !prevPageToken;
+      if (nextBtn) nextBtn.disabled = !nextPageToken;
+    }
+
+    // Charge la page précédente ou suivante via le pageToken de l'API YouTube
+    function loadPage(direction) {
+      var token = (direction === 'next') ? nextPageToken : prevPageToken;
+      if (!token || !lastQuery) return;
+      performSearch(lastQuery, token);
     }
 
     // Persistance de la dernière requête (par voie)
@@ -308,7 +344,7 @@
       persist(key, q);
     }
 
-    async function performSearch(query) {
+    async function performSearch(query, pageToken) {
       query = String(query || '').trim();
       if (!query) {
         if (abortController) abortController.abort();
@@ -316,11 +352,13 @@
         return;
       }
 
-      // 1) Fallback URL / ID brut : pas besoin de clé API
+      // 1) Fallback URL / ID brut : pas besoin de clé API (pas de pagination)
       const directId = extractVideoId(query);
       if (directId) {
         if (abortController) abortController.abort();
         persistQuery(query);
+        prevPageToken = null;
+        nextPageToken = null;
         setState(UI_STATE.IDLE);
         onSelect(directId);
         return;
@@ -341,10 +379,14 @@
       const signal = abortController.signal;
 
       setState(UI_STATE.LOADING);
+      lastQuery = query;
       persistQuery(query);
 
       try {
-        const data = await callSearchApi(query, apiKey, signal);
+        const data = await callSearchApi(query, apiKey, signal, pageToken);
+        // Stocker les tokens de pagination renvoyés par l'API YouTube
+        nextPageToken = data.nextPageToken || null;
+        prevPageToken = data.prevPageToken || null;
         const items = (data && data.items) || [];
         const videoIds = items
           .map(function (i) { return i.id && i.id.videoId; })
@@ -399,6 +441,9 @@
 
     function clear() {
       if (abortController) abortController.abort();
+      prevPageToken = null;
+      nextPageToken = null;
+      lastQuery = '';
       setState(UI_STATE.IDLE);
       inputEl.value = '';
     }
