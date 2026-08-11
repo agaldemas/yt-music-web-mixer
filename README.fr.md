@@ -57,13 +57,34 @@ Démarrez le serveur et ouvrez le navigateur en une seule commande :
 
 Le script utilise le serveur intégré de Python et ouvre <http://localhost:8000> automatiquement.
 
-### 3. Configurer la clé API YouTube Data (optionnel)
+### 3. Créer et configurer une clé API YouTube Data (optionnel)
 
-- Récupérez une clé sur [Google Cloud Console](https://console.cloud.google.com/) (API *YouTube Data API v3*).
-- Ouvrez l'app → ⚙️ **Paramètres** → collez votre clé.
-- La clé est stockée localement dans votre navigateur (`localStorage`), jamais envoyée ailleurs que vers Google.
+Une clé est nécessaire uniquement pour la **recherche par mot-clé**. Sa création est gratuite et ne demande aucune connaissance en programmation ; Google applique toutefois un quota quotidien d'utilisation.
+
+1. Ouvrez la [Google Cloud Console](https://console.cloud.google.com/) et connectez-vous avec votre compte Google.
+2. Créez un projet : cliquez sur le sélecteur de projet en haut de la page → **Nouveau projet** → donnez-lui un nom, par exemple `YT Music Mixer` → **Créer**. Si un projet est déjà sélectionné, vous pouvez aussi l'utiliser.
+3. Dans le menu de gauche, ouvrez **API et services** → **Bibliothèque**. Recherchez **YouTube Data API v3**, ouvrez le résultat, puis cliquez sur **Activer**.
+4. Ouvrez **API et services** → **Identifiants** → **Créer des identifiants** → **Clé API**. Google affiche alors une nouvelle clé : cliquez sur l'icône de copie.
+5. Revenez dans le mixer, ouvrez ⚙️ **Paramètres**, collez la clé puis enregistrez-la. Vous pouvez maintenant rechercher un morceau par son nom dans les deux voies.
+
+La clé est enregistrée uniquement dans ce navigateur (`localStorage`) et n'est envoyée qu'à Google lors d'une recherche. Ne la partagez pas et ne la publiez jamais dans un dépôt public.
+
+#### Recommandé : restreindre la clé
+
+Dans la Google Cloud Console, ouvrez **API et services** → **Identifiants**, sélectionnez la clé créée, puis choisissez **Restreindre la clé** :
+
+- Sous **Restrictions relatives aux API**, choisissez de restreindre la clé et n'autorisez que **YouTube Data API v3**.
+- Si vous hébergez l'application sur un site web, sous **Restrictions liées aux applications**, choisissez **Sites Web** et ajoutez l'adresse de ce site.
+- Pour une utilisation locale, ajoutez `http://localhost:8000/*` si vous utilisez le script de lancement fourni ou les commandes ci-dessus. Ajoutez l'adresse et le port exacts que vous utilisez : une restriction ne contenant pas l'adresse ouverte dans le navigateur empêchera la recherche de fonctionner.
 
 > Sans clé, l'app fonctionne toujours : collez une URL YouTube (`youtu.be/...`, `watch?v=...`) ou un ID vidéo brut dans le champ de recherche. La recherche par mot-clé affiche un avertissement non bloquant. Le rate limiting (quota dépassé / 429) est aussi géré proprement — le panneau affiche un avertissement plutôt qu'une erreur, et vous pouvez basculer sur la saisie URL/ID.
+
+#### En cas de problème
+
+- **« Clé API invalide » / 400 :** copiez à nouveau la clé entière, puis vérifiez que **YouTube Data API v3** est activée dans le même projet Google Cloud que cette clé.
+- **La recherche échoue après avoir restreint la clé :** vérifiez l'adresse de site Web autorisée. Elle doit correspondre exactement à celle affichée dans le navigateur, y compris `http`/`https` et le port.
+- **Quota dépassé / 403 / 429 :** le quota quotidien du projet Google est atteint. Attendez sa réinitialisation, utilisez un autre projet/une autre clé, ou saisissez une URL/ID YouTube.
+- **La recherche échoue en ouvrant directement `index.html` :** démarrez le serveur local décrit à l'étape 2, puis utilisez `http://localhost:8000`. Certains navigateurs bloquent les requêtes API depuis les pages `file://`.
 
 ---
 

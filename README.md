@@ -59,9 +59,23 @@ The script uses Python's built-in server and opens <http://localhost:8000> autom
 
 ### 3. Configure the YouTube Data API key (optional)
 
-- Get a key from [Google Cloud Console](https://console.cloud.google.com/) (enable the *YouTube Data API v3*).
-- Open the app → ⚙️ **Settings** → paste your key.
-- The key is stored locally in your browser (`localStorage`) and is never sent anywhere except Google.
+You only need a key for **keyword search**. It is free to create, but Google applies a daily usage quota. No programming knowledge is required:
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and sign in with your Google account.
+2. Create a project: use the project selector at the top of the page → **New project** → give it any name (for example, `YT Music Mixer`) → **Create**. If you already have a project selected, you can use it instead.
+3. In the left menu, open **APIs & Services** → **Library**. Search for **YouTube Data API v3**, open it, then click **Enable**.
+4. Open **APIs & Services** → **Credentials** → **Create credentials** → **API key**. Google displays a new key: click the copy button.
+5. Return to the mixer, open ⚙️ **Settings**, paste the key, and save. You can now search by track name in either deck.
+
+The key is stored only in this browser (`localStorage`) and is sent only to Google when the app performs a search. Do not share it or commit it to a public repository.
+
+#### Recommended: restrict the key
+
+In Google Cloud Console, open **APIs & Services** → **Credentials**, select the key you created, and choose **Restrict key**:
+
+- Under **API restrictions**, select **Restrict key** and allow only **YouTube Data API v3**.
+- If you host the app on a website, under **Application restrictions** choose **Websites** and add that site's address.
+- For local use, add `http://localhost:8000/*` if you use the included launch script or the commands above. Add the exact address and port you actually use. Restrictions that omit the address in use will make search fail.
 
 > Without a key, the app still works: paste a YouTube URL (`youtu.be/...`, `watch?v=...`) or a raw video ID into the search field. Keyword search shows a non-blocking warning. Rate-limiting (quota exceeded / 429) is also handled gracefully — the panel shows a warning instead of an error, and you can fall back to URL/ID entry.
 
