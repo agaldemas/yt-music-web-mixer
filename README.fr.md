@@ -117,3 +117,27 @@ yt-music-web-mixer/
 ## 📜 Licence
 
 Projet personnel/éducatif. À utiliser dans le respect des conditions d'utilisation de YouTube.
+
+---
+
+## 🤖 Comment ce projet a été réalisé
+
+Ce projet a été développé grâce à une collaboration entre plusieurs agents de codage et modèles d'IA, sous la direction de l'auteur :
+
+- **[Zed](https://zed.dev)** — l'agent de codage intégré à l'éditeur Zed
+- **[claude-code](https://www.npmjs.com/package/@anthropic-ai/claude-code)** — l'assistant de codage en ligne de commande d'Anthropic
+- **[wrapper-scionos](https://www.npmjs.com/package/wrapper-scionos)** — un wrapper utilisé pour orchestrer les appels aux différents agents et modèles
+
+Les modèles qui ont alimenté ces agents :
+
+- **GLM-5.2** (Zhipu AI)
+- **Kimi-K3** (Moonshot AI)
+- **MiniMax M3** (MiniMax)
+
+Tous les agents et modèles ont été pilotés et coordonnés par l'auteur, qui a défini l'architecture, révisé les résultats et assemblé le code final.
+
+---
+
+## 🙏 Remerciements
+
+Merci à **[RouterLab.ch](https://routerlab.ch/)** pour l'accès aux différents modèles utilisés dans ce projet.
