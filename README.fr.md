@@ -60,7 +60,7 @@ Le script utilise le serveur intégré de Python et ouvre <http://localhost:8000
 
 ### 3. Créer et configurer une clé API YouTube Data (optionnel)
 
-Une clé est nécessaire uniquement pour la **recherche par mot-clé**. Sa création est gratuite et ne demande aucune connaissance en programmation ; Google applique toutefois un quota quotidien d'utilisation.
+La recherche par mot-clé fonctionne **même sans clé** grâce à l'API publique Piped. Une clé API YouTube Data reste **optionnelle** : elle offre des résultats plus pertinents pour la musique, la pagination officielle, et évite la dépendance aux instances Piped (parfois lentes ou indisponibles). Sa création est gratuite et ne demande aucune connaissance en programmation ; Google applique toutefois un quota quotidien d'utilisation.
 
 1. Ouvrez la [Google Cloud Console](https://console.cloud.google.com/) et connectez-vous avec votre compte Google.
 2. Créez un projet : cliquez sur le sélecteur de projet en haut de la page → **Nouveau projet** → donnez-lui un nom, par exemple `YT Music Mixer` → **Créer**. Si un projet est déjà sélectionné, vous pouvez aussi l'utiliser.
@@ -88,6 +88,7 @@ Dans la Google Cloud Console, ouvrez **API et services** → **Identifiants**, s
 - **La recherche échoue après avoir restreint la clé :** vérifiez l'adresse de site Web autorisée. Elle doit correspondre exactement à celle affichée dans le navigateur, y compris `http`/`https` et le port.
 - **Quota dépassé / 403 / 429 :** le quota quotidien du projet Google est atteint. Attendez sa réinitialisation, utilisez un autre projet/une autre clé, ou saisissez une URL/ID YouTube.
 - **La recherche échoue en ouvrant directement `index.html` :** démarrez le serveur local décrit à l'étape 2, puis utilisez `http://localhost:8000`. Certains navigateurs bloquent les requêtes API depuis les pages `file://`.
+- **Piped ne renvoie rien (sans clé API) :** les instances publiques Piped peuvent être toutes indisponibles. Configurez une clé API YouTube Data (étape 3) ou collez directement une URL/ID vidéo.
 
 ---
 
@@ -103,7 +104,7 @@ yt-music-web-mixer/
 └── js/
     ├── config.js        # constantes, lecture clé API depuis localStorage
     ├── youtube.js       # wrapper YouTube IFrame API (chargement, joueurs A/B)
-    ├── search.js        # recherche YouTube Data API + affichage résultats
+    ├── search.js        # recherche YouTube Data API + Piped (sans clé) + affichage résultats
     ├── mixer.js         # logique crossfade (slider → volumes A/B)
     └── app.js           # bootstrap, câblage événements, état global
 ```

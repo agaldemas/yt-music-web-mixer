@@ -60,7 +60,7 @@ The script uses Python's built-in server and opens <http://localhost:8000> autom
 
 ### 3. Configure the YouTube Data API key (optional)
 
-You only need a key for **keyword search**. It is free to create, but Google applies a daily usage quota. No programming knowledge is required:
+Keyword search works **even without a key** thanks to the public Piped API. A YouTube Data API key remains **optional**: it provides more relevant music results, official pagination, and avoids relying on Piped instances (which can be slow or unavailable). It is free to create, but Google applies a daily usage quota. No programming knowledge is required:
 
 1. Open [Google Cloud Console](https://console.cloud.google.com/) and sign in with your Google account.
 2. Create a project: use the project selector at the top of the page → **New project** → give it any name (for example, `YT Music Mixer`) → **Create**. If you already have a project selected, you can use it instead.
@@ -96,7 +96,7 @@ yt-music-web-mixer/
 └── js/
     ├── config.js        # constants, read API key from localStorage
     ├── youtube.js       # YouTube IFrame API wrapper (loading, A/B players)
-    ├── search.js        # YouTube Data API search + results display
+    ├── search.js        # YouTube Data API + Piped (keyless) search + results display
     ├── mixer.js         # crossfade logic (slider → A/B volumes)
     └── app.js           # bootstrap, event wiring, global state
 ```
