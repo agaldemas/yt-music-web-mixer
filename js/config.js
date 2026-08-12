@@ -10,6 +10,7 @@ window.YT_CONFIG = {
     LAST_SEEK_B: 'lastSeekB',
     CROSSFADE_STEP_PERCENT: 'crossfadeStepPercent',
     CROSSFADE_STEP_INTERVAL_MS: 'crossfadeStepIntervalMs',
+    FORCE_PIPED: 'forcePipedSearch', // forcer la recherche via Piped même si clé API présente
   },
   // Vidéos de test chargées au démarrage (cue, sans lecture auto)
   TEST_VIDEO_A: 'lfmxnzJAbl8',

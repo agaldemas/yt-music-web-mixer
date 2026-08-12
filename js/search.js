@@ -24,7 +24,34 @@
 
   const API_BASE = 'https://www.googleapis.com/youtube/v3';
 
+  // Instances de l'API Piped (frontend YouTube alternatif). CORS activé (*),
+  // renvoie du JSON propre (videoId, titre, vignette, durée, auteur). On les
+  // essaie en cascade : la première qui répond gagne. Liste mise à jour
+  // manuellement — les instances Piped changent souvent.
+  const PIPED_INSTANCES = [
+    'api.piped.private.coffee',
+    'pipedapi.kavin.rocks',
+    'pipedapi.reallyaweso.me',
+    'pipedapi.leptons.org',
+    'pipedapi.adminforge.de',
+  ];
+
+  // Timeout par tentative d'instance Piped (ms). On reste court pour enchaîner
+  // vite sur la suivante si elle ne répond pas.
+  const PIPED_INSTANCE_TIMEOUT_MS = 8000;
+
   // ===== Helpers =====
+
+  // Convertit une durée en secondes vers "M:SS" ou "H:MM:SS"
+  function secondsToDuration(total) {
+    const s = parseInt(total, 10);
+    if (isNaN(s) || s < 0) return '';
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+    return m + ':' + String(sec).padStart(2, '0');
+  }
 
   // Échappement HTML basique (titres, messages d'erreur)
   function escapeHtml(s) {
@@ -87,6 +114,21 @@
     } catch (e) { /* localStorage indisponible */ }
   }
 
+  // Mode PipedSearch : forcer la recherche via l'API Piped même si une clé
+  // API YouTube est configurée. Utile pour préserver le quota Google ou quand
+  // l'API officielle est bloquée. Persisté en localStorage (global, pas par voie).
+  function isPipedForced() {
+    try { return localStorage.getItem(CFG.STORAGE_KEYS.FORCE_PIPED) === '1'; }
+    catch (e) { return false; }
+  }
+
+  function setPipedForced(forced) {
+    try {
+      if (forced) localStorage.setItem(CFG.STORAGE_KEYS.FORCE_PIPED, '1');
+      else localStorage.removeItem(CFG.STORAGE_KEYS.FORCE_PIPED);
+    } catch (e) { /* ignore */ }
+  }
+
   // Sauvegarde une valeur dans localStorage (best-effort)
   function persist(key, value) {
     try {
@@ -117,6 +159,9 @@
     }
     html += '<div class="search-result-info">';
     html += '<span class="search-result-title">' + escapeHtml(video.title) + '</span>';
+    if (video.uploaderName) {
+      html += '<span class="search-result-uploader">' + escapeHtml(video.uploaderName) + '</span>';
+    }
     if (video.duration) {
       html += '<span class="search-result-duration">' + escapeHtml(video.duration) + '</span>';
     }
@@ -209,6 +254,84 @@
     return map;
   }
 
+  // ===== Recherche sans clé via Piped API =====
+  //
+  // Piped est un frontend YouTube alternatif qui expose une API JSON publique
+  // avec CORS activé. On n'a pas besoin de clé Google. On envoie la requête
+  // de l'utilisateur, on récupère une liste de vidéos (videoId, titre,
+  // vignette, durée, auteur), et on les affiche comme les résultats YouTube
+  // Data API. Essai en cascade sur plusieurs instances (elles tombent souvent).
+
+  // fetch() avec timeout : abandonne après ms millisecondes.
+  function fetchWithTimeout(url, ms, signal) {
+    // Combiner le signal d'abort externe (nouvelle recherche) avec un timeout
+    // propre à cette instance : si le serveur ne répond pas vite, on passe à
+    // la suivante plutôt que de bloquer l'utilisateur.
+    const ctrl = new AbortController();
+    const timer = setTimeout(function () { ctrl.abort(); }, ms);
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener('abort', function () { ctrl.abort(); });
+    }
+    return fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'Accept': 'application/json' },
+    }).finally(function () { clearTimeout(timer); });
+  }
+
+  // Appelle une instance Piped et renvoie les items normalisés.
+  async function callPipedInstance(instance, query, signal) {
+    const url = 'https://' + instance + '/search?q='
+      + encodeURIComponent(query) + '&filter=videos';
+    const res = await fetchWithTimeout(url, PIPED_INSTANCE_TIMEOUT_MS, signal);
+    if (!res.ok) {
+      const err = new Error('Piped ' + instance + ' HTTP ' + res.status);
+      err.code = res.status;
+      throw err;
+    }
+    const data = await res.json();
+    const items = (data && data.items) || [];
+    return items.map(function (it) {
+      const id = extractVideoId(it.url) || '';
+      // La vignette passe souvent par un proxy Piped (proxy.<instance>/vi/ID/...).
+      // On garde l'URL telle quelle (safeImgUrl validera le https://).
+      return {
+        id: id,
+        title: it.title || 'Sans titre',
+        uploaderName: it.uploaderName || '',
+        thumbnails: {
+          medium: it.thumbnail ? { url: it.thumbnail } : null,
+          high: it.thumbnail ? { url: it.thumbnail } : null,
+          default: it.thumbnail ? { url: it.thumbnail } : null,
+        },
+        duration: secondsToDuration(it.duration),
+      };
+    }).filter(function (v) { return !!v.id; });
+  }
+
+  // Essaie chaque instance Piped en cascade, renvoie le premier résultat non
+  // vide. Si toutes échouent, lance une erreur network.
+  async function callPipedSearch(query, signal) {
+    let lastErr = null;
+    for (let i = 0; i < PIPED_INSTANCES.length; i++) {
+      const instance = PIPED_INSTANCES[i];
+      try {
+        const videos = await callPipedInstance(instance, query, signal);
+        if (videos.length) return videos; // première instance qui répond + résultats
+        // instance OK mais 0 résultats → on continue au cas où une autre ait
+        // une meilleure indexation (rare, mais coûte peu)
+        lastErr = new Error('Piped ' + instance + ' : aucun résultat');
+      } catch (err) {
+        if (err && err.name === 'AbortError') throw err; // nouvelle recherche/recherche annulée
+        lastErr = err;
+        // instance suivante
+      }
+    }
+    const err = new Error(lastErr ? lastErr.message : 'Toutes les instances Piped ont échoué.');
+    err.kind = 'network';
+    throw err;
+  }
+
   // Transforme une erreur brute en message localisé + type
   function classifyError(err) {
     if (err && err.name === 'AbortError') {
@@ -240,6 +363,7 @@
     const panelEl = document.querySelector('.deck-results[data-deck="' + deck + '"]');
     const inputEl = document.querySelector('.search-input[data-deck="' + deck + '"]');
     const btnEl = document.querySelector('.search-btn[data-deck="' + deck + '"]');
+    const modeBtnEl = document.querySelector('.search-mode-btn[data-deck="' + deck + '"]');
 
     if (!panelEl || !inputEl || !btnEl) {
       // Pas d'éléments DOM = on ne peut rien faire. Retourne une instance no-op.
@@ -369,16 +493,15 @@
         return;
       }
 
-      // 2) Sinon, recherche API — il faut une clé
+      // 2) Sinon, recherche par mot-clé.
+      //    - Si l'utilisateur a configuré une clé API YouTube Data ET n'a pas
+      //      basculé en mode PipedSearch → on utilise l'API officielle
+      //      (résultats les plus pertinents pour la musique, pagination officielle).
+      //    - Sinon (pas de clé OU mode PipedSearch activé) → API publique Piped
+      //      (CORS activé, JSON propre, pas de quota). On obtient quand même
+      //      videoId + titre + vignette + durée, comme avec l'API officielle.
       const apiKey = getApiKey();
-      if (!apiKey) {
-        // Pas de clé : non bloquant, on affiche un warning et on reste utilisable.
-        setState(UI_STATE.WARNING,
-          'Aucune clé API configurée — la recherche par mot-clé est indisponible. '
-          + 'Coller une URL YouTube (youtu.be/…, watch?v=…) ou un ID vidéo dans le champ, '
-          + 'ou ouvrir ⚙️ Paramètres pour ajouter une clé.');
-        return;
-      }
+      const forcePiped = isPipedForced();
 
       // Annuler une recherche précédente en cours
       if (abortController) abortController.abort();
@@ -390,43 +513,54 @@
       persistQuery(query);
 
       try {
-        const data = await callSearchApi(query, apiKey, signal, pageToken);
-        // Stocker les tokens de pagination renvoyés par l'API YouTube
-        nextPageToken = data.nextPageToken || null;
-        prevPageToken = data.prevPageToken || null;
-        const items = (data && data.items) || [];
-        const videoIds = items
-          .map(function (i) { return i.id && i.id.videoId; })
-          .filter(Boolean);
+        let videos;
+        if (apiKey && !forcePiped) {
+          // Recherche via l'API YouTube Data officielle (résultats musique,
+          // pagination par pageToken).
+          const data = await callSearchApi(query, apiKey, signal, pageToken);
+          nextPageToken = data.nextPageToken || null;
+          prevPageToken = data.prevPageToken || null;
+          const items = (data && data.items) || [];
+          const videoIds = items
+            .map(function (i) { return i.id && i.id.videoId; })
+            .filter(Boolean);
 
-        if (!videoIds.length) {
-          setState(UI_STATE.NO_RESULTS, 'Aucun résultat pour « ' + query + ' ».');
-          return;
+          if (!videoIds.length) {
+            setState(UI_STATE.NO_RESULTS, 'Aucun résultat pour « ' + query + ' ».');
+            return;
+          }
+
+          // Durées — best-effort (échec toléré)
+          let durations = {};
+          try {
+            durations = await callVideosApi(videoIds, apiKey, signal);
+          } catch (e) {
+            if (e && e.name === 'AbortError') return; // nouvelle recherche
+            // autre erreur → on continue sans les durées
+          }
+
+          videos = items
+            .filter(function (i) { return i.id && i.id.videoId; })
+            .map(function (i) {
+              const id = i.id.videoId;
+              return {
+                id: id,
+                title: (i.snippet && i.snippet.title) || 'Sans titre',
+                thumbnails: (i.snippet && i.snippet.thumbnails) || {},
+                duration: durations[id] || '',
+              };
+            });
+        } else {
+          // Pas de clé API, OU mode PipedSearch activé par l'utilisateur :
+          // API publique Piped. Pas de pagination (l'endpoint Piped gère sa
+          // propre pagination qu'on n'utilise pas ici).
+          prevPageToken = null;
+          nextPageToken = null;
+          videos = await callPipedSearch(query, signal);
         }
-
-        // Durées — best-effort (échec toléré)
-        let durations = {};
-        try {
-          durations = await callVideosApi(videoIds, apiKey, signal);
-        } catch (e) {
-          if (e && e.name === 'AbortError') return; // nouvelle recherche
-          // autre erreur → on continue sans les durées
-        }
-
-        const videos = items
-          .filter(function (i) { return i.id && i.id.videoId; })
-          .map(function (i) {
-            const id = i.id.videoId;
-            return {
-              id: id,
-              title: (i.snippet && i.snippet.title) || 'Sans titre',
-              thumbnails: (i.snippet && i.snippet.thumbnails) || {},
-              duration: durations[id] || '',
-            };
-          });
 
         if (!videos.length) {
-          setState(UI_STATE.NO_RESULTS, 'Aucun résultat valide.');
+          setState(UI_STATE.NO_RESULTS, 'Aucun résultat pour « ' + query + ' ».');
           return;
         }
 
@@ -473,6 +607,38 @@
       performSearch(inputEl.value);
     });
 
+    // ===== Bouton bascule mode PipedSearch =====
+    //
+    // Quand une clé API YouTube est présente, ce bouton permet de forcer la
+    // recherche via l'API publique Piped (sans consommer de quota Google).
+    // Visible uniquement quand une clé API est configurée : sans clé, Piped
+    // est déjà le seul chemin, le bouton n'aurait aucun sens.
+    function syncModeButton() {
+      if (!modeBtnEl) return;
+      const hasKey = !!getApiKey();
+      const forced = isPipedForced();
+      // Sans clé API : on masque le bouton (Piped est déjà le défaut).
+      modeBtnEl.hidden = !hasKey;
+      modeBtnEl.setAttribute('aria-pressed', forced ? 'true' : 'false');
+      if (forced) {
+        modeBtnEl.textContent = '🟢 PipedSearch';
+        modeBtnEl.title = 'Recherche via Piped (sans quota Google). '
+          + 'Cliquez pour revenir à l\'API YouTube Data.';
+      } else {
+        modeBtnEl.textContent = '⚪ YouTube API';
+        modeBtnEl.title = 'Recherche via l\'API YouTube Data officielle. '
+          + 'Cliquez pour forcer PipedSearch (préserve le quota).';
+      }
+    }
+
+    if (modeBtnEl) {
+      modeBtnEl.addEventListener('click', function () {
+        setPipedForced(!isPipedForced());
+        syncModeButton();
+      });
+    }
+    syncModeButton();
+
     // État initial = idle (data-state pour le CSS)
     setState(UI_STATE.IDLE);
 
@@ -482,6 +648,7 @@
       markActive: markActive,
       setApiKey: setApiKey,
       getApiKey: getApiKey,
+      syncModeButton: syncModeButton,
       UI_STATE: UI_STATE,
     };
   }
@@ -493,6 +660,8 @@
     parseISODuration: parseISODuration,
     getApiKey: getApiKey,
     setApiKey: setApiKey,
+    isPipedForced: isPipedForced,
+    setPipedForced: setPipedForced,
     UI_STATE: UI_STATE,
   };
 })();

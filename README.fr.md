@@ -9,7 +9,8 @@ Application web **sans serveur** (HTML + JS pur) permettant de charger 2 morceau
 ## ✨ Fonctionnalités
 
 - **2 voies côte à côte** (A à gauche, B à droite), chacune avec son lecteur YouTube et sa barre de recherche.
-- **Recherche YouTube** par mot-clé (clé API YouTube Data optionnelle) **ou** saisie manuelle d'une URL / ID vidéo. Sans clé, l'app reste pleinement utilisable via le fallback URL/ID — la recherche affiche simplement un avertissement non bloquant.
+- **Recherche YouTube** par mot-clé **sans clé API** grâce à l'API publique [Piped](https://docs.piped.video/) (frontend YouTube alternatif, CORS activé, pas de quota Google). Plusieurs instances Piped sont essayées en cascade pour la fiabilité. Une clé API YouTube Data reste optionnelle pour des résultats plus pertinents et la pagination officielle. Saisie manuelle d'une URL / ID vidéo également possible.
+- **Bouton de bascule de mode de recherche** : quand une clé API est configurée, un bouton 🟢/⚪ permet de forcer la recherche via Piped (préserve le quota Google) ou de revenir à l'API YouTube Data officielle. Le choix est persisté en `localStorage`.
 - **Crossfader A↔B** (0 = full A, 100 = full B, 50 = équilibré) avec courbe *equal-power* pour éviter le creux de niveau au milieu.
 - **Volume master** global (0–100%).
 - **Boutons mute/unmute par voie** (obligatoire pour contourner les politiques d'autoplay des navigateurs).
@@ -77,7 +78,9 @@ Dans la Google Cloud Console, ouvrez **API et services** → **Identifiants**, s
 - Si vous hébergez l'application sur un site web, sous **Restrictions liées aux applications**, choisissez **Sites Web** et ajoutez l'adresse de ce site.
 - Pour une utilisation locale, ajoutez `http://localhost:8000/*` si vous utilisez le script de lancement fourni ou les commandes ci-dessus. Ajoutez l'adresse et le port exacts que vous utilisez : une restriction ne contenant pas l'adresse ouverte dans le navigateur empêchera la recherche de fonctionner.
 
-> Sans clé, l'app fonctionne toujours : collez une URL YouTube (`youtu.be/...`, `watch?v=...`) ou un ID vidéo brut dans le champ de recherche. La recherche par mot-clé affiche un avertissement non bloquant. Le rate limiting (quota dépassé / 429) est aussi géré proprement — le panneau affiche un avertissement plutôt qu'une erreur, et vous pouvez basculer sur la saisie URL/ID.
+> Sans clé, l'app fonctionne entièrement : la recherche par mot-clé utilise automatiquement l'API publique Piped (pas de quota Google), et vous pouvez aussi coller une URL YouTube (`youtu.be/...`, `watch?v=...`) ou un ID vidéo brut. Le rate limiting de l'API officielle (quota dépassé / 429) est aussi géré proprement — le panneau affiche un avertissement plutôt qu'une erreur, et vous pouvez basculer sur la saisie URL/ID.
+>
+> ⚠️ **Fiabilité de Piped** : les instances publiques Piped peuvent être lentes ou indisponibles (elles changent souvent). L'app en essaie plusieurs en cascade, mais si toutes échouent, la recherche ne renvoie rien. Dans ce cas, utilisez une clé API YouTube Data ou collez une URL/ID directement.
 
 #### En cas de problème
 

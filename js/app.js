@@ -187,6 +187,17 @@
 
     function updateButtonIndicator() {
       btn.classList.toggle('has-api-key', !!SEARCH.getApiKey());
+      // Le bouton PipedSearch n'est visible que si une clé API est présente.
+      syncAllModeButtons();
+    }
+
+    // Met à jour l'état des boutons de mode de recherche (visibilité + label)
+    // sur les deux voies. Appelé quand la clé API change.
+    function syncAllModeButtons() {
+      ['A', 'B'].forEach(function (deck) {
+        const s = state.searches[deck];
+        if (s && typeof s.syncModeButton === 'function') s.syncModeButton();
+      });
     }
     updateButtonIndicator();
 

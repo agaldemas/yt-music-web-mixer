@@ -9,7 +9,8 @@ A **serverless** web app (plain HTML + JS) that lets you load 2 YouTube tracks s
 ## ✨ Features
 
 - **2 side-by-side decks** (A on the left, B on the right), each with its own YouTube player and search bar.
-- **YouTube search** by keyword (optional YouTube Data API key) **or** manual entry of a URL / video ID. Without a key, the app stays fully usable via the URL/ID fallback — search just shows a warning instead of blocking.
+- **YouTube search** by keyword **without any API key** thanks to the public [Piped](https://docs.piped.video/) API (alternative YouTube frontend, CORS-enabled, no Google quota). Multiple Piped instances are tried in cascade for reliability. A YouTube Data API key remains optional for more relevant results and official pagination. Manual entry of a URL / video ID is also supported.
+- **Search mode toggle button**: when an API key is configured, a 🟢/⚪ button lets you force search via Piped (preserves Google quota) or switch back to the official YouTube Data API. The choice is persisted in `localStorage`.
 - **A↔B crossfader** (0 = full A, 100 = full B, 50 = balanced) with an *equal-power* curve to avoid the level dip in the middle.
 - **Global master volume** (0–100%).
 - **Per-deck mute/unmute buttons** (required to work around browser autoplay policies).
@@ -77,7 +78,9 @@ In Google Cloud Console, open **APIs & Services** → **Credentials**, select th
 - If you host the app on a website, under **Application restrictions** choose **Websites** and add that site's address.
 - For local use, add `http://localhost:8000/*` if you use the included launch script or the commands above. Add the exact address and port you actually use. Restrictions that omit the address in use will make search fail.
 
-> Without a key, the app still works: paste a YouTube URL (`youtu.be/...`, `watch?v=...`) or a raw video ID into the search field. Keyword search shows a non-blocking warning. Rate-limiting (quota exceeded / 429) is also handled gracefully — the panel shows a warning instead of an error, and you can fall back to URL/ID entry.
+> Without a key, the app works fully: keyword search automatically uses the public Piped API (no Google quota), and you can also paste a YouTube URL (`youtu.be/...`, `watch?v=...`) or a raw video ID. Rate-limiting of the official API (quota exceeded / 429) is also handled gracefully — the panel shows a warning instead of an error, and you can fall back to URL/ID entry.
+>
+> ⚠️ **Piped reliability**: public Piped instances can be slow or unavailable (they change often). The app tries several in cascade, but if all fail, search returns nothing. In that case, use a YouTube Data API key or paste a URL/ID directly.
 
 ---
 
