@@ -40,6 +40,10 @@
   // vite sur la suivante si elle ne répond pas.
   const PIPED_INSTANCE_TIMEOUT_MS = 8000;
 
+  // Sentinelle de pageToken : "première page" Piped. Elle se recharge via
+  // /search (qui n'accepte pas de token), pas via /nextpage/search.
+  const PIPED_FIRST_PAGE = '__piped_first__';
+
   // ===== Helpers =====
 
   // Convertit une durée en secondes vers "M:SS" ou "H:MM:SS"
@@ -207,6 +211,24 @@
     }
   }
 
+  // Message d'avertissement inline (affiché au-dessus des résultats conservés,
+  // par exemple quand une page suivante Piped échoue).
+  function buildInlineWarning(message) {
+    const div = document.createElement('div');
+    div.className = 'search-state search-state-warning search-state-inline';
+    div.textContent = '⚠️ ' + message;
+    return div;
+  }
+
+  // Message d'avertissement inline (affiché au-dessus des résultats conservés,
+  // par exemple quand une page suivante Piped échoue).
+  function buildInlineWarning(message) {
+    const div = document.createElement('div');
+    div.className = 'search-state search-state-warning search-state-inline';
+    div.textContent = '⚠️ ' + message;
+    return div;
+  }
+
   // ===== Appels API =====
 
   // /search?part=snippet&type=video&videoCategoryId=10&q=...&key=...
@@ -279,10 +301,16 @@
     }).finally(function () { clearTimeout(timer); });
   }
 
-  // Appelle une instance Piped et renvoie les items normalisés.
-  async function callPipedInstance(instance, query, signal) {
-    const url = 'https://' + instance + '/search?q='
-      + encodeURIComponent(query) + '&filter=videos';
+  // Appelle une instance Piped et renvoie { videos, nextpage }.
+  // - Sans nextpageToken : GET /search?q=… (première page)
+  // - Avec nextpageToken : GET /nextpage/search?nextpage=…&q=… (page suivante,
+  //   le token venant du champ `nextpage` de la page précédente).
+  // Ref. OpenAPI Piped : /search et /nextpage/search (paramètres nextpage, q, filter).
+  async function callPipedInstance(instance, query, signal, nextpageToken) {
+    const url = nextpageToken
+      ? 'https://' + instance + '/nextpage/search?nextpage=' + encodeURIComponent(nextpageToken)
+        + '&q=' + encodeURIComponent(query) + '&filter=videos'
+      : 'https://' + instance + '/search?q=' + encodeURIComponent(query) + '&filter=videos';
     const res = await fetchWithTimeout(url, PIPED_INSTANCE_TIMEOUT_MS, signal);
     if (!res.ok) {
       const err = new Error('Piped ' + instance + ' HTTP ' + res.status);
@@ -291,7 +319,7 @@
     }
     const data = await res.json();
     const items = (data && data.items) || [];
-    return items.map(function (it) {
+    const videos = items.map(function (it) {
       const id = extractVideoId(it.url) || '';
       // La vignette passe souvent par un proxy Piped (proxy.<instance>/vi/ID/...).
       // On garde l'URL telle quelle (safeImgUrl validera le https://).
@@ -307,17 +335,36 @@
         duration: secondsToDuration(it.duration),
       };
     }).filter(function (v) { return !!v.id; });
+    // Token de page suivante (null sur la dernière page)
+    return { videos: videos, nextpage: (data && data.nextpage) || null };
   }
 
   // Essaie chaque instance Piped en cascade, renvoie le premier résultat non
-  // vide. Si toutes échouent, lance une erreur network.
-  async function callPipedSearch(query, signal) {
+  // vide : { videos, nextpage, instance }. Si toutes échouent, lance une
+  // erreur (kind 'network' ou 'piped-nextpage' si c'est une page suivante).
+  // Pour une page suivante (nextpageToken fourni), on retente d'abord
+  // l'instance qui a servi la page courante (le token vient d'elle), puis on
+  // retombe sur la cascade si elle ne répond plus.
+  async function callPipedSearch(query, signal, nextpageToken, preferredInstance) {
+    const instances = PIPED_INSTANCES.slice();
+    if (preferredInstance) {
+      const idx = instances.indexOf(preferredInstance);
+      if (idx > 0) {
+        instances.splice(idx, 1);
+        instances.unshift(preferredInstance);
+      } else if (idx === -1) {
+        instances.unshift(preferredInstance);
+      }
+    }
     let lastErr = null;
-    for (let i = 0; i < PIPED_INSTANCES.length; i++) {
-      const instance = PIPED_INSTANCES[i];
+    for (let i = 0; i < instances.length; i++) {
+      const instance = instances[i];
       try {
-        const videos = await callPipedInstance(instance, query, signal);
-        if (videos.length) return videos; // première instance qui répond + résultats
+        const page = await callPipedInstance(instance, query, signal, nextpageToken);
+        if (page.videos.length) {
+          page.instance = instance; // première instance qui répond + résultats
+          return page;
+        }
         // instance OK mais 0 résultats → on continue au cas où une autre ait
         // une meilleure indexation (rare, mais coûte peu)
         lastErr = new Error('Piped ' + instance + ' : aucun résultat');
@@ -328,7 +375,10 @@
       }
     }
     const err = new Error(lastErr ? lastErr.message : 'Toutes les instances Piped ont échoué.');
-    err.kind = 'network';
+    // Kind 'piped*' → messages adaptés dans classifyError :
+    // - première page : aucune instance n'a répondu
+    // - page suivante : token possiblement invalide d'une instance à l'autre
+    err.kind = nextpageToken ? 'piped-nextpage' : 'piped';
     throw err;
   }
 
@@ -346,6 +396,17 @@
     }
     if (err && err.kind === 'api') {
       return { kind: 'api', message: 'Erreur API YouTube (' + err.code + '). Réessayer plus tard.' };
+    }
+    // Mode PipedSearch : échec du chargement d'une page suivante (les tokens
+    // nextpage sont propres à chaque instance et peuvent expirer).
+    if (err && err.kind === 'piped-nextpage') {
+      return { kind: 'piped-nextpage', message: 'Page suivante indisponible via Piped '
+        + '(instance injoignable ou token expiré). Réessayer avec › ou relancer la recherche.' };
+    }
+    // Mode PipedSearch : aucune instance publique n'a répondu.
+    if (err && err.kind === 'piped') {
+      return { kind: 'piped', message: 'Aucune instance publique Piped n\'a répondu (réseau ou CORS). '
+        + 'Réessayer plus tard, ou coller directement une URL YouTube (youtu.be/…).' };
     }
     // Erreur réseau / CORS / fetch a échoué
     return { kind: 'network', message: 'Impossible de contacter l\'API YouTube (réseau ou CORS). '
@@ -380,6 +441,19 @@
     var prevPageToken = null;
     var nextPageToken = null;
     var lastQuery = '';
+    // Pagination Piped : l'API n'offre que /nextpage/search (vers l'avant),
+    // donc on garde l'historique des tokens des pages visitées + le cache de
+    // leurs résultats pour pouvoir revenir en arrière (bouton ‹).
+    // pipedHistory[i] = token permettant de (re)charger la page i (0 = page 1
+    // = sentinelle PIPED_FIRST_PAGE, qui se recharge via /search).
+    var pipedNextpage = null;
+    var pipedInstance = null; // instance qui a servi la dernière page réseau
+    var pipedHistory = [];
+    var pipedPageIndex = 0;
+    var pipedPageCache = []; // pipedPageCache[i] = vidéos de la page i
+    var pipedCacheQuery = ''; // requête associée au cache
+    var lastWasPiped = false; // les résultats affichés viennent de Piped
+    var lastActiveId = null; // dernier videoId sélectionné (badge "En cours")
 
     function setState(state, payload) {
       renderPanel(panelEl, state, payload);
@@ -390,6 +464,7 @@
     // Appelé après chaque sélection et au reload si lastVideoId est connu.
     function markActive(videoId) {
       if (!videoId) return;
+      lastActiveId = videoId;
       panelEl.querySelectorAll('.search-result.is-active').forEach(function (el) {
         el.classList.remove('is-active');
         const badge = el.querySelector('.search-result-badge');
@@ -460,11 +535,28 @@
       if (nextBtn) nextBtn.disabled = !nextPageToken;
     }
 
-    // Charge la page précédente ou suivante via le pageToken de l'API YouTube
+    // Charge la page précédente ou suivante.
+    // - API YouTube : pageToken officiel (prev/next fournis par l'API).
+    // - Piped : l'API ne va que vers l'avant (/nextpage/search), mais on
+    //   conserve l'historique des tokens des pages visitées pour pouvoir
+    //   revenir en arrière.
     function loadPage(direction) {
-      var token = (direction === 'next') ? nextPageToken : prevPageToken;
-      if (!token || !lastQuery) return;
-      performSearch(lastQuery, token);
+      if (!lastQuery) return;
+
+      if (lastWasPiped) {
+        var idx = pipedPageIndex + (direction === 'next' ? 1 : -1);
+        var token = pipedHistory[idx];
+        // Page suivante jamais visitée → token fourni par la page courante
+        if (!token && direction === 'next' && pipedNextpage) token = pipedNextpage;
+        if (!token) return;
+        // (la sentinelle PIPED_FIRST_PAGE est convertie en page 1 par performSearch)
+        performSearch(lastQuery, token);
+        return;
+      }
+
+      var ytToken = (direction === 'next') ? nextPageToken : prevPageToken;
+      if (!ytToken) return;
+      performSearch(lastQuery, ytToken);
     }
 
     // Persistance de la dernière requête (par voie)
@@ -475,6 +567,8 @@
 
     async function performSearch(query, pageToken) {
       query = String(query || '').trim();
+      // Sentinelle "page 1 Piped" → pas de token (on repasse par /search)
+      if (pageToken === PIPED_FIRST_PAGE) pageToken = null;
       if (!query) {
         if (abortController) abortController.abort();
         setState(UI_STATE.IDLE);
@@ -488,6 +582,12 @@
         persistQuery(query);
         prevPageToken = null;
         nextPageToken = null;
+        pipedNextpage = null;
+        pipedInstance = null;
+        pipedHistory = [];
+        pipedPageCache = [];
+        pipedPageIndex = 0;
+        lastWasPiped = false;
         setState(UI_STATE.IDLE);
         onSelect(directId);
         return;
@@ -517,6 +617,7 @@
         if (apiKey && !forcePiped) {
           // Recherche via l'API YouTube Data officielle (résultats musique,
           // pagination par pageToken).
+          lastWasPiped = false;
           const data = await callSearchApi(query, apiKey, signal, pageToken);
           nextPageToken = data.nextPageToken || null;
           prevPageToken = data.prevPageToken || null;
@@ -552,11 +653,52 @@
             });
         } else {
           // Pas de clé API, OU mode PipedSearch activé par l'utilisateur :
-          // API publique Piped. Pas de pagination (l'endpoint Piped gère sa
-          // propre pagination qu'on n'utilise pas ici).
-          prevPageToken = null;
-          nextPageToken = null;
-          videos = await callPipedSearch(query, signal);
+          // API publique Piped. Pagination via /nextpage/search, uniquement
+          // vers l'avant côté API → l'historique pipedHistory permet le ‹.
+          lastWasPiped = true;
+
+          // Nouvelle recherche (page 1) : réinitialiser historique + cache
+          if (!pageToken) {
+            pipedHistory = [PIPED_FIRST_PAGE];
+            pipedPageCache = [];
+            pipedCacheQuery = query;
+          }
+
+          // Page déjà visitée ET en cache → restitution immédiate, pas d'appel réseau
+          const visitedIdx = pageToken ? pipedHistory.indexOf(pageToken) : 0;
+          if (visitedIdx >= 0 && pipedPageCache[visitedIdx] && pipedCacheQuery === query) {
+            pipedPageIndex = visitedIdx;
+            // Le token "page suivante" : celui historisé si on a déjà avancé
+            // depuis cette page, sinon celui renvoyé lors de sa première charge
+            nextPageToken = pipedHistory[visitedIdx + 1] || pipedNextpage;
+            prevPageToken = visitedIdx > 0 ? pipedHistory[visitedIdx - 1] : null;
+            renderPipedPage(pipedPageCache[visitedIdx]);
+            return;
+          }
+
+          const page = await callPipedSearch(query, signal, pageToken, pipedInstance);
+          pipedNextpage = page.nextpage;
+          pipedInstance = page.instance;
+          videos = page.videos;
+
+          if (!videos.length) {
+            setState(UI_STATE.NO_RESULTS, 'Aucun résultat pour « ' + query + ' ».');
+            return;
+          }
+
+          // Historique : index de la page chargée + token pour la suivante
+          if (pageToken) {
+            pipedPageIndex = visitedIdx >= 0 ? visitedIdx : pipedHistory.length;
+          } else {
+            pipedPageIndex = 0;
+          }
+          pipedHistory[pipedPageIndex] = pageToken || PIPED_FIRST_PAGE;
+          pipedPageCache[pipedPageIndex] = videos;
+          if (pipedNextpage && !pipedHistory[pipedPageIndex + 1]) {
+            pipedHistory[pipedPageIndex + 1] = pipedNextpage;
+          }
+          prevPageToken = pipedPageIndex > 0 ? pipedHistory[pipedPageIndex - 1] : null;
+          nextPageToken = pipedHistory[pipedPageIndex + 1] || null;
         }
 
         if (!videos.length) {
@@ -582,15 +724,43 @@
           onError(info);
           return;
         }
+        // Échec d'un changement de page en mode Piped : on ne perd pas les
+        // résultats déjà affichés, on affiche juste un avertissement au-dessus.
+        if (info.kind === 'piped-nextpage' && panelEl.querySelectorAll('.search-result').length) {
+          panelEl.insertAdjacentElement('afterbegin', buildInlineWarning(info.message));
+          syncToolbar(UI_STATE.RESULTS); // toolbar reste visible, ‹ › reflètent l'état courant
+          onError(info);
+          return;
+        }
         setState(UI_STATE.ERROR, info.message);
         onError(info);
       }
+    }
+
+    // Affiche une page Piped (du cache, sans appel réseau)
+    function renderPipedPage(videos) {
+      setState(UI_STATE.RESULTS);
+      videos.forEach(function (v) {
+        panelEl.appendChild(buildResultEl(
+          v,
+          function (id) { onSelect(id); },
+          markActive
+        ));
+      });
+      if (lastActiveId) markActive(lastActiveId);
     }
 
     function clear() {
       if (abortController) abortController.abort();
       prevPageToken = null;
       nextPageToken = null;
+      pipedNextpage = null;
+      pipedInstance = null;
+      pipedHistory = [];
+      pipedPageCache = [];
+      pipedPageIndex = 0;
+      pipedCacheQuery = '';
+      lastWasPiped = false;
       lastQuery = '';
       setState(UI_STATE.IDLE);
       inputEl.value = '';

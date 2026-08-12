@@ -435,6 +435,13 @@ input { font-family: inherit; }
   color: #fde68a;
 }
 
+/* Warning inline : pleine largeur dans la grille des résultats conservés */
+.search-state-inline {
+  grid-column: 1 / -1;
+  padding: 8px 10px;
+  text-align: left;
+}
+
 /* Une carte résultat */
 .search-result {
   display: flex;
