@@ -66,6 +66,7 @@ AudioContext.destination                       ← Sortie (haut-parleurs)
 | BPM / beatmatch | ❌ Impossible | ✅ Détection tempo + sync |
 | Pitch / tempo | ❌ Impossible | ✅ `playbackRate` + `preservesPitch` |
 | Cue / loop | ❌ Impossible | ✅ `currentTime` + marqueurs |
+| Scratch / platine | ❌ Impossible | ✅ `AudioBufferSourceNode` (scratch bidirectionnel) |
 | Vidéo | ✅ IFrame | ❌ Audio-only (trade-off) |
 | Fiabilité | ✅ YouTube officiel | ⚠️ Instances Piped (instables) |
 
@@ -87,7 +88,7 @@ Avant toute implémentation, il faut vérifier que les flux audio Piped sont uti
 - [ ] **Test expiration** : vérifier après combien de temps l'URL du flux expire (erreur 403 sur l'élément `<audio>`). Tester le re-fetch depuis Piped.
 - [ ] **Test multi-instances** : réutiliser la cascade d'instances Piped de `search.js` (`PIPED_INSTANCES`) pour `/streams/{videoId}` — vérifier que toutes les instances supportent cet endpoint
 - [ ] Sélection du format audio : choisir le flux audio-only avec le meilleur bitrate (préférer OPUS ou M4A). Documenter la logique de sélection.
-- [ ] Si CORS est **définitivement bloqué** (même via proxy) → l'approche Web Audio API est impossible en web. Voir section 11 (fallback IFrame) ou envisager une approche `AudioBufferSourceNode` (téléchargement complet du buffer via `fetch()` + `decodeAudioData`, mais lourd).
+- [ ] Si CORS est **définitivement bloqué** (même via proxy) → l'approche Web Audio API est impossible en web. Voir section 12 (fallback IFrame) ou envisager une approche `AudioBufferSourceNode` (téléchargement complet du buffer via `fetch()` + `decodeAudioData`, mais lourd).
 
 ---
 
@@ -314,7 +315,80 @@ Fonctionnalités DJ de navigation dans le morceau.
 
 ---
 
-## 11. Migration progressive & fallback IFrame [ ]
+## 11. Scratch / platine vinyle — `js/scratch.js` [ ]
+
+Permettre de « scratcher » un morceau (lecture avant/arrière à vitesse variable pilotée par un geste) comme sur une platine vinyle DJ. **Feature avancée — mode Piped uniquement.**
+
+### Possibilités techniques
+
+Trois approches, à choisir ou combiner :
+
+**Approche A — Jog / nudge sur `MediaElementSource` (léger, limité)**
+- Garder le `<audio>` streaming actuel. Piloter la vitesse via `audio.playbackRate` :
+  - `playbackRate > 0` : accélère / ralentit (pitch bend).
+  - `playbackRate < 0` (lecture arrière) : **support navigateur inégal** (OK Chrome/Firefox récents, partiel/absent sur Safari et certains mobiles). Ne pas s'y fier.
+- Seek-jog : `audio.currentTime += delta` → saccades audibles (re-buffering), pas un vrai scratch.
+- **Verdict** : bon pour un nudge / pitch bend temporaire (aligner un beat), pas pour un scratch expressif bidirectionnel.
+
+**Approche B — Scratch réel sur `AudioBufferSourceNode` (lourd, expressif)** ⭐
+- Pré-charger tout le morceau : `fetch(streamUrl)` → `arrayBuffer()` → `ctx.decodeAudioData()` → `AudioBuffer` (PCM float32 en mémoire).
+- Créer un `AudioBufferSourceNode` branché sur l'entrée de la chaîne EQ de la voie (en lieu et place du `MediaElementSourceNode`).
+- `source.playbackRate.value` accepte **n'importe quelle valeur, y compris négative** (vraie lecture arrière, sample-accurate, pitch variable).
+- **Verdict** : vrai scratch DJ (avant/arrière, vitesse variable, pas de pitch-preserve). C'est l'approche à privilégier pour l'effet « platine ».
+
+**Approche C — Hybride (recommandée)**
+- Mode normal : `MediaElementSource` streaming (économie mémoire/réseau, seek progressif).
+- Quand l'utilisateur « saisit » la platine (`pointerdown`) : bascule vers `AudioBufferSourceNode` (Approche B). Décode le buffer paresseusement au premier engage (état « chargement… »).
+- Au relâchement (`pointerup`) : rebascule vers `MediaElementSource`, remet `audio.currentTime` à la position finale du scratch, reprend si en lecture.
+- Combine l'efficacité du streaming et l'expressivité du vrai scratch.
+
+### Implémentation — `js/scratch.js`
+
+- [ ] **Platine visuelle** : élément circulaire (`.platter`) par voie (~120-160 px), avec un repère angulaire. Rotation visuelle liée à la position/lecture.
+- [ ] **Saisie unifiée** : Pointer Events (`pointerdown` / `pointermove` / `pointerup` / `pointercancel`) → marche pour souris, tactile, stylet. Pas de `touch*` séparé.
+- [ ] **Suivi angulaire** : convertir le déplacement du pointeur en angle (`Math.atan2`). Dérivée temporelle → vitesse angulaire → `playbackRate`.
+- [ ] **Mappage vitesse** : `playbackRate = clamp(angularVelocity * SENS, -MAX_RATE, +MAX_RATE)` (ex: `MAX_RATE = 3`). Lissage (low-pass) pour éviter le jitter.
+- [ ] **Inertie / freewheel (optionnel)** : au relâchement, laisser la platine continuer à tourner avec friction avant de revenir au mode normal (rendu plus naturel).
+- [ ] **`decodeDeckBuffer(deckId, url)`** dans `audio-engine.js` : `fetch` + `decodeAudioData`, stocke `chains[deck].audioBuffer`. UI affiche un état de chargement.
+- [ ] **`engageScratch(deckId)` / `disengageScratch(deckId, positionSec)`** dans `audio-engine.js` : swap du nœud source dans la chaîne (déconnecter `MediaElementSource`, connecter `AudioBufferSourceNode` à l'entrée `lowShelf`). Ducking court (ramp de gain) au point de bascule pour éviter le clic.
+- [ ] **`setScratchRate(deckId, rate)` / `seekScratch(deckId, sec)`** : règle `playbackRate` (peut être négatif) / recrée l'`AudioBufferSourceNode` à l'offset voulu (ils sont one-shot).
+- [ ] **Synchro position** : après scratch, reporter la position finale dans `audio.currentTime` pour que la lecture normale reprenne au bon endroit.
+- [ ] Persistance : pas de persistance scratch en `localStorage` (état transitoire). Option : `scratchEnabled` par voie.
+- [ ] Exposer : `window.Scratch = { enable, disable, engage, disengage, setRate, seek, isBufferReady }`
+- [ ] Exposer côté `AudioEngine` : `decodeDeckBuffer, engageScratch, disengageScratch, setScratchRate, seekScratch`
+
+### Écueils & contraintes (À LIRE)
+
+- ⚠️ **`AudioBufferSourceNode` est one-shot** : un seul `start()` / `stop()` par instance. Chaque seek ou geste de scratch nécessite de **recréer le nœud** (déconnecter l'ancien, en créer un nouveau, reconnecter). Pas de réutilisation après `stop()`.
+- ⚠️ **Mémoire** : un `AudioBuffer` PCM float32 stéréo ≈ 10 Mo/min → **~30 Mo pour 3 min**. Deux voies = ~60 Mo. Sur mobile, risque de pression mémoire / crash d'onglet. Décoder paresseusement (uniquement quand le scratch est engagé), pas au chargement de la voie.
+- ⚠️ **Réseau / latence initiale** : `decodeAudioData` nécessite le **fichier complet** téléchargé. Le premier scratch sur un morceau = chargement complet (état « préparation du scratch… »). Pas de streaming progressif possible pour le scratch.
+- ⚠️ **Conflit `preservesPitch`** : le beatmatch (section 7) veut `preservesPitch = true` (vitesse change, pitch constant). Le scratch veut l'inverse : **le pitch DOIT changer avec la vitesse** (c'est le son de scratch). `AudioBufferSourceNode.playbackRate` ne préserve jamais le pitch par défaut — c'est exactement ce qu'on veut. À documenter : les deux modes sont **mutuellement exclusifs** sur la même voix à un instant t.
+- ⚠️ **Clics / craquements** : changement rapide de `playbackRate` ou inversion de sens = artefacts d'interpolation. Lisser le rate (ramp via `setTargetAtTime`), et idéalement un court fondu au point d'inversion.
+- ⚠️ **Swap de source audible** : basculer entre `MediaElementSource` et `AudioBufferSourceNode` en plein playback génère un déclic. Toujours ducking (`gain → 0 → swap → gain → valeur`) sur ~10-30 ms.
+- ⚠️ **Lecture arrière sur `<audio>`** : ne pas s'y fier (Approche A). Safari / mobile peuvent ignorer un `playbackRate` négatif (lecture avant à vitesse réduite, ou figée). Le vrai scratch bidirectionnel passe par l'Approche B/C.
+- ⚠️ **Précision d'entrée** : Pointer Events à ~60-120 Hz vs audio à 44.1 kHz. La vitesse angulaire doit être interpolée / lissée pour un scratch propre.
+- ⚠️ **Deux platines simultanées** : 2 `AudioBufferSourceNode` scratchés en même temps + DSP (EQ / filtre / analyser) = charge CPU. À tester (section 16).
+- ⚠️ **Mode IFrame** : scratch **impossible** (pas d'accès au buffer audio — cf. contrainte #1 du `CLAUDE.md`). Masquer la platine, afficher un tooltip « Scratch disponible en mode Piped ».
+- ⚠️ **`AudioContext` suspendu** : `ctx.resume()` requis après geste utilisateur (même contrainte autoplay que le reste de l'app).
+
+### UI — modification de `index.html` + `css/styles.css`
+
+- [ ] Ajouter `.platter` (disque circulaire ~120-160 px) dans chaque `.deck`, sous ou à côté du visualizer.
+- [ ] Marqueur de position angulaire sur le disque (repère visuel qui tourne pendant la lecture et suit le doigt en scratch).
+- [ ] État visuel : `idle` (disque immobile en pause / tourne en lecture), `engaged` (highlight, suit le pointeur), `loading` (spinner pendant `decodeAudioData`).
+- [ ] `touch-action: none` sur la platine (empêche le scroll / pinch tactile pendant le scratch).
+- [ ] Responsive : sur mobile, la platine reste manipulable au doigt (Pointer Events natifs).
+
+### Limites à documenter dans l'UI
+
+- Le scratch expressif nécessite de pré-charger le morceau (mémoire + latence initiale).
+- Sur mobile, décoder 2 morceaux complets peut excéder la mémoire → désactiver le scratch sur la 2e voix si la 1re est déjà décodée, ou avertir l'utilisateur.
+- Lecture arrière non garantie sur tous les navigateurs via `<audio>` ; le vrai scratch passe par un buffer en mémoire.
+- Le scratch et le pitch-beatmatch (`preservesPitch`) sont incompatibles simultanément.
+
+---
+
+## 12. Migration progressive & fallback IFrame [ ]
 
 L'app doit continuer à fonctionner pendant la migration et basculer en IFrame si Piped échoue.
 
@@ -332,11 +406,11 @@ L'app doit continuer à fonctionner pendant la migration et basculer en IFrame s
 
 ---
 
-## 12. UI/UX DJ — modification de `index.html` + `css/styles.css` [ ]
+## 13. UI/UX DJ — modification de `index.html` + `css/styles.css` [ ]
 
 Repenser l'interface pour une expérience DJ.
 
-### 12.1 Layout par voie (`.deck`)
+### 13.1 Layout par voie (`.deck`)
 
 Structure cible de chaque voie (en mode Piped) :
 
@@ -370,13 +444,13 @@ Structure cible de chaque voie (en mode Piped) :
 - [ ] Déplacer `.deck-results` en bas de la voie (après les contrôles DJ)
 - [ ] En mode IFrame fallback : masquer `.deck-eq`, `.deck-dj-controls`, restaurer `.deck-player`
 
-### 12.2 Barre de mixage (`.mixer-bar`)
+### 13.2 Barre de mixage (`.mixer-bar`)
 
 - [ ] Crossfader existant conservé (mais branché sur `AudioEngine.applyCrossfade` en mode Piped)
 - [ ] Ajouter un mini-canvas master spectrum dans la barre
 - [ ] Conserver play both / pause both / sync / master volume
 
-### 12.3 Styling
+### 13.3 Styling
 
 - [ ] Sliders EQ verticaux : `-webkit-appearance: slider-vertical` ou `writing-mode: bt-lr` (vertical), hauteur ~120px
 - [ ] Knobs rotatifs (filtre DJ, pitch) : si on veut des vrais knobs circulaires, utiliser un canvas ou un input range stylé en rotatif. Alternative simple : sliders verticaux pour tout.
@@ -387,7 +461,7 @@ Structure cible de chaque voie (en mode Piped) :
 
 ---
 
-## 13. Gestion des erreurs [ ]
+## 14. Gestion des erreurs [ ]
 
 - [ ] **Flux audio expiré** (403/network sur `<audio>`) : re-fetch automatique via `PipedStreams.refreshStream`, reprise à la même position. Si re-fetch échoue (instances down) → afficher erreur dans la voie + proposer fallback IFrame
 - [ ] **CORS bloqué** (audio tainted, AnalyserNode = silence) : détecter (analyser.getByteFrequencyData = all zeros après 1s de lecture) → afficher "CORS bloqué, passage en mode IFrame" → basculer la voie en IFrame
@@ -399,7 +473,7 @@ Structure cible de chaque voie (en mode Piped) :
 
 ---
 
-## 14. Configuration — modification de `js/config.js` [ ]
+## 15. Configuration — modification de `js/config.js` [ ]
 
 - [ ] `STORAGE_KEYS` : ajouter :
   - `PLAYER_MODE: 'playerMode'` — auto / piped / iframe
@@ -423,16 +497,16 @@ Structure cible de chaque voie (en mode Piped) :
 
 ---
 
-## 15. Tests & validation [ ]
+## 16. Tests & validation [ ]
 
-### 15.1 Tests CORS & flux
+### 16.1 Tests CORS & flux
 
 - [ ] Tester `/streams/{videoId}` sur les 5 instances Piped → documenter lesquelles répondent
 - [ ] Tester le flux audio en `<audio crossOrigin="anonymous">` → vérifier CORS
 - [ ] Tester `MediaElementAudioSourceNode` → vérifier que l'`AnalyserNode` reçoit des données non-nulles
 - [ ] Tester l'expiration d'URL → après combien de temps ? Le re-fetch fonctionne-t-il ?
 
-### 15.2 Tests audio
+### 16.2 Tests audio
 
 - [ ] Crossfader A↔B en mode Piped → le son passe progressivement de A à B (audible, pas juste volume)
 - [ ] EQ Low à -12dB → les graves sont coupés (audible)
@@ -442,7 +516,7 @@ Structure cible de chaque voie (en mode Piped) :
 - [ ] Master volume → contrôle global
 - [ ] Mute/unmute par voie
 
-### 15.3 Tests DJ
+### 16.3 Tests DJ
 
 - [ ] Pitch +4% → la musique est 4% plus rapide, pitch préservé (pas d'effet chipmunk)
 - [ ] Détection BPM → affiche un BPM plausible pour des morceaux connus (tester avec morceaux à BPM connu)
@@ -450,19 +524,19 @@ Structure cible de chaque voie (en mode Piped) :
 - [ ] Cue point → sauvegarde + seek au point
 - [ ] Loop → boucle entre loop-in et loop-out
 
-### 15.4 Tests fallback
+### 16.4 Tests fallback
 
 - [ ] Couper toutes les instances Piped (éditer `PIPED_INSTANCES` avec des instances invalides) → l'app bascule en mode IFrame automatiquement
 - [ ] Revenir en mode Piped → les contrôles DJ réapparaissent
 
-### 15.5 Tests performance
+### 16.5 Tests performance
 
 - [ ] 2 flux audio simultanés + 2 canvas waveform à 60fps → vérifier le CPU/latence
 - [ ] Si saccades → réduire `fftSize` à 1024, limiter le FPS à 30, ou dessiner le waveform à une fréquence inférieure au spectre
 
 ---
 
-## 16. Documentation [ ]
+## 17. Documentation [ ]
 
 - [ ] Mettre à jour `CLAUDE.md` :
   - Ajouter une section "Mode Piped / Web Audio API" décrivant la nouvelle architecture
@@ -483,7 +557,7 @@ Structure cible de chaque voie (en mode Piped) :
 
 ---
 
-## 17. Plan d'implémentation (ordre suggéré)
+## 18. Plan d'implémentation (ordre suggéré)
 
 | Phase | Section | Description | Risque |
 |-------|---------|-------------|--------|
@@ -498,12 +572,13 @@ Structure cible de chaque voie (en mode Piped) :
 | 9 | 9 | BPM & beatmatch | 🔴 Complexe (algo) |
 | 10 | 7 | Pitch / tempo | 🟢 Faible |
 | 11 | 10 | Cue & loop | 🟢 Faible |
-| 12 | 11 | Migration progressive & fallback | 🟡 Intégration |
-| 13 | 12 | UI/UX DJ | 🟡 CSS + HTML |
-| 14 | 13 | Gestion erreurs | 🟡 Robustesse |
-| 15 | 14 | Config | 🟢 Faible |
-| 16 | 15 | Tests | 🟡 Validation |
-| 17 | 16 | Documentation | 🟢 Faible |
+| 12 | 11 | Scratch / platine vinyle | 🔴 Complexe (buffer + mémoire + UI) |
+| 13 | 12 | Migration progressive & fallback | 🟡 Intégration |
+| 14 | 13 | UI/UX DJ | 🟡 CSS + HTML |
+| 15 | 14 | Gestion erreurs | 🟡 Robustesse |
+| 16 | 15 | Config | 🟢 Faible |
+| 17 | 16 | Tests | 🟡 Validation |
+| 18 | 17 | Documentation | 🟢 Faible |
 
 ---
 
