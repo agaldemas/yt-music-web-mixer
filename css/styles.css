@@ -677,6 +677,136 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   font-size: 0.85rem;
 }
 
+/* ===== Now-playing (métadonnées du morceau courant) ===== */
+.deck-nowplaying {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 14px 0;
+  padding: 8px 10px;
+  background: #15181f;
+  border: 1px solid #232733;
+  border-radius: 8px;
+}
+.np-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #0f1115;
+  flex: 0 0 auto;
+}
+.np-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;            /* permet l'ellipsis du titre */
+  flex: 1 1 auto;
+}
+.np-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np-meta {
+  font-size: 0.75rem;
+  color: #9aa0ac;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ===== Barre de transport par voie (play/pause + seek + temps) ===== */
+.deck-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 14px 10px;
+  padding: 8px 10px;
+  background: #15181f;
+  border: 1px solid #232733;
+  border-radius: 8px;
+}
+.dt-play {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #2563eb;
+  border: 1px solid #3b82f6;
+  color: #fff;
+  font-size: 1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, transform 0.06s;
+}
+.dt-play:hover { background: #3b82f6; }
+.dt-play:active { transform: scale(0.94); }
+.dt-icon { pointer-events: none; }
+/* En lecture, bouton vert (cohérent avec le mode Piped actif) */
+body.mode-piped .deck-transport .dt-play { background: #15803d; border-color: #22c55e; }
+body.mode-piped .deck-transport .dt-play:hover { background: #16a34a; }
+
+.dt-current, .dt-duration {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: #9aa0ac;
+  min-width: 34px;
+  text-align: center;
+}
+.dt-duration { text-align: right; }
+
+.dt-seek {
+  flex: 1 1 auto;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: #2e3444;
+  outline: none;
+  cursor: pointer;
+}
+.dt-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #93c5fd;
+  border: none;
+  cursor: pointer;
+}
+.dt-seek::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #93c5fd;
+  border: none;
+  cursor: pointer;
+}
+body.mode-piped .dt-seek::-webkit-slider-thumb { background: #6ee7b7; }
+body.mode-piped .dt-seek::-moz-range-thumb { background: #6ee7b7; }
+
+/* Spinner de buffering : un anneau qui tourne sur le bouton play */
+.deck-transport.is-buffering .dt-play { position: relative; }
+.deck-transport.is-buffering .dt-icon { opacity: 0; }
+.deck-transport.is-buffering .dt-play::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: dt-spin 0.8s linear infinite;
+}
+@keyframes dt-spin { to { transform: rotate(360deg); } }
+
 /* ===== Barre de mixage fixe en bas ===== */
 .mixer-bar {
   position: sticky;
@@ -764,31 +894,162 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 }
 
 /* ============================================================
- * Hooks de mode (dual mode Piped / IFrame)
- *
- * body.mode-piped  → mode Audio Piped / Web Audio DSP (actif)
- * body.mode-iframe → mode IFrame YouTube (volume-only, fallback)
- *
- * Les contrôles DJ avancés (EQ, pitch, cue/loop — roadmap tâches 6+)
- * ne s'affichent qu'en mode Piped : à venir, ils utiliseront
- *   body.mode-piped  .deck-dj { display: … }
- *   body.mode-iframe .deck-dj { display: none }
- * Aucun badge/bouton de mode n'est ajouté dans les decks (contrôle global).
+ * Visualiseurs (spectre/waveform) — phase 8
  * ============================================================ */
-.deck-dj { display: none; }            /* caché tant que l'UI DJ n'existe pas */
-body.mode-piped .deck-dj { display: none; } /* à activer quand l'UI DJ sera câblée */
+/* Canvas par voie : superposé en bas de la zone .deck-player. Visible
+ * uniquement en mode Piped (sinon on montre la vidéo YouTube). */
+.deck-visualizer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 42px;
+  display: none;                 /* masqué sauf en mode Piped */
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.45);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+body.mode-piped .deck-visualizer { display: block; }
+
+/* Canvas master dans la barre de mixage (spectre global). Hauteur limitée à 40px. */
+.mixer-visualizer {
+  flex: 1 1 120px;
+  display: none;
+  align-self: center;
+  min-width: 90px;
+  height: 40px;
+}
+body.mode-piped .mixer-visualizer { display: flex; }
+#master-visualizer {
+  width: 100%;
+  height: 40px;
+  display: block;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+}
 
 /* ============================================================
- * Hooks de mode (dual mode Piped / IFrame)
+ * Bloc DJ (EQ 3 bandes + filtre DJ) — phase 6
  *
- * body.mode-piped  → mode Audio Piped / Web Audio DSP (actif)
- * body.mode-iframe → mode IFrame YouTube (volume-only, fallback)
- *
- * Les contrôles DJ avancés (EQ, pitch, cue/loop — roadmap tâches 6+)
- * ne s'affichent qu'en mode Piped : à venir, ils utiliseront
- *   body.mode-piped  .deck-dj { display: … }
- *   body.mode-iframe .deck-dj { display: none }
- * Aucun badge/bouton de mode n'est ajouté dans les decks (contrôle global).
+ * Visible UNIQUEMENT en mode Piped (Web Audio DSP). En mode IFrame, le
+ * mixage est volume-only : pas de DSP possible, les contrôles EQ/filtre
+ * seraient sans effet → on les masque.
  * ============================================================ */
-.deck-dj { display: none; }            /* caché tant que l'UI DJ n'existe pas */
-body.mode-piped .deck-dj { display: none; } /* à activer quand l'UI DJ sera câblée */
+.deck-dj {
+  display: none;             /* masqué par défaut ; body.mode-piped l'affiche */
+  margin: 0 14px 10px;
+  padding: 10px 12px;
+  background: #15181f;
+  border: 1px solid #232733;
+  border-radius: 8px;
+  align-items: stretch;
+  gap: 12px;
+}
+body.mode-piped .deck-dj { display: flex; }
+
+/* Conteneur EQ : 3 faders verticaux côte à côte */
+.dj-eq {
+  display: flex;
+  gap: 10px;
+  flex: 1 1 auto;
+  align-items: stretch;
+}
+.dj-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+}
+.dj-filter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding-left: 10px;
+  border-left: 1px solid #232733;
+}
+.dj-band-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  color: #9aa0ac;
+  font-weight: 600;
+}
+
+/* Faders verticaux EQ + knob filtre.
+ * `writing-mode: vertical-lr` + `direction: rtl` rend les range verticaux
+ * avec le bas = min, le haut = max (sens console DJ) dans Chrome/Firefox. */
+.dj-fader, .dj-knob {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 8px;
+  height: 110px;
+  writing-mode: vertical-lr;   /* Chrome/Edge/Safari : slider vertical */
+  direction: rtl;              /* bas = min, haut = max */
+  background: linear-gradient(to top, #2e3444, #2e3444) no-repeat center;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+.dj-knob { height: 110px; }
+
+/* Track centré pour visualiser le 0 dB / bypass au milieu */
+.dj-fader::-webkit-slider-runnable-track,
+.dj-knob::-webkit-slider-runnable-track {
+  width: 6px;
+  background: #2e3444;
+  border-radius: 3px;
+}
+.dj-fader::-moz-range-track,
+.dj-knob::-moz-range-track {
+  width: 6px;
+  background: #2e3444;
+  border-radius: 3px;
+}
+
+.dj-fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 12px;
+  border-radius: 3px;
+  background: #93c5fd;
+  border: 1px solid #b9d4fd;
+  cursor: ns-resize;
+  margin-left: -8px;
+}
+.dj-fader::-moz-range-thumb {
+  width: 22px;
+  height: 12px;
+  border-radius: 3px;
+  background: #93c5fd;
+  border: 1px solid #b9d4fd;
+  cursor: ns-resize;
+}
+/* Knob filtre : pastille ronde (vert en mode Piped) */
+.dj-knob::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #6ee7b7;
+  border: 2px solid #0f1115;
+  cursor: ns-resize;
+  margin-left: -5px;
+}
+.dj-knob::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #6ee7b7;
+  border: 2px solid #0f1115;
+  cursor: ns-resize;
+}
+/* Teinte A (bleu) / B (rose) sur les EQ faders pour distinguer les voies */
+.deck-a .dj-fader::-webkit-slider-thumb { background: #93c5fd; border-color: #b9d4fd; }
+.deck-a .dj-fader::-moz-range-thumb { background: #93c5fd; border-color: #b9d4fd; }
+.deck-b .dj-fader::-webkit-slider-thumb { background: #f9a8d4; border-color: #fbcfe8; }
+.deck-b .dj-fader::-moz-range-thumb { background: #f9a8d4; border-color: #fbcfe8; }

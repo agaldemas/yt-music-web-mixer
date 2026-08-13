@@ -12,6 +12,9 @@ window.YT_CONFIG = {
     CROSSFADE_STEP_INTERVAL_MS: 'crossfadeStepIntervalMs',
     FORCE_PIPED: 'forcePipedSearch', // forcer la recherche via Piped même si clé API présente
     PLAYER_MODE: 'playerMode', // mode de lecture : 'auto' | 'piped' | 'iframe'
+    // Mode Piped DJ (phase 6) : EQ 3 bandes + filtre DJ par voie.
+    EQ_LOW_A: 'eqLowA', EQ_MID_A: 'eqMidA', EQ_HIGH_A: 'eqHighA', DJ_FILTER_A: 'djFilterA',
+    EQ_LOW_B: 'eqLowB', EQ_MID_B: 'eqMidB', EQ_HIGH_B: 'eqHighB', DJ_FILTER_B: 'djFilterB',
   },
   // Vidéos de test chargées au démarrage (cue, sans lecture auto)
   TEST_VIDEO_A: 'lfmxnzJAbl8',

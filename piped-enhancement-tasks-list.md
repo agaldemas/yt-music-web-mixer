@@ -104,6 +104,7 @@ Nouveau module dédié à la récupération et gestion des URLs de flux audio Pi
 - [x] **Réutilisation des instances Piped** : `PIPED_INSTANCES` et `PIPED_INSTANCE_TIMEOUT_MS` déplacés de `search.js` vers `config.js`, partagés.
 - [x] **Gestion d'erreurs** : erreurs typées (`kind: 'invalid-id' | 'piped-streams' | 'abort' | 'network'`) classées par `classifyError()` en messages localisés. Vidéo supprimée/privée = instance qui répond sans `audioStreams` → considérée comme échec d'instance, la cascade continue.
 - [x] Exposer : `window.PipedStreams = { fetchStreamInfo, refreshStream, selectBestAudio, buildCorsSafeUrl, getCorsSafeUrl, getCachedStream, clearCache, classifyError }`
+- [x] **Backend d'extraction local (server/server.js + yt-dlp)** — contournement de l'anti-bot YouTube. Quand l'app est servie en http(s) (backend Express), `fetchStreamInfo` essaie d'abord `/api/streams/:id` (extraction yt-dlp sur l'IP de l'utilisateur) avant la cascade Piped. L'URL audio renvoyée est relative (`/api/audio/:id`, relais same-origin) → Web Audio non tainted, DSP complet. Fallback automatique sur Piped/IFrame si yt-dlp absent (503) ou anti-bot. `config.LOCAL_BACKEND_TIMEOUT_MS` (45s, yt-dlp lent).
 
 ---
 
@@ -182,25 +183,84 @@ Remplacer (ou compléter) le lecteur IFrame YouTube par un lecteur `<audio>` bra
 
 ---
 
-## 4. Abstraction lecteur (dual mode Piped / IFrame) [ ]
+## 4. Abstraction lecteur (dual mode Piped / IFrame) [x]
 
 Permettre à l'app de basculer entre Piped Audio (Web Audio DSP) et YouTube IFrame (fallback volume-only) de façon transparente.
 
-- [ ] Définir une **interface commune** (déjà implicitement définie par `YTWrapper.createPlayer`) :
+- [x] Définir une **interface commune** (déjà implicitement définie par `YTWrapper.createPlayer`) :
   ```
   { loadVideoById, cueVideoById, playVideo, pauseVideo, seekTo,
     setVolume, mute, unMute, getCurrentTime, getDuration, getPlayerState }
   ```
-- [ ] **Détection de mode** au démarrage dans `app.js` :
+  Implémentée dans `audio-player.js` (Piped) et `youtube.js` (IFrame) — même signature. `app.js` route vers l'un ou l'autre selon le mode résolu.
+- [x] **Détection de mode** au démarrage dans `app.js` :
   - Mode par défaut : **Piped Audio** (si la phase 0 a validé CORS)
   - Fallback automatique : si `PipedStreams.fetchStreamInfo` échoue sur toutes les instances au premier chargement → basculer en mode IFrame
   - Mode manuel : bouton dans les Paramètres pour forcer un mode (auto / Piped / IFrame)
-- [ ] **`config.js`** : ajouter `STORAGE_KEYS.PLAYER_MODE: 'playerMode'` (valeurs : `'auto'`, `'piped'`, `'iframe'`)
-- [ ] `app.js` `createDeckPlayer(deck, videoId)` : selon le mode, appeler `AudioPlayer.createAudioPlayer` ou `YTWrapper.createPlayer`
-- [ ] Le `mixer.js` doit s'adapter au mode :
+  → `init()` lit `PLAYER_MODE`, sonde Piped via `probePiped()` (cache mis), résout `resolvedMode`. Mode Piped forcé mais Piped down → repli IFrame + message. Mode IFrame forcé → sonde en arrière-plan pour l'état du bouton.
+- [x] **`config.js`** : ajouter `STORAGE_KEYS.PLAYER_MODE: 'playerMode'` (valeurs : `'auto'`, `'piped'`, `'iframe'`) + `PLAYER_MODE_DEFAULT: 'auto'`
+- [x] `app.js` `createDeckPlayer(deck, videoId, restore)` : selon le mode, appeler `AudioPlayer.createAudioPlayer` ou `YTWrapper.createPlayer`. `restore` (one-shot) gère la reprise position+lecture après bascule.
+- [x] Le `mixer.js` doit s'adapter au mode :
   - Mode Piped → `AudioEngine.applyCrossfade` (GainNode)
   - Mode IFrame → `player.setVolume` (comportement actuel)
   - Abstraction : `Mixer.applyVolumes()` détecte le mode et route vers la bonne implémentation
+  → déjà en place (`Mixer.setMode`/`applyVolumes` routent selon `mode`). `app.js` appelle `Mixer.setMode(resolved)` au boot et à chaque bascule.
+
+### 4.1 Bouton global de bascule de mode (Piped / IFrame) [x]
+
+Ajouter un bouton **global** permettant de basculer les **deux decks simultanément** entre le mode Audio Player (Piped / Web Audio) et le mode YouTube IFrame. Ce bouton se place dans la barre d'en-tête, **à gauche du bouton Paramètres** (contrôle global, pas dans le player d'une voie).
+
+**Implémentation** : `#player-mode-btn` (`index.html`), câblé dans `app.js` (`wireModeButton`/`updateModeButton`/`switchResolvedMode`). Toggle `🔊 Piped` ↔ `📺 IFrame`, désactivé si Piped injoignable. Bascule les 2 decks d'un coup (snapshot `videoId`/`currentTime`/`wasPlaying` → teardown → recréation → restauration one-shot via `pendingRestore`). `PLAYER_MODE` global = seule source de vérité (pas de `DECK_MODE_*`). Alerte `#piped-fallback-alert` en cas d'échec Piped runtime. Section « Mode de lecture » dans la modal Paramètres (auto/piped/iframe).
+
+#### Pourquoi basculer les 2 decks en même temps (PAS de mode hybride)
+
+Autoriser un deck en Piped et l'autre en IFrame (mode hybride) casse la quasi-totalité des fonctions de mixage. C'est à éviter par conception :
+
+| Fonction | Deck Piped | Deck IFrame | Problème en mode hybride |
+|---|---|---|---|
+| Crossfade | `GainNode` equal-power | `setVolume` equal-power | Échelles de gain différentes → à 50% le mix n'est pas équilibré, un deck domine |
+| EQ / filtre DJ | `BiquadFilterNode` | impossible | Un deck EQ, l'autre plat → transition incohérente |
+| BPM / beatmatch | détectable | impossible | Le beatmatch exige les 2 decks en Web Audio |
+| Sync B→A | drift ~50-200ms | drift ~200-500ms | Asymétrique et imprécis |
+| Volume master | `masterGain` → `destination` | `setVolume` × master | Deux mécanismes parallèles = bugs |
+| Visualiseur master | capture audio (`AnalyserNode`) | invisible (audio tainted) | Spectre master incomplet/faux |
+| Visualiseur par deck | waveform/spectre | silence | Un deck sans visu |
+| Cue / loop | ✅ | ❌ | Impossible sur le deck IFrame |
+
+➡️ **Décision : les deux decks sont toujours dans le même mode.** La bascule est globale.
+
+- [x] **UI — un bouton global** (pas par voie) :
+  - Emplacement : barre d'en-tête, **à gauche du bouton Paramètres**
+  - Composant : toggle / bouton-poussoir à 2 états
+  - Libellé & icône reflétant l'état actif : `🔊 Piped` (mode Audio Player) / `📺 IFrame` (mode YouTube)
+  - État désactivé (grisé + tooltip) quand le mode est contraint par le système (ex. toutes les instances Piped down → verrouillé en IFrame)
+- [x] **Comportement — bascule des 2 decks d'un coup** :
+  - Au clic : re-créer les players A **et B** dans le mode cible, ensemble
+  - Préserver les vidéos courantes : recharger le même `videoId` sur chaque deck après la bascule
+  - Préserver les positions : `seekTo(currentTime)` après `loadVideoById` sur chaque deck, puis reprendre si la voie était en lecture
+  - Recalculer le crossfade (`Mixer.applyVolumes()`) car le routing change globalement (GainNode ↔ `setVolume`)
+  - En mode Piped : réinitialiser/masquer les contrôles DJ si retour IFrame ; restaurer les valeurs DJ sauvegardées si passage à Piped
+  → Le hook est en place (`body.mode-piped`/`body.mode-iframe` via `applyModeBodyClass`). L'UI DJ elle-même (EQ/pitch/cue) arrive avec les tâches 6+ ; `styles.css` masque déjà `.deck-dj`.
+- [x] **Indicateur de mode global (lecture seule dans les decks)** :
+  - Le bouton global de l'en-tête de l'application affiche le mode courant : `🔊 Piped` / `📺 IFrame`
+  - Aucun bouton, toggle ou badge de mode ne doit être ajouté dans les decks
+  - En fonctionnement normal, le mode est identique pour les deux decks
+- [x] **Interaction avec le mode global** (`PLAYER_MODE`) :
+  - Le bouton bascule `PLAYER_MODE` entre `'piped'` et `'iframe'` (concret), surchargeant `'auto'`
+  - Le mode `'auto'` reste accessible uniquement via la modal Paramètres (résolution Piped/IFrame au démarrage)
+  - Pas de persistance par voie : `PLAYER_MODE` global est la seule source de vérité. Les clés `DECK_MODE_A/B` sont inutiles et **ne pas ajouter**
+- [x] **Fallback automatique par voie (résilience runtime)** — à garder, mais gérer explicitement :
+  - Si le flux Piped d'un deck expire sans rafraîchissement possible (instances down / CORS), ne pas laisser durablement les decks dans un mode hybride
+  - Afficher une **alerte globale** : « Lecture Piped indisponible. Pour préserver le mixage, basculer les deux decks en IFrame ? [Basculer les deux] »
+  - Si l'utilisateur confirme, déclencher la bascule globale vers IFrame et recréer les deux players
+  - Si le fallback automatique par voie est techniquement nécessaire avant la confirmation, désactiver temporairement les fonctions DJ avancées et signaler clairement que le mixage est dégradé jusqu'à la remise en cohérence des deux decks
+  → `onError` Piped → `showPipedFallbackAlert()` (`#piped-fallback-alert`). Bouton « Basculer les deux » → `switchResolvedMode('iframe')`. Aucun mode hybride laissé en place.
+- [x] **Cas particuliers & limites à documenter dans l'UI** :
+  - La bascule mid-playback provoque un rechargement des 2 decks → micro-coupure inévitable (re-buffering)
+  - Si on bascule IFrame → Piped alors que les instances Piped sont down, la bascule échoue et reste en IFrame : afficher un message clair (pas de bascule silencieuse)
+  - En mode Piped : perte de la vidéo YouTube (audio-only). Le bouton sert aussi à retrouver la vidéo en repassant en IFrame
+  - Les réglages DJ (EQ, pitch, cue/loop) sont propres au mode Piped ; au retour en IFrame ils sont masqués (pas applicables). Leurs valeurs restent sauvegardées pour le retour éventuel en Piped
+  → Message clair via `showGlobalError()` en cas d'échec. Section « Mode de lecture » de la modal Paramètres documente les 3 modes + trade-offs (audio-only vs vidéo).
 
 ---
 
@@ -218,27 +278,23 @@ Remplacer le crossfade `setVolume` par un crossfade `GainNode` avec ramping flui
 
 ---
 
-## 6. EQ 3 bandes + filtre DJ par voie [ ]
+## 6. EQ 3 bandes + filtre DJ par voie [x]
 
 ### 6.1 EQ 3 bandes (Low / Mid / High)
 
-- [ ] **UI** : 3 faders verticaux ou knobs rotatifs par voie (A et B), placés dans la zone du lecteur ou sous le waveform. Range -12dB à +12dB, 0dB = neutre.
-- [ ] **HTML** (`index.html`) : ajouter dans chaque `.deck` un conteneur `.deck-eq` avec 3 contrôles (sliders verticaux `<input type="range" min="-12" max="12" value="0" step="0.5" orient="vertical">`)
-- [ ] **CSS** (`styles.css`) : sliders verticaux d'EQ (style console DJ), labels LOW/MID/HIGH, échelle 0dB au centre
-- [ ] **Câblage** (`app.js`) : `eq.addEventListener('input', () => AudioEngine.setEQ(deck, band, parseFloat(eq.value)))`
-- [ ] `AudioEngine.setEQ(deck, band, gainDb)` : règle `.gain.value` du `BiquadFilterNode` correspondant (déjà créé dans `createDeckChain`)
-- [ ] Persistance : sauvegarder les positions d'EQ par voie en `localStorage` (`eqLowA`, `eqMidA`, `eqHighA`, idem B). Restaurer au chargement.
+- [x] **UI** : 3 faders verticaux par voie (A et B), placés dans un bloc `.deck-dj` sous la barre de transport. Range -12dB à +12dB, 0dB = neutre. Visibles uniquement en mode Piped (`body.mode-piped .deck-dj`).
+- [x] **HTML** (`index.html`) : conteneur `.deck-dj` avec `.dj-eq` (3 `.dj-band[data-band=low|mid|high]`) + `.dj-filter`, chacun un `<input type="range" min="-12" max="12" value="0" step="0.5" orient="vertical">`.
+- [x] **CSS** (`styles.css`) : faders verticaux (`writing-mode: vertical-lr; direction: rtl`), teinte A bleue / B rose, labels LOW/MID/HIGH.
+- [x] **Câblage** (`app.js` `wireDeckDj`) : `fader.addEventListener('input', () => applyEq(deck, band, v))` → `AudioEngine.setEQ(deck, band, value)`. Double-clic = reset 0.
+- [x] `AudioEngine.setEQ(deck, band, gainDb)` : `node.gain.setTargetAtTime(clamped, ctx.currentTime, RAMP_TC)` sur le `BiquadFilterNode` correspondant (lowShelf/peaking/highShelf créés dans `createDeckChain`).
+- [x] Persistance : `localStorage` (`EQ_LOW/MID/HIGH_A/B`) + restauration au chargement + ré-application après bascule de mode (`restoreDeckDj` au `onReady`).
 
 ### 6.2 Filtre DJ (sweep LowPass ↔ HighPass)
 
-- [ ] **UI** : 1 knob par voie, position centrale = off (filtre bypass). Tourner à gauche = lowpass (cut les aigus progressivement). Tourner à droite = highpass (cut les graves).
-- [ ] **Logique** dans `AudioEngine.setDjFilter(deck, position)` :
-  - `position` : `-1` (full lowpass) à `0` (off) à `+1` (full highpass)
-  - Si `position < 0` : `djFilter.type = 'lowpass'`, `djFilter.frequency.value` = mapper `position` de `20000Hz` (position 0) vers `200Hz` (position -1)
-  - Si `position > 0` : `djFilter.type = 'highpass'`, `djFilter.frequency.value` = mapper `position` de `20Hz` (position 0) vers `5000Hz` (position +1)
-  - Si `position === 0` : bypass (mettre `djFilter.type = 'allpass'` ou `frequency = 20000` en lowpass)
-- [ ] **Kill switch** : double-clic sur le knob → reset à 0 (filtre off)
-- [ ] Persistance : `djFilterA`, `djFilterB` en `localStorage`
+- [x] **UI** : 1 knob vertical par voie (`.dj-knob`), position centrale = off (bypass). Bas = lowpass (cut aigus), haut = highpass (cut graves).
+- [x] **Logique** `AudioEngine.setDjFilter(deck, position)` : `position ∈ [-1..+1]`, mapping log-scale (200Hz↔20kHz lowpass, 20Hz↔5kHz highpass), bypass = lowpass 20kHz. Rampé via `setTargetAtTime`.
+- [x] **Kill switch** : double-clic sur le knob → reset à 0 (filtre off).
+- [x] Persistance : `DJ_FILTER_A/B` en `localStorage` (stocké en -100..+100).
 
 ---
 
@@ -412,17 +468,18 @@ Repenser l'interface pour une expérience DJ.
 
 ### 13.1 Layout par voie (`.deck`)
 
-Structure cible de chaque voie (en mode Piped) :
+Structure cible de la **zone player audio** de chaque voie en mode Piped :
+
+Le schéma ci-dessous décrit uniquement le composant `.deck-visualizer` / player audio qui remplace la zone vidéo YouTube IFrame. Il ne décrit pas le layout complet d'un `.deck` : dans l'interface actuelle, le champ de recherche et les résultats restent au-dessus de la zone player, et le header global de l'application contient le bouton de bascule de mode et le bouton Paramètres. Il ne faut pas ajouter de bouton de mode dans chaque deck.
 
 ```
+│  ce canvas (remplace la zone vidéo IFrame)
 ┌─────────────────────────────┐
-│ Badge A  Titre    [▶] [🔇]  │  ← header (existant) + bouton play/pause individuel
-├─────────────────────────────┤
-│ [Recherche]      [Mode]      │  ← search (existant)
+│ Badge A  Titre    [▶] [🔇]  │  ← header + bouton play/pause individuel ; le badge 
 ├─────────────────────────────┤
 │ ┌─────────────────────────┐ │
-│ │     Waveform / Spectre    │ │  ← canvas (remplace la zone vidéo IFrame)
-│ │     (AnalyserNode)        │ │
+│ │     Waveform / Spectre    │
+│ │     (AnalyserNode)        │
 │ └─────────────────────────┘ │
 ├─────────────────────────────┤
 │  LOW    MID    HIGH   FILTER │  ← EQ 3 bandes + filtre DJ (knobs/sliders)
@@ -433,16 +490,15 @@ Structure cible de chaque voie (en mode Piped) :
 ├─────────────────────────────┤
 │  BPM: 128    PITCH: +0%      │  ← afficheur BPM + slider pitch
 │  [CUE] [⏮] [⏯] [LOOP 1/2/4] │  ← boutons cue/transport/loop
-├─────────────────────────────┤
-│ [Résultats de recherche]      │  ← results (existant, déplacé en bas)
 └─────────────────────────────┘
 ```
 
-- [ ] Remplacer `.deck-player` (IFrame 16:9) par `.deck-visualizer` (canvas waveform/spectre)
-- [ ] Ajouter `.deck-eq` : conteneur avec 4 contrôles verticaux (LOW, MID, HIGH, FILTER)
-- [ ] Ajouter `.deck-dj-controls` : BPM display + pitch slider + cue/loop/play buttons
-- [ ] Déplacer `.deck-results` en bas de la voie (après les contrôles DJ)
-- [ ] En mode IFrame fallback : masquer `.deck-eq`, `.deck-dj-controls`, restaurer `.deck-player`
+- [ ] En mode Piped, remplacer la zone `.deck-player` (IFrame 16:9) par `.deck-visualizer` (canvas waveform/spectre) dans chaque deck
+- [ ] Ajouter `.deck-eq` dans cette zone audio : conteneur avec 4 contrôles verticaux (LOW, MID, HIGH, FILTER)
+- [ ] Ajouter `.deck-dj-controls` dans cette zone audio : BPM display + pitch slider + cue/loop/play buttons
+- [ ] Conserver la zone de recherche au-dessus du player, conformément à l'interface actuelle ; les résultats restent associés à cette zone de recherche et ne font pas partie du player audio
+- [ ] En mode IFrame fallback, masquer `.deck-eq` et `.deck-dj-controls`, puis restaurer `.deck-player` à la même position dans le deck
+- [ ] Le mode affiché dans l'en-tête global et la bascule globale s'appliquent aux deux decks ; aucun bouton ou toggle de mode ne doit être ajouté dans un deck
 
 ### 13.2 Barre de mixage (`.mixer-bar`)
 

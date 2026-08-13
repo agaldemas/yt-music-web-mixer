@@ -212,7 +212,7 @@
         const entry = await PipedStreams.refreshStream(id);
         const newUrl = PipedStreams.getCorsSafeUrl(entry, entry.bestAudio && entry.bestAudio.stream);
         if (!newUrl) {
-          throw new Error('Piped n\'a pas renvoyé d\'URL audio pour ' + id);
+          throw new Error('Le mode DJ n\'a pas renvoyé d\'URL audio pour ' + id);
         }
         audio.src = newUrl;
         audio.load();
@@ -229,7 +229,7 @@
         try {
           onError({
             code: code,
-            message: classified.message || 'Erreur de rafraîchissement Piped.',
+            message: classified.message || 'Erreur de rafraîchissement du flux DJ.',
             originalEvent: audio.error,
           });
         } catch (e) { /* ignore */ }
@@ -271,7 +271,11 @@
       }
       if (state.pendingPlay) {
         state.pendingPlay = false;
-        audio.play().catch(function () { /* autoplay bloqué — silencieux */ });
+        // resume() débloque l'AudioContext (politique autoplay) AVANT play().
+        // Sans cela, l'AudioContext reste suspended et le son ne sort pas.
+        AudioEngine.resume().then(function () {
+          audio.play().catch(function () { /* autoplay bloqué — silencieux */ });
+        }).catch(function () { /* resume a échoué — on tente quand même */ });
       }
     });
 
@@ -316,7 +320,7 @@
           const classified = PipedStreams.classifyError(err);
           const uiErr = {
             code: 0,
-            message: classified.message || 'Erreur Piped.',
+            message: classified.message || 'Erreur du mode DJ.',
             originalEvent: err,
           };
           try { onError(uiErr); } catch (e) { /* ignore */ }
@@ -350,7 +354,7 @@
           try {
             onError({
               code: 0,
-              message: classified.message || 'Erreur Piped.',
+              message: classified.message || 'Erreur du mode DJ.',
               originalEvent: err,
             });
           } catch (e) { /* ignore */ }

@@ -1,26 +1,45 @@
 #!/usr/bin/env bash
-# Lance un serveur statique local sur le port 8000 et ouvre l'app
-# dans le navigateur par défaut. Ctrl+C pour arrêter.
+# Lance le serveur local (backend Node/Express d'extraction yt-dlp) sur le port
+# déclaré, et ouvre l'app dans le navigateur par défaut. Ctrl+C pour arrêter.
+#
+# Ce serveur sert le frontend en statique ET l'API d'extraction locale
+# (/api/streams/:id → yt-dlp) qui contourne le blocage anti-bot des instances
+# Piped publiques. App + API sont same-origin → le Web Audio DSP fonctionne.
 set -e
 
-PORT=8000
+# Se place dans le dossier du projet (celui qui contient ce script).
+cd "$(dirname "$0")"
+
+PORT="${PORT:-5400}"
 URL="http://localhost:${PORT}"
 
-# Démarre le serveur en arrière-plan (préfére python3, fallback python).
-if command -v python3 >/dev/null 2>&1; then
-  python3 -m http.server "$PORT" &
-elif command -v python >/dev/null 2>&1; then
-  python -m http.server "$PORT" &
-else
-  echo "Python introuvable. Installez Python 3 ou lancez manuellement : npx serve -p ${PORT}" >&2
-  exit 1
+# 1) Dépendances : installe express si node_modules est absent.
+if [ ! -d node_modules ]; then
+  echo "Installation des dépendances (npm install)…"
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm introuvable. Installez Node.js 18+ : https://nodejs.org/" >&2
+    exit 1
+  fi
+  npm install
 fi
+
+# 2) Vérifie yt-dlp : sans lui, l'extraction locale est inactive et l'app
+#    bascule sur Piped/IFrame. Avertissement non bloquant.
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  echo "⚠ yt-dlp introuvable — l'extraction locale sera inactive." >&2
+  echo "  Installez-le : https://github.com/yt-dlp/yt-dlp#installation" >&2
+  echo "  (L'app basculera sur Piped/IFrame en attendant.)" >&2
+fi
+
+# 3) Démarre le serveur Express en arrière-plan.
+export PORT
+node server/server.js &
 SERVER_PID=$!
 
 # Nettoie le serveur à la sortie (Ctrl+C).
 trap 'kill $SERVER_PID 2>/dev/null; exit 0' INT TERM
 
-# Ouvre le navigateur par défaut selon l'OS.
+# 4) Ouvre le navigateur par défaut selon l'OS.
 if command -v open >/dev/null 2>&1; then
   open "$URL"          # macOS
 elif command -v xdg-open >/dev/null 2>&1; then

@@ -13,8 +13,13 @@
  *   - getMasterAnalyser()               : AnalyserNode global (master spectrum)
  *
  * Graphe par voie :
- *   source → lowShelf → midPeak → highShelf → djFilter → deckGain → analyser
- *          → masterGain → masterAnalyser → ctx.destination
+ *   source → lowShelf → midPeak → highShelf → djFilter ─┬→ deckGain → masterGain
+ *                                                        │            → masterAnalyser → ctx.destination
+ *                                                        └→ analyser (tap pre-fader, visualiseur de voie)
+ *
+ * Le visualiseur de voie tapote AVANT le deckGain : il reste actif même si
+ * le crossfader coupe la voie (deckGain ≈ 0). Le masterAnalyser, lui, est
+ * post-masterGain et reflète le mix de sortie effectif.
  *
  * Conventions : see search.js / piped-streams.js (camelCase, IIFE, window.X).
  */
@@ -150,19 +155,23 @@
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0.8;
 
-    // Connexion en série
-    // source → lowShelf → midPeak → highShelf → djFilter → deckGain → analyser
+    // Connexion : source → EQ → djFilter, puis split pre-fader.
+    //   - Une branche → deckGain → masterGain (chemin audio, niveau crossfade).
+    //   - Une branche → analyser (tap PRE-fader : visualise le flux en lecture,
+    //     indépendamment du deckGain/crossfader). Ainsi le visualiseur d'une voie
+    //     reste actif même si son crossfade est à 0.
     source.connect(lowShelf);
     lowShelf.connect(midPeak);
     midPeak.connect(highShelf);
     highShelf.connect(djFilter);
-    djFilter.connect(deckGain);
-    deckGain.connect(analyser);
 
-    // Le analyser est terminal côté deck (il n'a pas besoin de transmettre
-    // l'audio au master — c'est deckGain qui le fait via une 2e connexion).
-    // En fait on DOIT connecter deckGain au masterGain aussi :
+    // Branche audio (niveau dépendant du crossfader + master).
+    djFilter.connect(deckGain);
     deckGain.connect(masterGain);
+
+    // Tap pre-fader : l'analyser voit le signal post-EQ/filtre mais AVANT
+    // le deckGain. Insensible au crossfade et au volume master.
+    djFilter.connect(analyser);
 
     chains[deckId] = {
       audioEl: audioEl,

@@ -1,21 +1,40 @@
 @echo off
-REM Lance un serveur statique local sur le port 8000 et ouvre l'app
-REM dans le navigateur par defaut. Ctrl+C pour arreter.
+REM Lance le serveur local (backend Node/Express d'extraction yt-dlp) sur le
+REM port declare, et ouvre l'app dans le navigateur par defaut. Ctrl+C pour arreter.
+REM
+REM Ce serveur sert le frontend en statique ET l'API d'extraction locale
+REM (/api/streams/:id -> yt-dlp) qui contourne le blocage anti-bot des instances
+REM Piped publiques. App + API sont same-origin -> le Web Audio DSP fonctionne.
 
-set PORT=8000
+setlocal
+
+set PORT=5400
 set URL=http://localhost:%PORT%
 
-REM Ouvre le navigateur, puis demarre le serveur (bloquant).
+REM 1) Dependances : installe express si node_modules est absent.
+if not exist node_modules (
+  echo Installation des dependances (npm install)...
+  call npm install
+  if errorlevel 1 (
+    echo npm a echoue. Installez Node.js 18+ : https://nodejs.org/
+    pause
+    exit /b 1
+  )
+)
+
+REM 2) Verifie yt-dlp : sans lui, l'extraction locale est inactive et l'app
+REM    bascule sur Piped/IFrame. Avertissement non bloquant.
+where yt-dlp >nul 2>&1
+if errorlevel 1 (
+  echo [ATTENTION] yt-dlp introuvable - l'extraction locale sera inactive.
+  echo   Installez-le : https://github.com/yt-dlp/yt-dlp#installation
+  echo   ^(L'app basculera sur Piped/IFrame en attendant.^)
+)
+
+REM 3) Ouvre le navigateur, puis demarre le serveur (bloquant).
 start "" "%URL%"
 
-py -m http.server %PORT%
-if errorlevel 1 (
-  python -m http.server %PORT%
-)
+set PORT=%PORT%
+node server/server.js
 
-REM Si Python est absent, message d'aide.
-if errorlevel 1 (
-  echo Python introuvable. Installez Python 3 ou lancez : npx serve -p %PORT%
-  pause
-  exit /b 1
-)
+endlocal

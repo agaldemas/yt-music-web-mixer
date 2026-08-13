@@ -778,13 +778,13 @@
       modeBtnEl.hidden = !hasKey;
       modeBtnEl.setAttribute('aria-pressed', forced ? 'true' : 'false');
       if (forced) {
-        modeBtnEl.textContent = '🟢 PipedSearch';
-        modeBtnEl.title = 'Recherche via Piped (sans quota Google). '
+        modeBtnEl.textContent = '🟢 Recherche Piped';
+        modeBtnEl.title = 'Recherche via l\'API Piped (sans quota Google). '
           + 'Cliquez pour revenir à l\'API YouTube Data.';
       } else {
         modeBtnEl.textContent = '⚪ YouTube API';
         modeBtnEl.title = 'Recherche via l\'API YouTube Data officielle. '
-          + 'Cliquez pour forcer PipedSearch (préserve le quota).';
+          + 'Cliquez pour forcer la recherche via Piped (préserve le quota).';
       }
     }
 

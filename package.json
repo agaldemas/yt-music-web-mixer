@@ -1,0 +1,17 @@
+{
+  "name": "yt-music-web-mixer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mixer DJ YouTube Music — frontend vanilla + backend d'extraction local (yt-dlp) qui contourne le blocage anti-bot des instances Piped publiques.",
+  "type": "commonjs",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

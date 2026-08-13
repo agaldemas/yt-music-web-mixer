@@ -21,19 +21,22 @@
   const AudioPlayer = window.AudioPlayer;
   const AudioEngine = window.AudioEngine;
   const PipedStreams = window.PipedStreams;
+  const DeckTransport = window.DeckTransport;
+  const Visualizer = window.Visualizer;
 
   // État global
   const state = {
     players: { A: null, B: null },       // wrappers lecteur (Piped ou IFrame)
     playerType: { A: 'iframe', B: 'iframe' }, // 'piped' | 'iframe' (type du wrapper courant)
     ready: { A: false, B: false },
-    muted: { A: true, B: true },
+    muted: { A: false, B: false },
     videoIds: { A: '', B: '' },
     searches: { A: null, B: null },      // instances YTSearch par voie
     // Mode de lecture (dual mode)
     playerMode: CFG.PLAYER_MODE_DEFAULT, // 'auto' | 'piped' | 'iframe' (préférence persistée)
     resolvedMode: 'iframe',              // 'piped' | 'iframe' (mode réellement actif)
     pipedAvailable: false,               // Piped reachable au dernier test
+    visualizers: { A: null, B: null, master: null }, // instances Visualizer par voie + master
   };
 
   // ===== Helpers UI =====
@@ -62,6 +65,94 @@
   function hidePlaceholder(deck) {
     const ph = document.querySelector('.player-placeholder[data-deck="' + deck + '"]');
     if (ph) ph.style.display = 'none';
+  }
+
+  // ===== Visualiseurs (spectre/waveform) — phase 8 =====
+  //
+  // Crée les canvas par voie + master. Les deck-visualizers ne sont actifs
+  // qu'en mode Piped (sinon pas d'AnalyserNode, et on montre la vidéo YT).
+  // On attache l'AnalyserNode de chaque voie après onReady (la chaîne Web
+  // Audio existe alors → AudioEngine.getAnalyser(deck)). Le master utilise
+  // AudioEngine.getMasterAnalyser().
+  function attachDeckVisualizer(deck) {
+    if (!Visualizer) return;
+    if (!state.visualizers[deck]) {
+      var canvas = document.querySelector('.deck-visualizer[data-deck="' + deck + '"]');
+      if (!canvas) return;
+      var palette = (deck === 'A') ? Visualizer.PALETTES.a : Visualizer.PALETTES.b;
+      state.visualizers[deck] = Visualizer.create(canvas, null, {
+        mode: 'spectrum', palette: palette, barCount: 40,
+      });
+    }
+    // Branche l'AnalyserNode de la voie (existe après createDeckChain → onReady).
+    if (AudioEngine && AudioEngine.hasDeck(deck)) {
+      state.visualizers[deck].setAnalyser(AudioEngine.getAnalyser(deck));
+    }
+  }
+
+  function attachMasterVisualizer() {
+    if (!Visualizer || state.visualizers.master) return;
+    var canvas = document.getElementById('master-visualizer');
+    if (!canvas) return;
+    state.visualizers.master = Visualizer.create(canvas,
+      AudioEngine ? AudioEngine.getMasterAnalyser() : null,
+      { mode: 'spectrum', palette: Visualizer.PALETTES.master, barCount: 64 });
+  }
+
+  function startVisualizers() {
+    if (!Visualizer) return;
+    ['A', 'B'].forEach(attachDeckVisualizer);
+    attachMasterVisualizer();
+    Visualizer.startAll();
+  }
+
+  function stopVisualizers() {
+    if (Visualizer) Visualizer.stopAll();
+  }
+  //
+  // Calcule les infos à afficher (titre, uploader, miniature, badge de mode)
+  // selon le backend actif du deck, puis pousse vers DeckTransport.
+  //   - Piped  : PipedStreams.getCachedStream(videoId) → entry {title, uploader,
+  //              thumbnailUrl}. Disponible dès que loadVideoById a résolu.
+  //   - IFrame : player.getVideoData() → {title, author, video_id}. Miniature
+  //              construite depuis i.ytimg.com (format stable YouTube).
+  function thumbnailForVideoId(id) {
+    if (!id) return '';
+    return 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/mqdefault.jpg';
+  }
+
+  function updateNowPlaying(deck) {
+    if (!DeckTransport) return;
+    var videoId = state.videoIds[deck];
+    var modeLabel = (state.resolvedMode === 'piped') ? 'DJ · DSP' : 'YT IFrame';
+    var info = { title: '', uploader: '', thumbnailUrl: '', modeLabel: modeLabel };
+
+    if (state.playerType[deck] === 'piped') {
+      var entry = PipedStreams && videoId ? PipedStreams.getCachedStream(videoId) : null;
+      if (entry) {
+        info.title = entry.title || videoId || '—';
+        info.uploader = entry.uploader || '';
+        info.thumbnailUrl = entry.thumbnailUrl || thumbnailForVideoId(videoId);
+      } else {
+        info.title = videoId ? ('Chargement… ' + videoId) : '—';
+        info.thumbnailUrl = thumbnailForVideoId(videoId);
+      }
+    } else {
+      var player = state.players[deck];
+      if (player && typeof player.getVideoData === 'function') {
+        try {
+          var vd = player.getVideoData();
+          if (vd) {
+            info.title = vd.title || videoId || '—';
+            info.uploader = vd.author || '';
+          }
+        } catch (e) { /* ignore */ }
+      }
+      if (!info.title) info.title = videoId || '—';
+      info.thumbnailUrl = thumbnailForVideoId(videoId);
+    }
+
+    DeckTransport.setNowPlaying(deck, info);
   }
 
   // Met à jour le bouton mute/unmute selon state.muted[deck]
@@ -157,15 +248,15 @@
     var btn = document.getElementById('player-mode-btn');
     if (!btn) return;
     var piped = state.resolvedMode === 'piped';
-    btn.textContent = piped ? '🔊 Piped' : '📺 IFrame';
+    btn.textContent = piped ? '🔊 DJ' : '📺 YT IFrame';
     btn.setAttribute('aria-pressed', piped ? 'true' : 'false');
     var blockedFromIframe = (!piped && !state.pipedAvailable);
     btn.disabled = blockedFromIframe;
     btn.title = blockedFromIframe
-      ? 'Mode Piped indisponible (instances Piped injoignables).'
+      ? 'Mode DJ indisponible (instances Piped injoignables).'
       : (piped
-        ? 'Mode Audio Piped (DSP). Cliquez pour repasser en IFrame (vidéo YouTube).'
-        : 'Mode IFrame YouTube (volume uniquement). Cliquez pour le mode Piped (DSP audio).');
+        ? 'Mode DJ (DSP audio). Cliquez pour repasser en YT IFrame (vidéo YouTube).'
+        : 'Mode YT IFrame (volume uniquement). Cliquez pour le mode DJ (DSP audio).');
   }
 
   // Synchronise le <select> de la modal Paramètres avec l'état courant.
@@ -224,12 +315,12 @@
         // résout maintenant (Piped si dispo, sinon IFrame).
         state.playerMode = 'auto';
         persistPlayerMode('auto');
-        showStatus('Détection du mode Piped…', true);
+        showStatus('Détection du mode DJ…', true);
         probePiped().then(function (pr) {
           state.pipedAvailable = pr.reachable;
           updateModeButton();
           switchResolvedMode(pr.playable ? 'piped' : 'iframe').then(function () {
-            showStatus(pr.playable ? 'Mode Auto : Piped disponible.' : 'Mode Auto : Piped indisponible, IFrame actif.', pr.reachable);
+            showStatus(pr.playable ? 'Mode Auto : DJ disponible.' : 'Mode Auto : DJ indisponible, YT IFrame actif.', pr.reachable);
           });
         });
       } else {
@@ -237,9 +328,9 @@
           if (ok) {
             state.playerMode = m;
             persistPlayerMode(m);
-            showStatus('Mode « ' + (m === 'piped' ? 'Piped' : 'IFrame') + ' » activé.', true);
+            showStatus('Mode « ' + (m === 'piped' ? 'DJ' : 'YT IFrame') + ' » activé.', true);
           } else {
-            showStatus('Bascule impossible : Piped indisponible. Reste en IFrame.', false);
+            showStatus('Bascule impossible : DJ indisponible. Reste en YT IFrame.', false);
           }
           syncSettingsModeSelect();
         });
@@ -332,6 +423,12 @@
         Mixer.applyVolumes();
         hidePlaceholder(deck);
         clearDeckError(deck);
+        updateNowPlaying(deck);
+        // Ré-applique les réglages DJ persistés (EQ + filtre) sur la chaîne
+        // (re)créée — les nœuds Web Audio sont neufs, ils repartent à 0.
+        restoreDeckDj(deck);
+        // (Re)branche le visualiseur de la voie sur son nouvel AnalyserNode.
+        attachDeckVisualizer(deck);
         // Reprise one-shot après bascule : restaurer position + lecture, une
         // seule fois (pendingRestore est immédiatement consommé).
         if (pendingRestore) {
@@ -345,7 +442,10 @@
           }
         }
       },
-      onStateChange: function () { /* silencieux */ },
+      onStateChange: function (evt) {
+        // Notifie l'UI de transport (icône play/pause + spinner de buffering).
+        if (DeckTransport) DeckTransport.onStateChange(deck, evt && evt.data);
+      },
       onError: function (err) {
         // En mode Piped, une erreur de lecture non récupérable (URL expirée,
         // instances down, CORS) dégrade le mixage : on propose le fallback
@@ -386,7 +486,7 @@
       state.pipedAvailable = pr.reachable;
       updateModeButton();
       if (!pr.reachable) {
-        showGlobalError('Instances Piped indisponibles : bascule en mode Piped impossible. Reste en IFrame.');
+        showGlobalError('Instances DJ indisponibles : bascule en mode DJ impossible. Reste en YT IFrame.');
         return false;
       }
     }
@@ -422,6 +522,12 @@
     updateModeButton();
     syncSettingsModeSelect();
     Mixer.applyVolumes();
+    // Visualiseurs : démarrés uniquement en mode Piped (besoin d'AnalyserNode).
+    if (target === 'piped') startVisualizers(); else stopVisualizers();
+    // Le badge de mode (Piped/IFrame) change immédiatement à la bascule : on
+    // rafraîchit le now-playing tout de suite (les métadonnées détaillées
+    // arriveront au onReady du nouveau lecteur).
+    ['A', 'B'].forEach(function (deck) { updateNowPlaying(deck); });
     return true;
   }
 
@@ -466,6 +572,11 @@
 
     hidePlaceholder(deck);
     clearDeckError(deck);
+
+    // Rafraîchir le now-playing : en Piped l'entry vient d'être mise en cache
+    // par loadVideoById (titre/uploader/miniature) ; en IFrame, la videoData
+    // est disponible après ready.
+    updateNowPlaying(deck);
   }
 
   // ===== Bouton mute/unmute par voie =====
@@ -478,6 +589,132 @@
       const player = state.players[deck];
       if (!player || !state.ready[deck]) return;
       setDeckMuted(deck, !state.muted[deck]);
+    });
+  }
+
+  // ===== Contrôles DJ par voie (EQ 3 bandes + filtre DJ) — phase 6 =====
+  //
+  // Visible uniquement en mode Piped (Web Audio DSP). En IFrame, pas de DSP
+  // possible → le bloc .deck-dj reste masqué (CSS body.mode-iframe).
+  // On câble les faders EQ (low/mid/high, -12..+12 dB) et le knob filtre DJ
+  // (-1..+1) vers AudioEngine.setEQ / setDjFilter, avec :
+  //   - double-clic = reset à 0 (EQ neutre / filtre bypass)
+  //   - persistance localStorage (EQ_*_A/B, DJ_FILTER_A/B)
+  //   - restauration au chargement + ré-application après bascule de mode
+  //     (l'AudioContext recrée les nœuds, il faut repousser les valeurs).
+
+  var EQ_BANDS = ['low', 'mid', 'high'];
+
+  function eqStorageKey(deck, band) {
+    return CFG.STORAGE_KEYS['EQ_' + band.toUpperCase() + '_' + deck];
+  }
+
+  function djFilterStorageKey(deck) {
+    return CFG.STORAGE_KEYS['DJ_FILTER_' + deck];
+  }
+
+  // Lit la valeur persistée d'une bande d'EQ (number, défaut 0).
+  function loadEqValue(deck, band) {
+    try {
+      var v = localStorage.getItem(eqStorageKey(deck, band));
+      if (v !== null) return parseFloat(v) || 0;
+    } catch (e) { /* ignore */ }
+    return 0;
+  }
+
+  function loadDjFilterValue(deck) {
+    try {
+      var v = localStorage.getItem(djFilterStorageKey(deck));
+      if (v !== null) return (parseFloat(v) || 0) / 100; // stocké en -100..+100
+    } catch (e) { /* ignore */ }
+    return 0;
+  }
+
+  // Pousse une valeur d'EQ vers l'AudioEngine + met à jour le fader DOM.
+  function applyEq(deck, band, value) {
+    var fader = document.querySelector(
+      '.deck-dj[data-deck="' + deck + '"] .dj-band[data-band="' + band + '"] .dj-fader');
+    if (fader) fader.value = value;
+    if (AudioEngine && AudioEngine.hasDeck(deck)) {
+      try { AudioEngine.setEQ(deck, band, value); } catch (e) { /* deck pas prêt */ }
+    }
+  }
+
+  function applyDjFilter(deck, position) {
+    var knob = document.querySelector('.deck-dj[data-deck="' + deck + '"] .dj-knob');
+    if (knob) knob.value = Math.round(position * 100);
+    if (AudioEngine && AudioEngine.hasDeck(deck)) {
+      try { AudioEngine.setDjFilter(deck, position); } catch (e) { /* deck pas prêt */ }
+    }
+  }
+
+  // Restore toutes les valeurs DJ persistées d'un deck vers l'AudioEngine.
+  // Appelé après création de la chaîne (onReady) et après bascule de mode.
+  function restoreDeckDj(deck) {
+    EQ_BANDS.forEach(function (band) { applyEq(deck, band, loadEqValue(deck, band)); });
+    applyDjFilter(deck, loadDjFilterValue(deck));
+  }
+
+  function persistEq(deck, band, value) {
+    try { localStorage.setItem(eqStorageKey(deck, band), String(value)); } catch (e) { /* ignore */ }
+  }
+
+  function persistDjFilter(deck, position) {
+    try { localStorage.setItem(djFilterStorageKey(deck), String(Math.round(position * 100))); } catch (e) { /* ignore */ }
+  }
+
+  function wireDeckDj(deck) {
+    var root = document.querySelector('.deck-dj[data-deck="' + deck + '"]');
+    if (!root) return;
+
+    // --- Faders EQ ---
+    EQ_BANDS.forEach(function (band) {
+      var fader = root.querySelector('.dj-band[data-band="' + band + '"] .dj-fader');
+      if (!fader) return;
+      // Valeur initiale depuis le localStorage (cohérence au reload).
+      fader.value = loadEqValue(deck, band);
+
+      fader.addEventListener('input', function () {
+        var v = parseFloat(fader.value) || 0;
+        applyEq(deck, band, v);
+        persistEq(deck, band, v);
+      });
+      // Double-clic = reset à 0 (EQ neutre)
+      fader.addEventListener('dblclick', function () {
+        fader.value = 0;
+        applyEq(deck, band, 0);
+        persistEq(deck, band, 0);
+      });
+    });
+
+    // --- Knob filtre DJ ---
+    var knob = root.querySelector('.dj-knob');
+    if (knob) {
+      knob.value = Math.round(loadDjFilterValue(deck) * 100);
+      knob.addEventListener('input', function () {
+        var pos = (parseFloat(knob.value) || 0) / 100;
+        applyDjFilter(deck, pos);
+        persistDjFilter(deck, pos);
+      });
+      knob.addEventListener('dblclick', function () {
+        knob.value = 0;
+        applyDjFilter(deck, 0);
+        persistDjFilter(deck, 0);
+      });
+    }
+  }
+
+  // ===== UI de transport par voie (deck-controls.js) =====
+  //
+  // Rattache la barre de transport (play/pause + seek + temps) et le bloc
+  // now-playing du deck. Les accesseurs getPlayer/getReady lisent l'état
+  // courant (le wrapper change à chaque bascule de mode), donc la même
+  // instance de contrôleur reste valide en Piped comme en IFrame.
+  function wireDeckTransport(deck) {
+    if (!DeckTransport) return;
+    DeckTransport.bind(deck, {
+      getPlayer: function () { return state.players[deck]; },
+      getReady: function () { return !!state.ready[deck]; },
     });
   }
 
@@ -701,6 +938,13 @@
   async function init() {
     wireMuteButton('A');
     wireMuteButton('B');
+    // Reflète l'état mute par défaut (non muté) sur les boutons au démarrage.
+    updateMuteButtonUI('A');
+    updateMuteButtonUI('B');
+    wireDeckTransport('A');
+    wireDeckTransport('B');
+    wireDeckDj('A');
+    wireDeckDj('B');
     wireSearch('A');
     wireSearch('B');
     initSettingsModal();
@@ -731,7 +975,7 @@
       const pr = await probePiped();
       state.pipedAvailable = pr.reachable;
       if (!pr.reachable) {
-        showGlobalError('Mode Piped demandé mais instances indisponibles : passage en IFrame.');
+        showGlobalError('Mode DJ demandé mais instances indisponibles : passage en YT IFrame.');
         resolved = 'iframe';
       }
     } else {
@@ -756,6 +1000,19 @@
 
     updateModeButton();
     syncSettingsModeSelect();
+
+    // Démarre la boucle de rafraîchissement de la barre de transport (seek +
+    // temps) une fois que les joueurs existent. wireDeckTransport a déjà
+    // rattaché les contrôleurs ci-dessus.
+    if (DeckTransport) DeckTransport.start();
+
+    // Visualiseurs : démarrés en mode Piped (les canvas sont masqués en IFrame).
+    if (state.resolvedMode === 'piped') startVisualizers();
+
+    // Recalcule les backing stores des canvas au redimensionnement de fenêtre.
+    window.addEventListener('resize', function () {
+      if (Visualizer) Visualizer.resizeAll();
+    });
   }
 
   // Exposer pour debug console

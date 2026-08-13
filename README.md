@@ -1,14 +1,17 @@
 # 🎵 YT Music Web Mixer
 
-A **serverless** web app (plain HTML + JS) that lets you load 2 YouTube tracks side by side (decks **A** and **B**) and mix them via a **crossfader** at the bottom of the page.
+A web app built with plain HTML + JS that lets you load 2 YouTube tracks side by side (decks **A** and **B**) and mix them via a **crossfader** at the bottom of the page.
 
-> ⚠️ The "mixing" here is a **volume crossfade**: we control the relative volume of each YouTube player. No DSP processing (EQ, filters, beatmatching) is possible on YouTube audio — see [Known limitations](#-known-limitations).
+The recommended setup uses the local Express server and `yt-dlp`: the server extracts and relays the audio, allowing the player to use the **DJ mode** with Web Audio DSP. An IFrame fallback remains available when audio extraction is unavailable.
+
+> ⚠️ In **IFrame mode**, mixing is a **volume crossfade** only. In **DJ mode**, the extracted audio can be processed with the Web Audio API (EQ, filters, analysis and tempo-related features).
 
 ---
 
 ## ✨ Features
 
-- **2 side-by-side decks** (A on the left, B on the right), each with its own YouTube player and search bar.
+- **2 side-by-side decks** (A on the left, B on the right), each with its own player and search bar.
+- **DJ mode**: local Express backend + `yt-dlp` extraction, same-origin audio relay and Web Audio processing for real audio crossfading, EQ, filters and analysis. If the local backend is unavailable, the player can fall back to audio streams from Piped instances when CORS allows it.
 - **YouTube search** by keyword **without any API key** thanks to the public [Piped](https://docs.piped.video/) API (alternative YouTube frontend, CORS-enabled, no Google quota). Multiple Piped instances are tried in cascade for reliability. A YouTube Data API key remains optional for more relevant results and official pagination. Manual entry of a URL / video ID is also supported.
 - **Search mode toggle button**: when an API key is configured, a 🟢/⚪ button lets you force search via Piped (preserves Google quota) or switch back to the official YouTube Data API. The choice is persisted in `localStorage`.
 - **A↔B crossfader** (0 = full A, 100 = full B, 50 = balanced) with an *equal-power* curve to avoid the level dip in the middle.
@@ -20,7 +23,7 @@ A **serverless** web app (plain HTML + JS) that lets you load 2 YouTube tracks s
 - **Separate A/B volume readout**: the crossfade bar shows individual volume percentages for each deck.
 - **Mixer-style crossfade thumb**: rectangular 15×30px handle with `ew-resize` cursor, like a hardware mixer fader.
 - **Persistence** via `localStorage`: API key, last queries, and last video IDs are saved. Queries are restored in the search fields on reload.
-- **One-click launch scripts**: `start.sh` (macOS/Linux/WSL) and `start.bat` (Windows) start a local server on port 8000 and open the app in your default browser.
+- **One-click launch scripts**: `start.sh` (macOS/Linux/WSL) and `start.bat` (Windows) start the local Express server on port 5400 and open the app in your default browser.
 - **Responsive**: collapses to a single column on small screens.
 
 ---
@@ -31,9 +34,18 @@ A **serverless** web app (plain HTML + JS) that lets you load 2 YouTube tracks s
 
 Double-click `index.html` to open it via `file://`. The YouTube players work in this mode.
 
-### 2. (Recommended) Serve locally for search
+### 2. (Recommended) Start the local Express server
 
-The `fetch()` call to the YouTube Data API can be blocked under `file://` (notably on Chrome). To enable search, start a static server:
+The Express server is the recommended way to run the application. It serves the frontend and provides the local `yt-dlp` extraction required by **DJ mode**. Install Node.js, run `npm install`, make sure `yt-dlp` is installed, then start:
+
+```bash
+npm install
+npm start
+```
+
+Open <http://localhost:5400> in your browser. Without `yt-dlp`, the frontend still starts, but DJ mode falls back to Piped/IFrame.
+
+For search only, a static server is also possible. The `fetch()` call to the YouTube Data API can be blocked under `file://` (notably on Chrome):
 
 **Option A — Python (built-in)**
 
@@ -56,7 +68,7 @@ Start the server and open the browser in a single command:
 - macOS / Linux / WSL: `./start.sh`
 - Windows: double-click `start.bat` (or run it in a terminal)
 
-The script uses Python's built-in server and opens <http://localhost:8000> automatically.
+The scripts start the Express server and open <http://localhost:5400> automatically.
 
 ### 3. Configure the YouTube Data API key (optional)
 
@@ -76,7 +88,7 @@ In Google Cloud Console, open **APIs & Services** → **Credentials**, select th
 
 - Under **API restrictions**, select **Restrict key** and allow only **YouTube Data API v3**.
 - If you host the app on a website, under **Application restrictions** choose **Websites** and add that site's address.
-- For local use, add `http://localhost:8000/*` if you use the included launch script or the commands above. Add the exact address and port you actually use. Restrictions that omit the address in use will make search fail.
+- For local use, add `http://localhost:5400/*` if you use the included launch script or the Express server. Add the exact address and port you actually use. Restrictions that omit the address in use will make search fail.
 
 > Without a key, the app works fully: keyword search automatically uses the public Piped API (no Google quota), and you can also paste a YouTube URL (`youtu.be/...`, `watch?v=...`) or a raw video ID. Rate-limiting of the official API (quota exceeded / 429) is also handled gracefully — the panel shows a warning instead of an error, and you can fall back to URL/ID entry.
 >
@@ -91,27 +103,32 @@ yt-music-web-mixer/
 ├── CLAUDE.md            # Agent guide (specification)
 ├── README.md            # this file
 ├── index.html           # structure: header, A | B zone, mixer bar
+├── server/
+│   └── server.js        # Express server, yt-dlp extraction and same-origin audio relay
 ├── css/
-│   └── styles.css       # 2-column grid layout + fixed bottom bar
+│   └── styles.css       # 2-column grid layout + fixed bottom bar + DJ controls
 └── js/
-    ├── config.js        # constants, read API key from localStorage
-    ├── youtube.js       # YouTube IFrame API wrapper (loading, A/B players)
+    ├── config.js        # constants, API key and player configuration
+    ├── youtube.js       # YouTube IFrame API wrapper (IFrame fallback)
+    ├── piped-streams.js # local backend first, Piped stream fallback, cache and refresh
+    ├── audio-player.js  # audio player used by DJ mode
+    ├── audio-engine.js  # Web Audio graph: source, EQ, filter, gain and analyser
     ├── search.js        # YouTube Data API + Piped (keyless) search + results display
-    ├── mixer.js         # crossfade logic (slider → A/B volumes)
-    └── app.js           # bootstrap, event wiring, global state
+    ├── mixer.js         # crossfade logic (GainNode in DJ mode, volume in IFrame mode)
+    └── app.js           # bootstrap, event wiring, mode and global state
 ```
 
-**Stack**: HTML + CSS + vanilla JS. No dependencies, no bundler, no framework. Works under `file://` (players) or via a static server (search).
+**Stack**: HTML + CSS + vanilla JS frontend, with an optional Node/Express local server. No bundler and no frontend framework. `file://` is suitable for the basic IFrame player; `http://localhost:5400` is recommended for search, local extraction and DJ mode.
 
 ---
 
 ## 🎛️ Usage
 
-1. In **deck A**, search for or paste a track → select it → it loads into player A (sound is enabled automatically).
+1. Start the Express server for the full experience, then in **deck A**, search for or paste a track → select it → it loads into player A (sound is enabled automatically).
 2. Do the same for **deck B**.
 3. (Optional) Toggle **🔇 / 🔊** on a deck to mute/unmute individually.
 4. Start playback (**▶️ Play both**).
-5. Move the **crossfader** to gradually transition from A to B.
+5. Move the **crossfader** to gradually transition from A to B. In DJ mode this uses Web Audio gain nodes; in IFrame mode it controls player volumes.
 6. Adjust the **master volume** as needed.
 7. Optional: **Sync B → A** to align B to A's position.
 
@@ -119,12 +136,14 @@ yt-music-web-mixer/
 
 ## ⚠️ Known limitations
 
-- **No real DSP mixing.** The YouTube IFrame API does not expose the audio stream (cross-origin, no CORS). Mixing is done **only via volume control** (`setVolume`). No EQ, no automatic tempo sync.
-- **Dual playback is resource-heavy.** Playing 2 YouTube videos simultaneously can be demanding (CPU, RAM, network). Recommendations:
+- **IFrame mode limitations.** The YouTube IFrame API does not expose the audio stream (cross-origin, no CORS). Mixing is done **only via volume control** (`setVolume`); EQ, filters and automatic tempo sync are unavailable.
+- **DJ mode requires the local backend or a usable Piped fallback.** The Express server uses `yt-dlp` and relays audio same-origin through `/api/audio/:id`. If `yt-dlp` is unavailable or extraction fails, the player tries Piped audio streams; if that also fails, it falls back to IFrame mode.
+- **DJ mode is audio-only.** The extracted/DSP path does not display the YouTube video; use IFrame mode when video playback is needed.
+- **Dual playback is resource-heavy.** Playing 2 decks simultaneously can be demanding (CPU, RAM, network). Recommendations:
   - Close other heavy tabs.
   - On a modest machine, prefer a single deck at a time.
   - If playback stutters, lower the quality on YouTube's side (not controllable by the app).
-- **YouTube Data API quotas.** 10,000 units/day by default, one search = 100 units. Beyond that, search is blocked until the next day.
+- **YouTube Data API quotas.** 10,000 units/day by default, one search = 100 units. Beyond that, official search is blocked until the next day. The keyless **Piped search mode** does not use this Google quota, but public Piped instances can be unavailable.
 - **Continuous sync is imperfect.** A residual offset of 200–500 ms is normal (seeking + buffering causes a micro-gap). No *frame-accurate* sync is possible on YouTube.
 - **Limited persistence.** In private browsing or after clearing the cache, `localStorage` data is lost.
 - **Autoplay.** Players start `muted` on initial page load. Sound is automatically enabled when you select a new track (the selection click counts as a user gesture). You can still mute/unmute per deck at any time.

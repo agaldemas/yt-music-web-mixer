@@ -1,14 +1,17 @@
 # 🎵 YT Music Web Mixer
 
-Application web **sans serveur** (HTML + JS pur) permettant de charger 2 morceaux YouTube côte à côte (voies **A** et **B**) et de les mixer via un **crossfader** en bas de page.
+Application web en HTML + JS pur permettant de charger 2 morceaux YouTube côte à côte (voies **A** et **B**) et de les mixer via un **crossfader** en bas de page.
 
-> ⚠️ Le « mixage » ici est un **crossfade de volumes** : on contrôle le volume relatif de chaque lecteur YouTube. Aucun traitement DSP (EQ, filtres, beatmatch) n'est possible sur le son YouTube — voir [Limites connues](#-limites-connues).
+L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le serveur extrait et relaie le flux audio, ce qui permet au lecteur d'utiliser le **mode DJ** avec les traitements Web Audio. Un fallback IFrame reste disponible lorsque l'extraction audio est indisponible.
+
+> ⚠️ En **mode IFrame**, le mixage est uniquement un **crossfade de volumes**. En **mode DJ**, le flux audio extrait peut être traité par la Web Audio API (EQ, filtres, analyse et fonctions liées au tempo).
 
 ---
 
 ## ✨ Fonctionnalités
 
-- **2 voies côte à côte** (A à gauche, B à droite), chacune avec son lecteur YouTube et sa barre de recherche.
+- **2 voies côte à côte** (A à gauche, B à droite), chacune avec son lecteur et sa barre de recherche.
+- **Mode DJ** : backend Express local + extraction `yt-dlp`, relais audio same-origin et traitements Web Audio pour le vrai crossfade audio, l'EQ, les filtres et l'analyse. Si le backend local est indisponible, le lecteur peut utiliser les flux audio des instances Piped lorsque le CORS le permet.
 - **Recherche YouTube** par mot-clé **sans clé API** grâce à l'API publique [Piped](https://docs.piped.video/) (frontend YouTube alternatif, CORS activé, pas de quota Google). Plusieurs instances Piped sont essayées en cascade pour la fiabilité. Une clé API YouTube Data reste optionnelle pour des résultats plus pertinents et la pagination officielle. Saisie manuelle d'une URL / ID vidéo également possible.
 - **Bouton de bascule de mode de recherche** : quand une clé API est configurée, un bouton 🟢/⚪ permet de forcer la recherche via Piped (préserve le quota Google) ou de revenir à l'API YouTube Data officielle. Le choix est persisté en `localStorage`.
 - **Crossfader A↔B** (0 = full A, 100 = full B, 50 = équilibré) avec courbe *equal-power* pour éviter le creux de niveau au milieu.
@@ -20,7 +23,7 @@ Application web **sans serveur** (HTML + JS pur) permettant de charger 2 morceau
 - **Affichage séparé des volumes A/B** : la barre de crossfade affiche le pourcentage de volume de chaque voie individuellement.
 - **Curseur de crossfade style mixage** : rectangle 15×30px avec curseur `ew-resize`, comme un fader de console matérielle.
 - **Persistance** via `localStorage` : clé API, dernières requêtes et derniers videoIds sauvegardés. Les requêtes sont restaurées dans les champs de recherche au reload.
-- **Scripts de lancement en un clic** : `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) démarrent un serveur local sur le port 8000 et ouvrent l'app dans le navigateur par défaut.
+- **Scripts de lancement en un clic** : `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) démarrent le serveur Express local sur le port 5400 et ouvrent l'app dans le navigateur par défaut.
 - **Responsive** : passe en une colonne sur petit écran.
 
 ---
@@ -31,9 +34,18 @@ Application web **sans serveur** (HTML + JS pur) permettant de charger 2 morceau
 
 Double-cliquez sur `index.html` pour l'ouvrir en `file://`. Les lecteurs YouTube fonctionnent dans ce mode.
 
-### 2. (Recommandé) Servir en local pour la recherche
+### 2. (Recommandé) Démarrer le serveur Express local
 
-L'appel `fetch()` vers l'API YouTube Data peut être bloqué en `file://` (notamment sur Chrome). Pour activer la recherche, lancez un serveur statique :
+Le serveur Express est la manière recommandée d'utiliser l'application. Il sert le frontend et fournit l'extraction locale `yt-dlp` nécessaire au **mode DJ**. Installez Node.js, exécutez `npm install`, vérifiez que `yt-dlp` est installé, puis lancez :
+
+```bash
+npm install
+npm start
+```
+
+Ouvrez ensuite <http://localhost:5400> dans votre navigateur. Sans `yt-dlp`, le frontend reste accessible, mais le mode DJ retombe sur Piped/IFrame.
+
+Pour la recherche uniquement, un serveur statique reste possible. L'appel `fetch()` vers l'API YouTube Data peut être bloqué en `file://` (notamment sur Chrome) :
 
 **Option A — Python (intégré)**
 
@@ -56,7 +68,7 @@ Démarrez le serveur et ouvrez le navigateur en une seule commande :
 - macOS / Linux / WSL : `./start.sh`
 - Windows : double-cliquez sur `start.bat` (ou lancez-le dans un terminal)
 
-Le script utilise le serveur intégré de Python et ouvre <http://localhost:8000> automatiquement.
+Les scripts démarrent le serveur Express et ouvrent automatiquement <http://localhost:5400>.
 
 ### 3. Créer et configurer une clé API YouTube Data (optionnel)
 
@@ -76,7 +88,7 @@ Dans la Google Cloud Console, ouvrez **API et services** → **Identifiants**, s
 
 - Sous **Restrictions relatives aux API**, choisissez de restreindre la clé et n'autorisez que **YouTube Data API v3**.
 - Si vous hébergez l'application sur un site web, sous **Restrictions liées aux applications**, choisissez **Sites Web** et ajoutez l'adresse de ce site.
-- Pour une utilisation locale, ajoutez `http://localhost:8000/*` si vous utilisez le script de lancement fourni ou les commandes ci-dessus. Ajoutez l'adresse et le port exacts que vous utilisez : une restriction ne contenant pas l'adresse ouverte dans le navigateur empêchera la recherche de fonctionner.
+- Pour une utilisation locale, ajoutez `http://localhost:5400/*` si vous utilisez le script de lancement fourni ou le serveur Express. Ajoutez l'adresse et le port exacts que vous utilisez : une restriction ne contenant pas l'adresse ouverte dans le navigateur empêchera la recherche de fonctionner.
 
 > Sans clé, l'app fonctionne entièrement : la recherche par mot-clé utilise automatiquement l'API publique Piped (pas de quota Google), et vous pouvez aussi coller une URL YouTube (`youtu.be/...`, `watch?v=...`) ou un ID vidéo brut. Le rate limiting de l'API officielle (quota dépassé / 429) est aussi géré proprement — le panneau affiche un avertissement plutôt qu'une erreur, et vous pouvez basculer sur la saisie URL/ID.
 >
@@ -99,27 +111,32 @@ yt-music-web-mixer/
 ├── CLAUDE.md            # Guide des agents (cahier des charges)
 ├── README.md            # ce fichier
 ├── index.html           # structure : header, zone A | B, barre de mixage
+├── server/
+│   └── server.js        # serveur Express, extraction yt-dlp et relais audio same-origin
 ├── css/
-│   └── styles.css       # layout grille 2 colonnes + barre fixe en bas
+│   └── styles.css       # layout grille 2 colonnes + barre fixe + contrôles DJ
 └── js/
-    ├── config.js        # constantes, lecture clé API depuis localStorage
-    ├── youtube.js       # wrapper YouTube IFrame API (chargement, joueurs A/B)
+    ├── config.js        # constantes, clé API et configuration lecteur
+    ├── youtube.js       # wrapper YouTube IFrame API (fallback IFrame)
+    ├── piped-streams.js # backend local prioritaire, fallback flux Piped, cache et refresh
+    ├── audio-player.js  # lecteur audio du mode DJ
+    ├── audio-engine.js  # graphe Web Audio : source, EQ, filtre, gain et analyseur
     ├── search.js        # recherche YouTube Data API + Piped (sans clé) + affichage résultats
-    ├── mixer.js         # logique crossfade (slider → volumes A/B)
-    └── app.js           # bootstrap, câblage événements, état global
+    ├── mixer.js         # crossfade (GainNode en mode DJ, volume en mode IFrame)
+    └── app.js           # bootstrap, câblage événements, modes et état global
 ```
 
-**Stack** : HTML + CSS + JS vanilla. Aucune dépendance, aucun bundler, aucun framework. Fonctionne en `file://` (lecteurs) ou via serveur statique (recherche).
+**Stack** : frontend HTML + CSS + JS vanilla, avec un serveur local Node/Express optionnel. Aucun bundler ni framework frontend. `file://` convient au lecteur IFrame de base ; `http://localhost:5400` est recommandé pour la recherche, l'extraction locale et le mode DJ.
 
 ---
 
 ## 🎛️ Utilisation
 
-1. Dans la **voie A**, recherchez ou collez un morceau → sélectionnez-le → il se charge dans le lecteur A (le son est activé automatiquement).
+1. Démarrez le serveur Express pour l'expérience complète, puis dans la **voie A**, recherchez ou collez un morceau → sélectionnez-le → il se charge dans le lecteur A (le son est activé automatiquement).
 2. Faites de même pour la **voie B**.
 3. (Optionnel) Basculez **🔇 / 🔊** sur une voie pour muter/démuter individuellement.
 4. Lancez la lecture (**▶️ Play both**).
-5. Bougez le **crossfader** pour passer progressivement de A à B.
+5. Bougez le **crossfader** pour passer progressivement de A à B. En mode DJ, il utilise les gains Web Audio ; en mode IFrame, il contrôle le volume des lecteurs.
 6. Ajustez le **volume master** si besoin.
 7. Optionnel : **Sync B → A** pour aligner B sur la position de A.
 
@@ -127,12 +144,14 @@ yt-music-web-mixer/
 
 ## ⚠️ Limites connues
 
-- **Pas de vrai mixage DSP.** L'API IFrame YouTube ne donne pas accès au flux audio (cross-origin, pas de CORS). Le mixage se fait **uniquement par contrôle du volume** (`setVolume`). Pas d'EQ, pas de tempo sync automatique.
-- **Lourdeur de la double lecture.** La lecture simultanée de 2 vidéos YouTube peut être lourde (CPU, RAM, réseau). Recommandations :
+- **Limites du mode IFrame.** L'API IFrame YouTube ne donne pas accès au flux audio (cross-origin, pas de CORS). Le mixage se fait **uniquement par contrôle du volume** (`setVolume`) ; l'EQ, les filtres et le tempo sync automatique sont indisponibles.
+- **Le mode DJ nécessite le backend local ou un fallback Piped utilisable.** Le serveur Express utilise `yt-dlp` et relaie l'audio en same-origin via `/api/audio/:id`. Si `yt-dlp` est absent ou l'extraction échoue, le lecteur essaie les flux audio Piped ; si cela échoue aussi, il retombe en mode IFrame.
+- **Le mode DJ est audio-only.** Le chemin extraction/DSP n'affiche pas la vidéo YouTube ; utilisez le mode IFrame si la vidéo est nécessaire.
+- **Lourdeur de la double lecture.** La lecture simultanée de 2 voies peut être lourde (CPU, RAM, réseau). Recommandations :
   - Fermez les autres onglets lourds.
   - Sur machine modeste, préférez une seule voie à la fois.
   - Si la lecture saccade, réduisez la qualité côté YouTube (non contrôlable par l'app).
-- **Quotas API YouTube Data.** 10 000 unités/jour par défaut, une recherche = 100 unités. Au-delà, la recherche est bloquée jusqu'au lendemain.
+- **Quotas API YouTube Data.** 10 000 unités/jour par défaut, une recherche = 100 unités. Au-delà, la recherche officielle est bloquée jusqu'au lendemain. Le **mode de recherche Piped** sans clé n'utilise pas ce quota Google, mais les instances Piped publiques peuvent être indisponibles.
 - **Sync continu imparfait.** Un écart résiduel de 200–500ms est normal (le seek + buffering crée une micro-coupure). Pas de sync *frame-accurate* possible sur YouTube.
 - **Persistance limitée.** En navigation privée ou après vidage du cache, les données `localStorage` sont perdues.
 - **Autoplay.** Les lecteurs démarrent en `muted` au chargement de la page. Le son est activé automatiquement lors de la sélection d'un nouveau morceau (le clic de sélection compte comme geste utilisateur). Vous pouvez toujours muter/démuter chaque voie à tout moment.
