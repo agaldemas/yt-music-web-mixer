@@ -24,24 +24,11 @@
 
   const API_BASE = 'https://www.googleapis.com/youtube/v3';
 
-  // Instances de l'API Piped (frontend YouTube alternatif). CORS activé (*),
-  // renvoie du JSON propre (videoId, titre, vignette, durée, auteur). On les
-  // essaie en cascade : la première qui répond gagne. Liste mise à jour
-  // manuellement — les instances Piped changent souvent.
-  const PIPED_INSTANCES = [
-    'api.piped.private.coffee',
-    'pipedapi.kavin.rocks',
-    'pipedapi.reallyaweso.me',
-    'pipedapi.leptons.org',
-    'pipedapi.adminforge.de',
-  ];
-
-  // Timeout par tentative d'instance Piped (ms). On reste court pour enchaîner
-  // vite sur la suivante si elle ne répond pas.
-  const PIPED_INSTANCE_TIMEOUT_MS = 8000;
-
+  // Instances Piped + timeout : partagés avec piped-streams.js (cf. config.js).
   // Sentinelle de pageToken : "première page" Piped. Elle se recharge via
   // /search (qui n'accepte pas de token), pas via /nextpage/search.
+  const PIPED_INSTANCES = CFG.PIPED_INSTANCES || [];
+  const PIPED_INSTANCE_TIMEOUT_MS = CFG.PIPED_INSTANCE_TIMEOUT_MS || 8000;
   const PIPED_FIRST_PAGE = '__piped_first__';
 
   // ===== Helpers =====

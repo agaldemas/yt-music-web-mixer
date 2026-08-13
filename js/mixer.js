@@ -2,17 +2,35 @@
  *
  * Volume calculé en equal-power : vA = cos(p·π/2), vB = sin(p·π/2)
  * Le master volume s'applique multiplicativement.
- * Le sync continu n'est jamais parfait (drift 200-500ms normal).
+ *
+ * Mode dual :
+ *   - 'iframe' : crossfade via player.setVolume(), avec ramping par paliers
+ *                via setInterval (comportement historique).
+ *   - 'piped'  : crossfade via AudioEngine.applyCrossfade() (GainNode du
+ *                moteur Web Audio). Le ramping par paliers devient obsolète :
+ *                la fluidité est gérée nativement par GainNode.setTargetAtTime
+ *                (timeConstant=0.015s). On applique donc directement la cible
+ *                du slider, le GainNode interpole en interne.
+ *
+ * Le sync continu utilise un seuil plus serré en mode Piped (0.2s vs 0.5s
+ * en IFrame) car les éléments <audio> HTML5 sont synchronisés par l'horloge
+ * du navigateur, donc le drift résiduel est plus faible.
  */
+
 (function () {
   var players = null; // { A: wrapper, B: wrapper }
+  var mode = 'iframe'; // 'piped' | 'iframe' — défaut = IFrame (avant détection)
   var crossfade = 50; // 0 = full A, 100 = full B (cible affichée)
   var appliedCrossfade = 50; // valeur réellement appliquée aux lecteurs
   var master = 100; // 0-100
   var syncHandle = null; // setInterval pour sync continu
-  var stepHandle = null; // setInterval pour crossfade progressif
+  var stepHandle = null; // setInterval pour crossfade progressif (IFrame only)
   var stepPercent = 100; // palier en % (>= 100 = instantané)
   var stepIntervalMs = 0; // intervalle en ms (<= 0 = instantané)
+
+  // Seuils de sync continu selon le mode (Piped = plus précis)
+  var SYNC_DRIFT_THRESHOLD_PIPED = 0.2; // s
+  var SYNC_DRIFT_THRESHOLD_IFRAME = 0.5; // s
 
   // Equal-power : évite le creux de niveau au centre du crossfade.
   // Calcule les volumes à partir de la valeur *appliquée* (qui peut être
@@ -26,14 +44,30 @@
     };
   }
 
-  // Recalcule et applique les volumes aux deux lecteurs
+  // Recalcule et applique les volumes aux deux lecteurs.
+  // Selon le mode, route vers AudioEngine (Piped, GainNode, ramping fluide)
+  // ou vers les players IFrame (setVolume, paliers manuels).
   function applyVolumes() {
+    if (mode === 'piped') {
+      var AE = window.AudioEngine;
+      if (!AE) return; // AudioEngine pas chargé → fallback silencieux
+      // Mode Piped : le crossfade et le master sont gérés par GainNode.
+      // Pas besoin d'attendre une rampe par paliers : setTargetAtTime fait
+      // la transition de manière fluide en interne. On pousse la cible
+      // directement.
+      AE.applyCrossfade(crossfade / 100);
+      AE.applyMasterVolume(master);
+      // Mémorise pour l'affichage (cohérent avec la cible).
+      appliedCrossfade = crossfade;
+      return;
+    }
+    // Mode IFrame : comportement historique (setVolume + paliers).
     var v = calcVolumes();
     if (players && players.A) players.A.setVolume(v.a);
     if (players && players.B) players.B.setVolume(v.b);
   }
 
-  // Arrête l'éventuel crossfade progressif en cours
+  // Arrête l'éventuel crossfade progressif en cours (IFrame only)
   function stopStepping() {
     if (stepHandle) {
       clearInterval(stepHandle);
@@ -42,6 +76,8 @@
   }
 
   // Définit les paramètres de crossfade progressif (depuis app.js / settings)
+  // En mode Piped, ces paramètres sont ignorés : le ramping natif
+  // (setTargetAtTime) gère la fluidité.
   function setStepOptions(percent, intervalMs) {
     stepPercent = Math.max(1, Math.min(100, parseInt(percent, 10) || 100));
     stepIntervalMs = Math.max(0, parseInt(intervalMs, 10) || 0);
@@ -54,8 +90,17 @@
   }
 
   // Lance le crossfade progressif de appliedCrossfade vers crossfade par paliers.
-  // Si stepPercent >= 100 ou stepIntervalMs <= 0 → application instantanée.
+  // En mode Piped, on saute directement à la cible (ramping natif Web Audio).
+  // En mode IFrame, comportement historique par paliers si configuré.
   function stepTowardsTarget() {
+    if (mode === 'piped') {
+      // En Piped, setTargetAtTime fait la transition fluide en interne.
+      // On pousse directement la cible sans paliers.
+      stopStepping();
+      appliedCrossfade = crossfade;
+      applyVolumes();
+      return;
+    }
     if (stepPercent >= 100 || stepIntervalMs <= 0) {
       appliedCrossfade = crossfade;
       applyVolumes();
@@ -87,7 +132,8 @@
     }
   }
 
-  // Sync continu : vérifie le drift toutes les ~1s, re-seek si > 0.5s
+  // Sync continu : vérifie le drift périodiquement, re-seek si > seuil.
+  // Seuil adaptatif selon le mode (Piped = 0.2s, IFrame = 0.5s).
   function toggleContinuousSync(btn) {
     if (syncHandle) {
       clearInterval(syncHandle);
@@ -97,15 +143,46 @@
     } else {
       syncHandle = setInterval(function () {
         if (!players || !players.A || !players.B) return;
+        var threshold = (mode === 'piped')
+          ? SYNC_DRIFT_THRESHOLD_PIPED
+          : SYNC_DRIFT_THRESHOLD_IFRAME;
         var tA = players.A.getCurrentTime();
         var tB = players.B.getCurrentTime();
-        if (Math.abs(tA - tB) > 0.5) {
+        if (Math.abs(tA - tB) > threshold) {
           players.B.seekTo(tA);
         }
       }, 1000);
       btn.setAttribute('aria-pressed', 'true');
       btn.textContent = '🔁 Sync continu: ON';
     }
+  }
+
+  // ===== Mode dual (Piped / IFrame) =====
+
+  // Active le mode de crossfade. Doit être appelé AVANT applyVolumes()
+  // pour prendre effet. Re-applique immédiatement les volumes après
+  // changement pour respecter l'état UI (crossfade + master).
+  //
+  // Modes :
+  //   'iframe' : IFrame YouTube (volume-only, paliers manuels)
+  //   'piped'  : Piped Audio (Web Audio GainNode, ramping natif)
+  function setMode(newMode) {
+    if (newMode !== 'piped' && newMode !== 'iframe') return;
+    if (newMode === mode) return;
+    mode = newMode;
+    // À chaque changement de mode, on arrête le palier IFrame en cours
+    // et on applique immédiatement la cible au nouveau système.
+    stopStepping();
+    appliedCrossfade = crossfade;
+    applyVolumes();
+  }
+
+  function getMode() {
+    return mode;
+  }
+
+  function isPipedMode() {
+    return mode === 'piped';
   }
 
   // Câble tous les contrôles de la barre de mixage
@@ -173,5 +250,13 @@
     init: init,
     applyVolumes: applyVolumes,
     setStepOptions: setStepOptions,
+    setMode: setMode,
+    getMode: getMode,
+    isPipedMode: isPipedMode,
+    // Constantes exportées (debug / tests)
+    CONST: {
+      SYNC_DRIFT_THRESHOLD_PIPED: SYNC_DRIFT_THRESHOLD_PIPED,
+      SYNC_DRIFT_THRESHOLD_IFRAME: SYNC_DRIFT_THRESHOLD_IFRAME,
+    },
   };
 })();
