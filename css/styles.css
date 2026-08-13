@@ -36,6 +36,37 @@ input { font-family: inherit; }
 }
 .header-btn:hover { background: #272d3b; }
 
+/* Bouton global de bascule de mode (Piped ↔ IFrame) dans l'en-tête */
+.player-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 600;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
+}
+/* Mode Piped actif (Audio / DSP) : teinte verte */
+body.mode-piped .player-mode-btn[aria-pressed="true"] {
+  background: #0f2a1f;
+  border-color: #2f6b52;
+  color: #6ee7b7;
+}
+/* Mode IFrame actif (YouTube) : teinte bleue */
+body.mode-iframe .player-mode-btn[aria-pressed="false"] {
+  background: #1b2a52;
+  border-color: #3b6bd6;
+  color: #93c5fd;
+}
+/* Mode contraint (Piped indisponible) : grisé + curseur interdit */
+.player-mode-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #1f2430;
+  border-color: #2e3444;
+  color: #9ca3af;
+}
+
 /* ===== Banner d'erreur global ===== */
 .api-error-banner {
   margin: 0;
@@ -46,6 +77,76 @@ input { font-family: inherit; }
   font-size: 0.9rem;
   text-align: center;
 }
+
+/* ===== Alerte fallback Piped → IFrame (dual mode) ===== */
+.piped-fallback-alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 10px 20px;
+  background: #2a2410;
+  border-bottom: 1px solid #6b5b1f;
+  color: #fde68a;
+  font-size: 0.88rem;
+}
+.piped-fallback-alert[hidden] { display: none; }
+.pfa-text { flex: 1 1 auto; min-width: 220px; }
+.pfa-btn {
+  background: #2563eb;
+  color: #fff;
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.pfa-btn:hover { background: #1d4ed8; }
+.pfa-dismiss {
+  background: transparent;
+  color: #fde68a;
+  border: 0;
+  font-size: 1rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.pfa-dismiss:hover { background: rgba(253, 230, 138, 0.12); }
+
+/* ===== Alerte fallback Piped → IFrame (dual mode) ===== */
+.piped-fallback-alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 10px 20px;
+  background: #2a2410;
+  border-bottom: 1px solid #6b5b1f;
+  color: #fde68a;
+  font-size: 0.88rem;
+}
+.piped-fallback-alert[hidden] { display: none; }
+.pfa-text { flex: 1 1 auto; min-width: 220px; }
+.pfa-btn {
+  background: #2563eb;
+  color: #fff;
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.pfa-btn:hover { background: #1d4ed8; }
+.pfa-dismiss {
+  background: transparent;
+  color: #fde68a;
+  border: 0;
+  font-size: 1rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.pfa-dismiss:hover { background: rgba(253, 230, 138, 0.12); }
 
 /* ===== Modal (Paramètres) ===== */
 .modal {
@@ -160,6 +261,24 @@ input { font-family: inherit; }
   margin-left: auto;
 }
 .modal-num-input:focus { outline: none; border-color: #3b82f6; }
+/* Sélecteur de mode de lecture (modal Paramètres) */
+.modal-select {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 200px;
+  background: #0f1115;
+  color: #e7e7ea;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.85rem;
+}
+.modal-select:focus { outline: none; border-color: #3b82f6; }
+.modal-hint-mini {
+  font-size: 0.75rem;
+  color: #8a8f99;
+  margin: 0;
+}
 .modal-slider {
   -webkit-appearance: none;
   appearance: none;
@@ -643,3 +762,33 @@ input { font-family: inherit; }
   .mixer-bar { gap: 10px; }
   .mixer-crossfade { flex: 1 1 100%; order: 99; }
 }
+
+/* ============================================================
+ * Hooks de mode (dual mode Piped / IFrame)
+ *
+ * body.mode-piped  → mode Audio Piped / Web Audio DSP (actif)
+ * body.mode-iframe → mode IFrame YouTube (volume-only, fallback)
+ *
+ * Les contrôles DJ avancés (EQ, pitch, cue/loop — roadmap tâches 6+)
+ * ne s'affichent qu'en mode Piped : à venir, ils utiliseront
+ *   body.mode-piped  .deck-dj { display: … }
+ *   body.mode-iframe .deck-dj { display: none }
+ * Aucun badge/bouton de mode n'est ajouté dans les decks (contrôle global).
+ * ============================================================ */
+.deck-dj { display: none; }            /* caché tant que l'UI DJ n'existe pas */
+body.mode-piped .deck-dj { display: none; } /* à activer quand l'UI DJ sera câblée */
+
+/* ============================================================
+ * Hooks de mode (dual mode Piped / IFrame)
+ *
+ * body.mode-piped  → mode Audio Piped / Web Audio DSP (actif)
+ * body.mode-iframe → mode IFrame YouTube (volume-only, fallback)
+ *
+ * Les contrôles DJ avancés (EQ, pitch, cue/loop — roadmap tâches 6+)
+ * ne s'affichent qu'en mode Piped : à venir, ils utiliseront
+ *   body.mode-piped  .deck-dj { display: … }
+ *   body.mode-iframe .deck-dj { display: none }
+ * Aucun badge/bouton de mode n'est ajouté dans les decks (contrôle global).
+ * ============================================================ */
+.deck-dj { display: none; }            /* caché tant que l'UI DJ n'existe pas */
+body.mode-piped .deck-dj { display: none; } /* à activer quand l'UI DJ sera câblée */

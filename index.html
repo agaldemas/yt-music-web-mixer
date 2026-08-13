@@ -11,12 +11,27 @@
   <header class="app-header">
     <h1>🎵 YT Music Web Mixer</h1>
     <div class="header-actions">
+      <button id="player-mode-btn" class="header-btn player-mode-btn" type="button" aria-pressed="false" title="Mode de lecture (Piped / IFrame)">🔊 Piped</button>
       <button id="settings-btn" class="header-btn" type="button" aria-label="Paramètres">⚙️ Paramètres</button>
     </div>
   </header>
 
   <!-- Banner d'erreur global (chargement API YouTube) -->
   <div id="api-error-banner" class="api-error-banner" hidden></div>
+
+  <!-- Alerte fallback Piped → IFrame (résilience runtime dual mode) -->
+  <div id="piped-fallback-alert" class="piped-fallback-alert" hidden role="alert">
+    <span class="pfa-text">⚠️ Lecture Piped indisponible. Pour préserver le mixage, basculer les deux decks en IFrame&nbsp;?</span>
+    <button id="pfa-switch" class="pfa-btn" type="button">Basculer les deux</button>
+    <button id="pfa-dismiss" class="pfa-dismiss" type="button" aria-label="Ignorer l'alerte">✕</button>
+  </div>
+
+  <!-- Alerte fallback Piped → IFrame (résilience runtime dual mode) -->
+  <div id="piped-fallback-alert" class="piped-fallback-alert" hidden role="alert">
+    <span class="pfa-text">⚠️ Lecture Piped indisponible. Pour préserver le mixage, basculer les deux decks en IFrame&nbsp;?</span>
+    <button id="pfa-switch" class="pfa-btn" type="button">Basculer les deux</button>
+    <button id="pfa-dismiss" class="pfa-dismiss" type="button" aria-label="Ignorer l'alerte">✕</button>
+  </div>
 
   <!-- Modal Paramètres (clé API YouTube) -->
   <div id="settings-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -44,6 +59,27 @@
           (≈ 100 recherches).
         </p>
         <div id="api-key-status" class="modal-status" hidden></div>
+      </section>
+
+      <section class="modal-section">
+        <h3 class="modal-subtitle">🔊 Mode de lecture</h3>
+        <p class="modal-hint">
+          <strong>Piped (Audio / DSP)</strong> — vrai mixage audio (crossfade, EQ, filtres, analyse) via Web Audio API. Audio uniquement, pas de vidéo YouTube.
+          <br /><strong>IFrame (YouTube)</strong> — lecteur vidéo officiel, crossfade par volume uniquement (pas de DSP).
+          <br /><strong>Auto</strong> — Piped si les instances sont disponibles, sinon IFrame (résolu au démarrage).
+        </p>
+        <div class="modal-slider-head">
+          <label for="player-mode-select" class="modal-label">Mode</label>
+          <select id="player-mode-select" class="modal-select">
+            <option value="auto">Auto</option>
+            <option value="piped">🔊 Piped (Audio / DSP)</option>
+            <option value="iframe">📺 IFrame (YouTube)</option>
+          </select>
+        </div>
+        <p class="modal-hint modal-hint-mini">
+          Le bouton d'en-tête permute Piped ↔ IFrame (les deux decks ensemble). « Auto » n'est atteignable que depuis ce menu.
+        </p>
+        <div id="player-mode-status" class="modal-status" hidden></div>
       </section>
 
       <section class="modal-section">

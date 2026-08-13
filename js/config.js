@@ -11,10 +11,15 @@ window.YT_CONFIG = {
     CROSSFADE_STEP_PERCENT: 'crossfadeStepPercent',
     CROSSFADE_STEP_INTERVAL_MS: 'crossfadeStepIntervalMs',
     FORCE_PIPED: 'forcePipedSearch', // forcer la recherche via Piped même si clé API présente
+    PLAYER_MODE: 'playerMode', // mode de lecture : 'auto' | 'piped' | 'iframe'
   },
   // Vidéos de test chargées au démarrage (cue, sans lecture auto)
   TEST_VIDEO_A: 'lfmxnzJAbl8',
   TEST_VIDEO_B: 'sBBxnnIQ-Vk',
+  // Mode de lecture par défaut quand aucune préférence n'est persistée.
+  // 'auto' → Piped Audio (DSP) si reachable, sinon IFrame YouTube (volume-only).
+  // Valeurs possibles pour STORAGE_KEYS.PLAYER_MODE : 'auto' | 'piped' | 'iframe'.
+  PLAYER_MODE_DEFAULT: 'auto',
   // Crossfade progressif par paliers. La valeur cible du slider est atteinte
   // par incréments de stepPercent toutes les stepIntervalMs ms (via setInterval).
   // Si stepPercent >= 100 ou stepIntervalMs <= 0 → application instantanée.
@@ -47,7 +52,23 @@ window.YT_CONFIG = {
   // vite sur la suivante si elle ne répond pas.
   PIPED_INSTANCE_TIMEOUT_MS: 8000,
   // Durée de validité estimée d'une URL de flux Piped (avant expiration,
-  // après quoi un re-fetch est requis). Les URLs CDN YouTube expirent
+  // après laquelle un re-fetch est requis). Les URLs CDN YouTube expirent
   // généralement au bout de quelques heures ; on reste conservateur à 2h.
   PIPED_STREAM_TTL_MS: 2 * 60 * 60 * 1000,
+
+  // ===== Backend d'extraction local (server/server.js — yt-dlp) =====
+  //
+  // Contourne le blocage anti-bot YouTube des instances Piped publiques :
+  // l'extraction yt-dlp tourne en local, sur l'IP de l'utilisateur. Le
+  // serveur Express sert AUSSI le frontend en statique, donc quand l'app
+  // est servie par ce backend, app + API sont same-origin (le relais audio
+  // /api/audio/:id rend le flux exploitable par Web Audio sans taint).
+  //
+  // On n'active le backend local QUE si l'app est servie en http(s) —
+  // /api/streams/:id est relatif et n'existerait pas en file://.
+  //
+  // Timeout généreux : yt-dlp peut mettre 20-30s (extraction + résolution
+  // anti-bot éventuelle). On reste sous les 45s pour ne pas bloquer l'UI
+  // indéfiniment avant de retomber sur la cascade Piped.
+  LOCAL_BACKEND_TIMEOUT_MS: 45000,
 };

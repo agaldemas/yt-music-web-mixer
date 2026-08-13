@@ -23,7 +23,35 @@
 (function () {
   const CFG = window.YT_CONFIG;
 
+  // ===== Backend d'extraction local (server/server.js — yt-dlp) =====
+  //
+  // Contourne le blocage anti-bot YouTube des instances Piped publiques.
+  // L'extraction yt-dlp tourne en local (IP de l'utilisateur) ; le serveur
+  // sert en prime le frontend en statique, donc app + API sont same-origin.
+  //
+  // On n'active ce backend QUE si l'app est servie en http(s) — l'endpoint
+  // /api/streams/:id est relatif et n'existe pas en file://. En cas d'échec
+  // (yt-dlp absent, 503, anti-bot, réseau), on retombe sur la cascade Piped.
+
+  function localBackendAvailable() {
+    try {
+      const p = window.location && window.location.protocol;
+      return p === 'http:' || p === 'https:';
+    } catch (_) { return false; }
+  }
+
   // ===== Helpers =====
+
+  // Détecte la signature d'un blocage anti-bot YouTube. Quand YouTube bloque
+  // l'IP de l'instance Piped (ou yt-dlp sans résolveur PO-Token) pour
+  // certaines vidéos, l'erreur remonte (« Sign in to confirm you're not a
+  // bot »). C'est un échec SPÉCIFIQUE À LA VIDÉO/au moment, à distinguer
+  // d'une instance vraiment down (502/timeout/réseau).
+  function isAntiBotMessage(s) {
+    if (!s) return false;
+    return /Sign in to confirm|SignInConfirmNotBot|LOGIN_REQUIRED|not a bot/i.test(String(s));
+  }
+
 
   // Garde uniquement les URLs http(s) (sécurité pour <audio src> / <img src>)
   function safeHttpUrl(url) {
@@ -203,6 +231,51 @@
 
   // ===== Appels API =====
 
+  // GET /api/streams/{videoId} sur le backend local (server/server.js → yt-dlp).
+  // Même contrat de retour que callStreamsInstance (JSON compatible Piped) mais
+  // l'URL audio renvoyée est déjà relative/same-origin (/api/audio/:id), donc
+  // buildCorsSafeUrl la garde telle quelle (ni direct ni proxifiée) → le
+  // navigateur la résout en same-origin, Web Audio n'est pas tainted.
+  // `instance` est marqué 'local' pour distinguer la source dans l'entry.
+  async function callLocalStreams(videoId, signal) {
+    const url = '/api/streams/' + encodeURIComponent(videoId);
+    let res;
+    try {
+      res = await fetchWithTimeout(url, CFG.LOCAL_BACKEND_TIMEOUT_MS, signal);
+    } catch (err) {
+      const e = new Error('Backend local : ' + (err.message || 'fetch failed'));
+      e.code = 0;
+      throw e;
+    }
+    if (!res.ok) {
+      let reason = '';
+      try { reason = await res.text(); } catch (_) { /* corps illisible */ }
+      let parsed = reason;
+      try { parsed = (JSON.parse(reason).error) || reason; } catch (_) { /* keep raw */ }
+      const e = new Error('Backend local HTTP ' + res.status
+        + (parsed ? ' — ' + String(parsed).slice(0, 140) : ''));
+      e.code = res.status;
+      e.reason = String(parsed).slice(0, 200);
+      e.isAntiBot = isAntiBotMessage(parsed);
+      throw e;
+    }
+    let data;
+    try {
+      data = await res.json();
+    } catch (err) {
+      const e = new Error('Backend local : réponse non JSON');
+      e.code = -1;
+      throw e;
+    }
+    if (!data || !data.audioStreams) {
+      const e = new Error('Backend local : aucun flux pour ' + videoId);
+      e.code = -2;
+      throw e;
+    }
+    return data;
+  }
+
+
   // GET /streams/{videoId} sur une instance Piped.
   // Retourne la réponse JSON brute (audioStreams, videoStreams, etc.).
   // Lance une erreur typée si l'instance échoue (timeout, HTTP non-2xx, JSON
@@ -219,8 +292,21 @@
       throw e;
     }
     if (!res.ok) {
-      const e = new Error('Piped ' + instance + ' HTTP ' + res.status);
+      // On lit le corps : Piped renvoie souvent un JSON d'erreur applicatif
+      // (ex: anti-bot YouTube "Sign in to confirm you're not a bot", vidéo
+      // supprimée…). Garder ce motif permet à classifyError() de distinguer
+      // un blocage anti-bot (instance vivante, vidéo bloquée) d'une instance
+      // vraiment down (502/timeout) — et d'afficher un message clair au lieu
+      // d'un cryptique "HTTP 500".
+      let reason = '';
+      try { reason = await res.text(); } catch (_) { /* corps illisible */ }
+      let parsed = reason;
+      try { parsed = (JSON.parse(reason).error) || reason; } catch (_) { /* keep raw */ }
+      const e = new Error('Piped ' + instance + ' HTTP ' + res.status
+        + (parsed ? ' — ' + String(parsed).slice(0, 140) : ''));
       e.code = res.status;
+      e.reason = String(parsed).slice(0, 200);
+      e.isAntiBot = isAntiBotMessage(parsed);
       throw e;
     }
     let data;
@@ -268,7 +354,26 @@
     const cached = getCachedStream(id);
     if (cached) return cached;
 
-    // 2) Cascade d'instances Piped.
+    // 2) Backend local d'abord (yt-dlp), quand l'app est servie en http(s).
+    // C'est la voie privilégiée : l'extraction tourne sur l'IP de l'utilisateur,
+    // contourne l'anti-bot qui frappe les instances Piped, et l'audio relayé
+    // en same-origin évite le taint Web Audio. En cas d'échec (yt-dlp absent,
+    // 503, anti-bot, réseau), on retombe sur la cascade Piped ci-dessous.
+    let localErr = null;
+    if (localBackendAvailable()) {
+      try {
+        const data = await callLocalStreams(id, signal);
+        const entry = buildStreamEntry(id, 'local', data);
+        setCacheEntry(id, entry);
+        return entry;
+      } catch (err) {
+        if (err && err.name === 'AbortError') throw err; // annulé par l'appelant
+        localErr = err;
+        // on continue sur la cascade Piped
+      }
+    }
+
+    // 3) Cascade d'instances Piped.
     const instances = (CFG.PIPED_INSTANCES || []).slice();
     let lastErr = null;
     for (let i = 0; i < instances.length; i++) {
@@ -285,9 +390,21 @@
       }
     }
 
-    const err = new Error(lastErr ? lastErr.message : 'Toutes les instances Piped ont échoué pour /streams/' + id);
+    // Aucune source n'a marché. On privilégie l'erreur la plus parlante :
+    // l'anti-bot (local ou Piped) explique POURQUOI la vidéo est bloquée et
+    // oriente l'utilisateur vers le mode IFrame. Sinon on garde la dernière
+    // erreur Piped, ou à défaut l'erreur locale.
+    const antibotErr = (localErr && localErr.isAntiBot) ? localErr
+      : (lastErr && lastErr.isAntiBot) ? lastErr : null;
+    const baseErr = lastErr || localErr;
+    const err = new Error(antibotErr
+      ? (antibotErr.message)
+      : (baseErr ? baseErr.message : 'Aucune source disponible pour /streams/' + id));
     err.kind = 'piped-streams';
     err.videoId = id;
+    // Propage la signature anti-bot : utile à l'app (probe) et à classifyError.
+    err.isAntiBot = !!antibotErr;
+    err.reason = (antibotErr && antibotErr.reason) || (baseErr && baseErr.reason);
     throw err;
   }
 
@@ -390,6 +507,19 @@
       return { kind: 'invalid-id', message: 'Identifiant vidéo invalide.' };
     }
     if (err && err.kind === 'piped-streams') {
+      // Blocage anti-bot YouTube : l'instance Piped est vivante, mais YouTube
+      // refuse cette vidéo pour son IP ("Sign in to confirm you're not a bot").
+      // C'est spécifique à la vidéo/au moment — le mode IFrame (YouTube direct)
+      // ou une autre vidéo contourne le blocage.
+      if (err.isAntiBot) {
+        return {
+          kind: 'piped-antibot',
+          message: 'YouTube bloque cette vidéo sur l\'instance Piped '
+            + '(vérification anti-bot « Sign in to confirm you\'re not a bot »). '
+            + 'La lecture Piped n\'est pas possible pour ce titre — '
+            + 'passer en mode IFrame (📺, lecture directe YouTube) ou essayer une autre vidéo.',
+        };
+      }
       return {
         kind: 'piped-streams',
         message: 'Aucun flux Piped disponible pour cette vidéo (réseau, CORS ou vidéo supprimée). '

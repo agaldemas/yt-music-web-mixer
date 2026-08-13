@@ -1,18 +1,39 @@
-/* app.js — bootstrap, câblage événements, état global */
+/* app.js — bootstrap, câblage événements, état global
+ *
+ * Dual mode (section 4 du plan de migration Piped) :
+ *   - Mode Piped Audio (Web Audio DSP) ou IFrame YouTube (volume-only).
+ *   - Détection au démarrage : 'auto' → Piped si reachable, sinon IFrame.
+ *   - Bascule globale (en-tête) : permute les DEUX decks Piped ↔ IFrame.
+ *   - Mode manuel (Paramètres) : auto / Piped / IFrame.
+ *   - Fallback runtime : si Piped échoue en lecture, alerte globale proposant
+ *     de rebasculer les deux decks en IFrame (jamais de mode hybride).
+ *
+ * Les deux decks sont TOUJOURS dans le même mode (pas de mode hybride :
+ * crossfade/EQ/BPM/visualiseur seraient incohérents entre un deck GainNode
+ * et un deck setVolume). PLAYER_MODE global = seule source de vérité.
+ */
 
 (function () {
   const CFG = window.YT_CONFIG;
   const STATE = window.YTWrapper.STATE;
   const SEARCH = window.YTSearch;
   const Mixer = window.YTMixer;
+  const AudioPlayer = window.AudioPlayer;
+  const AudioEngine = window.AudioEngine;
+  const PipedStreams = window.PipedStreams;
 
   // État global
   const state = {
-    players: { A: null, B: null },
+    players: { A: null, B: null },       // wrappers lecteur (Piped ou IFrame)
+    playerType: { A: 'iframe', B: 'iframe' }, // 'piped' | 'iframe' (type du wrapper courant)
     ready: { A: false, B: false },
     muted: { A: true, B: true },
     videoIds: { A: '', B: '' },
-    searches: { A: null, B: null }, // instances YTSearch par voie
+    searches: { A: null, B: null },      // instances YTSearch par voie
+    // Mode de lecture (dual mode)
+    playerMode: CFG.PLAYER_MODE_DEFAULT, // 'auto' | 'piped' | 'iframe' (préférence persistée)
+    resolvedMode: 'iframe',              // 'piped' | 'iframe' (mode réellement actif)
+    pipedAvailable: false,               // Piped reachable au dernier test
   };
 
   // ===== Helpers UI =====
@@ -88,6 +109,327 @@
     try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
   }
 
+  // Mode de lecture persisté ('auto' | 'piped' | 'iframe'), défaut CFG.PLAYER_MODE_DEFAULT
+  function loadPlayerMode() {
+    try {
+      var m = localStorage.getItem(CFG.STORAGE_KEYS.PLAYER_MODE);
+      if (m === 'auto' || m === 'piped' || m === 'iframe') return m;
+    } catch (e) { /* ignore */ }
+    return CFG.PLAYER_MODE_DEFAULT || 'auto';
+  }
+
+  function persistPlayerMode(mode) {
+    try { localStorage.setItem(CFG.STORAGE_KEYS.PLAYER_MODE, mode); } catch (e) { /* ignore */ }
+  }
+
+  // ===== Mode de lecture (dual mode) =====
+
+  // Teste l'état de Piped au démarrage. On distingue deux notions :
+  //   - reachable : l'instance répond (elle est vivante). Un 500 anti-bot
+  //     ("Sign in to confirm you're not a bot") compte comme reachable —
+  //     l'instance est UP, c'est juste la vidéo de test que YouTube bloque.
+  //   - playable : la vidéo de test renvoie réellement des flux.
+  // Le bouton de bascule n'est verrouillé que si Piped n'est PAS reachable.
+  // Le mode 'auto' démarre en Piped si playable, sinon en IFrame (sûr).
+  function probePiped() {
+    if (!PipedStreams) return Promise.resolve({ reachable: false, playable: false });
+    return PipedStreams.fetchStreamInfo(CFG.TEST_VIDEO_A)
+      .then(function (entry) {
+        return { reachable: true, playable: !!(entry && entry.bestAudio) };
+      })
+      .catch(function (err) {
+        // Anti-bot sur la vidéo de test : instance reachable, vidéo bloquée.
+        if (err && err.isAntiBot) return { reachable: true, playable: false };
+        return { reachable: false, playable: false };
+      });
+  }
+
+  // Applique la classe de mode sur <body> (hooks CSS pour l'UI DJ future).
+  function applyModeBodyClass(mode) {
+    document.body.classList.toggle('mode-piped', mode === 'piped');
+    document.body.classList.toggle('mode-iframe', mode === 'iframe');
+  }
+
+  // Met à jour le bouton global de bascule (libellé + état désactivé).
+  // Désactivé quand on est en IFrame ET que Piped est injoignable (bascule
+  // impossible vers Piped). En Piped, on peut toujours revenir en IFrame.
+  function updateModeButton() {
+    var btn = document.getElementById('player-mode-btn');
+    if (!btn) return;
+    var piped = state.resolvedMode === 'piped';
+    btn.textContent = piped ? '🔊 Piped' : '📺 IFrame';
+    btn.setAttribute('aria-pressed', piped ? 'true' : 'false');
+    var blockedFromIframe = (!piped && !state.pipedAvailable);
+    btn.disabled = blockedFromIframe;
+    btn.title = blockedFromIframe
+      ? 'Mode Piped indisponible (instances Piped injoignables).'
+      : (piped
+        ? 'Mode Audio Piped (DSP). Cliquez pour repasser en IFrame (vidéo YouTube).'
+        : 'Mode IFrame YouTube (volume uniquement). Cliquez pour le mode Piped (DSP audio).');
+  }
+
+  // Synchronise le <select> de la modal Paramètres avec l'état courant.
+  function syncSettingsModeSelect() {
+    var sel = document.getElementById('player-mode-select');
+    if (sel) sel.value = state.playerMode;
+  }
+
+  // ===== Alerte fallback Piped → IFrame =====
+
+  function showPipedFallbackAlert() {
+    // Ne s'affiche qu'en mode Piped (sinon on est déjà en IFrame).
+    if (state.resolvedMode !== 'piped') return;
+    var el = document.getElementById('piped-fallback-alert');
+    if (el) el.hidden = false;
+  }
+
+  function hidePipedFallbackAlert() {
+    var el = document.getElementById('piped-fallback-alert');
+    if (el) el.hidden = true;
+  }
+
+  // ===== Câblage des contrôles de mode =====
+
+  function wireModeButton() {
+    var btn = document.getElementById('player-mode-btn');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (btn.disabled) return;
+      var target = (state.resolvedMode === 'piped') ? 'iframe' : 'piped';
+      // La bascule globale persiste un mode CONCRET (surcharge 'auto').
+      switchResolvedMode(target).then(function (ok) {
+        if (ok) { state.playerMode = target; persistPlayerMode(target); }
+        syncSettingsModeSelect();
+      });
+    });
+  }
+
+  function wireSettingsModeSelect() {
+    var sel = document.getElementById('player-mode-select');
+    var status = document.getElementById('player-mode-status');
+    if (!sel) return;
+
+    function showStatus(message, ok) {
+      if (!status) return;
+      status.textContent = message;
+      status.className = 'modal-status ' + (ok ? 'modal-status-ok' : 'modal-status-err');
+      status.hidden = !message;
+    }
+
+    sel.addEventListener('change', function () {
+      var m = sel.value;
+      showStatus('', true);
+      if (m === 'auto') {
+        // 'auto' n'est atteignable que depuis ce menu : on persiste et on
+        // résout maintenant (Piped si dispo, sinon IFrame).
+        state.playerMode = 'auto';
+        persistPlayerMode('auto');
+        showStatus('Détection du mode Piped…', true);
+        probePiped().then(function (pr) {
+          state.pipedAvailable = pr.reachable;
+          updateModeButton();
+          switchResolvedMode(pr.playable ? 'piped' : 'iframe').then(function () {
+            showStatus(pr.playable ? 'Mode Auto : Piped disponible.' : 'Mode Auto : Piped indisponible, IFrame actif.', pr.reachable);
+          });
+        });
+      } else {
+        switchResolvedMode(m).then(function (ok) {
+          if (ok) {
+            state.playerMode = m;
+            persistPlayerMode(m);
+            showStatus('Mode « ' + (m === 'piped' ? 'Piped' : 'IFrame') + ' » activé.', true);
+          } else {
+            showStatus('Bascule impossible : Piped indisponible. Reste en IFrame.', false);
+          }
+          syncSettingsModeSelect();
+        });
+      }
+    });
+  }
+
+  function wireFallbackAlert() {
+    var switchBtn = document.getElementById('pfa-switch');
+    var dismissBtn = document.getElementById('pfa-dismiss');
+    if (switchBtn) {
+      switchBtn.addEventListener('click', function () {
+        hidePipedFallbackAlert();
+        switchResolvedMode('iframe').then(function (ok) {
+          if (ok) { state.playerMode = 'iframe'; persistPlayerMode('iframe'); }
+          syncSettingsModeSelect();
+        });
+      });
+    }
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', function () { hidePipedFallbackAlert(); });
+    }
+  }
+
+  // ===== Création / destruction des lecteurs =====
+
+  // Reconstruit le <div id="player-X"> (YT.Player remplace ce div par un
+  // iframe ; avant de recréer un lecteur IFrame, il faut remettre le div).
+  function resetPlayerDiv(deck) {
+    var id = 'player-' + deck;
+    var existing = document.getElementById(id);
+    var container = document.querySelector('.deck[data-deck="' + deck + '"] .deck-player');
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    if (container) {
+      var div = document.createElement('div');
+      div.id = id;
+      container.appendChild(div);
+    }
+  }
+
+  // Détruit proprement le lecteur d'une voie (audio Piped ou iframe YouTube).
+  // - Piped : déconnecte la chaîne Web Audio + retire l'élément <audio>.
+  // - IFrame : retire l'iframe et recrée le div placeholder.
+  function teardownPlayer(deck) {
+    var p = state.players[deck];
+    if (p) {
+      try { if (typeof p.pauseVideo === 'function') p.pauseVideo(); } catch (e) { /* ignore */ }
+    }
+    if (state.playerType[deck] === 'piped') {
+      if (AudioEngine && AudioEngine.hasDeck(deck)) AudioEngine.destroyDeckChain(deck);
+      if (p && typeof p._getAudioElement === 'function') {
+        var audio = p._getAudioElement();
+        if (audio && audio.parentNode) audio.parentNode.removeChild(audio);
+      }
+    } else {
+      // IFrame : l'iframe a remplacé le div. On le remet pour le prochain lecteur.
+      resetPlayerDiv(deck);
+    }
+    state.players[deck] = null;
+    state.ready[deck] = false;
+  }
+
+  // Crée le lecteur d'une voie selon le mode résolu. `restore` (optionnel)
+  // permet de reprendre lecture + position après une bascule de mode :
+  //   { videoId, currentTime, wasPlaying }
+  function createDeckPlayer(deck, videoId, restore) {
+    // restore (optionnel) : reprise ONE-SHOT après une bascule de mode. On
+    // l'isole dans pendingRestore car l'<audio> Piped réémet onReady à chaque
+    // canplay (changement de vidéo) — il ne faut pas réappliquer la position
+    // d'origine sur une vidéo nouvellement sélectionnée.
+    var pendingRestore = restore
+      ? { currentTime: restore.currentTime || 0, wasPlaying: !!restore.wasPlaying }
+      : null;
+    const playerElId = 'player-' + deck;
+    const usePiped = (state.resolvedMode === 'piped');
+    state.playerType[deck] = usePiped ? 'piped' : 'iframe';
+    if (videoId) state.videoIds[deck] = videoId;
+
+    // Callbacks communs aux deux backends (interface unifiée).
+    const callbacks = {
+      onReady: function () {
+        state.ready[deck] = true;
+        const player = state.players[deck];
+        // Ré-appliquer l'état mute courant (préservé au-delà du wrapper).
+        if (state.muted[deck]) {
+          if (player && typeof player.mute === 'function') player.mute();
+        } else if (player && typeof player.unMute === 'function') {
+          player.unMute();
+        }
+        Mixer.applyVolumes();
+        hidePlaceholder(deck);
+        clearDeckError(deck);
+        // Reprise one-shot après bascule : restaurer position + lecture, une
+        // seule fois (pendingRestore est immédiatement consommé).
+        if (pendingRestore) {
+          var r = pendingRestore;
+          pendingRestore = null;
+          if (r.currentTime && player && typeof player.seekTo === 'function') {
+            player.seekTo(r.currentTime);
+          }
+          if (r.wasPlaying && player && typeof player.playVideo === 'function') {
+            player.playVideo();
+          }
+        }
+      },
+      onStateChange: function () { /* silencieux */ },
+      onError: function (err) {
+        // En mode Piped, une erreur de lecture non récupérable (URL expirée,
+        // instances down, CORS) dégrade le mixage : on propose le fallback
+        // global vers IFrame (jamais de mode hybride laissé en place).
+        if (state.resolvedMode === 'piped') showPipedFallbackAlert();
+        showDeckError(deck, (err && err.message) || 'Erreur de lecture.');
+      },
+    };
+
+    if (usePiped) {
+      // Lecteur audio Piped + chaîne Web Audio (createDeckChain appelé dedans).
+      state.players[deck] = AudioPlayer.createAudioPlayer(deck, callbacks);
+      // createAudioPlayer ne charge pas la vidéo lui-même → on le fait ici.
+      if (videoId) state.players[deck].loadVideoById(videoId);
+    } else {
+      // Lecteur IFrame YouTube (le constructeur cue la videoId fournie).
+      state.players[deck] = window.YTWrapper.createPlayer(playerElId, Object.assign(
+        { videoId: videoId || '' },
+        callbacks
+      ));
+    }
+  }
+
+  // Bascule les DEUX decks vers `target` ('piped' | 'iframe') en préservant
+  // vidéo + position + lecture. Aucun mode hybride : les deux decks suivent.
+  // Retourne true si la bascule a réussi, false si elle a été abandonnée
+  // (Piped injoignable → on reste en IFrame avec un message clair).
+  async function switchResolvedMode(target) {
+    if (target !== 'piped' && target !== 'iframe') return false;
+    if (target === state.resolvedMode) return true;
+
+    // Vers Piped : on vérifie d'abord que Piped est reachable (les instances
+    // ont pu tomber depuis le boot). Sinon, bascule abandonnée + message.
+    // Un anti-bot sur la vidéo de test ne bloque pas (l'instance est vivante ;
+    // la vidéo choisie par l'utilisateur peut très bien passer).
+    if (target === 'piped') {
+      var pr = await probePiped();
+      state.pipedAvailable = pr.reachable;
+      updateModeButton();
+      if (!pr.reachable) {
+        showGlobalError('Instances Piped indisponibles : bascule en mode Piped impossible. Reste en IFrame.');
+        return false;
+      }
+    }
+    hideGlobalError();
+
+    // Snapshot de l'état des 2 decks avant reconstruction.
+    var snapshot = {};
+    ['A', 'B'].forEach(function (deck) {
+      var p = state.players[deck];
+      var ready = state.ready[deck];
+      snapshot[deck] = {
+        videoId: state.videoIds[deck] || '',
+        currentTime: (ready && p && typeof p.getCurrentTime === 'function') ? (p.getCurrentTime() || 0) : 0,
+        wasPlaying: (ready && p && typeof p.getPlayerState === 'function'
+          && p.getPlayerState() === STATE.PLAYING) || false,
+      };
+    });
+
+    // Détruit les 2 lecteurs dans l'ancien mode.
+    ['A', 'B'].forEach(teardownPlayer);
+
+    // Applique le nouveau mode (mixer + CSS + alerte).
+    state.resolvedMode = target;
+    Mixer.setMode(target);
+    applyModeBodyClass(target);
+    hidePipedFallbackAlert();
+
+    // Recrée les 2 lecteurs dans le mode cible (avec restauration).
+    ['A', 'B'].forEach(function (deck) {
+      createDeckPlayer(deck, snapshot[deck].videoId, snapshot[deck]);
+    });
+
+    updateModeButton();
+    syncSettingsModeSelect();
+    Mixer.applyVolumes();
+    return true;
+  }
+
+  function hideGlobalError() {
+    var banner = document.getElementById('api-error-banner');
+    if (banner) banner.hidden = true;
+  }
+
   // ===== Sélection depuis recherche =====
 
   // Appelé par search.js quand l'utilisateur choisit un résultat
@@ -110,7 +452,13 @@
       return;
     }
 
-    // Charger + lancer la nouvelle vidéo
+    // En mode Piped, loadVideoById ne joue pas auto (pendingPlay). On
+    // demande explicitement la lecture à la prochaine frame "canplay" via
+    // le mécanisme prévu par audio-player (_pendingPlayRequested). En mode
+    // IFrame, loadVideoById joue nativement.
+    if (state.playerType[deck] === 'piped' && '_pendingPlayRequested' in player) {
+      player._pendingPlayRequested = true;
+    }
     player.loadVideoById(videoId);
 
     // Activer le son systématiquement au changement de vidéo
@@ -130,27 +478,6 @@
       const player = state.players[deck];
       if (!player || !state.ready[deck]) return;
       setDeckMuted(deck, !state.muted[deck]);
-    });
-  }
-
-  // ===== Création des lecteurs =====
-
-  function createDeckPlayer(deck, videoId) {
-    const playerElId = 'player-' + deck;
-    state.players[deck] = window.YTWrapper.createPlayer(playerElId, {
-      videoId: videoId || '',
-      onReady: function () {
-        state.ready[deck] = true;
-        const player = state.players[deck];
-        player.mute();
-        Mixer.applyVolumes();
-        hidePlaceholder(deck);
-        clearDeckError(deck);
-      },
-      onStateChange: function () { /* silencieux */ },
-      onError: function (err) {
-        showDeckError(deck, err.message || 'Erreur de lecture YouTube.');
-      },
     });
   }
 
@@ -215,6 +542,7 @@
     function openModal() {
       input.value = SEARCH.getApiKey() || '';
       hideStatus();
+      syncSettingsModeSelect();
       modal.hidden = false;
       // Petit délai pour laisser le focus avant transition
       setTimeout(function () { input.focus(); input.select(); }, 0);
@@ -370,17 +698,55 @@
 
   // ===== Bootstrap =====
 
-  function init() {
+  async function init() {
     wireMuteButton('A');
     wireMuteButton('B');
     wireSearch('A');
     wireSearch('B');
     initSettingsModal();
     initStepControls();
+    wireModeButton();
+    wireSettingsModeSelect();
+    wireFallbackAlert();
 
+    // L'API IFrame est chargée en arrière-plan (utile si l'utilisateur
+    // bascule en IFrame, ou si le mode résolu est IFrame).
     window.YTWrapper.init(function (apiErrorMessage) {
       showGlobalError(apiErrorMessage);
     });
+
+    // Lecture du mode persisté + résolution.
+    state.playerMode = loadPlayerMode();
+    var resolved = state.playerMode;
+
+    if (resolved === 'auto') {
+      const pr = await probePiped();
+      state.pipedAvailable = pr.reachable;
+      // Vidéo de test bloquée (anti-bot) → on démarre en IFrame (plus sûr :
+      // les vidéos de test y jouent). Le bouton reste actif (Piped reachable)
+      // pour tenter d'autres titres.
+      resolved = pr.playable ? 'piped' : 'iframe';
+    } else if (resolved === 'piped') {
+      // Mode Piped forcé : si Piped n'est pas reachable au boot, repli IFrame.
+      const pr = await probePiped();
+      state.pipedAvailable = pr.reachable;
+      if (!pr.reachable) {
+        showGlobalError('Mode Piped demandé mais instances indisponibles : passage en IFrame.');
+        resolved = 'iframe';
+      }
+    } else {
+      // Mode IFrame forcé : on sonde Piped en arrière-plan pour mettre à jour
+      // l'état du bouton (sans bloquer le démarrage).
+      probePiped().then(function (pr) {
+        state.pipedAvailable = pr.reachable;
+        updateModeButton();
+      });
+    }
+
+    state.resolvedMode = resolved;
+    applyModeBodyClass(resolved);
+    Mixer.setMode(resolved);
+    Mixer.init(state.players);
 
     // Restaurer les derniers videoIds depuis localStorage, fallback sur les vidéos de test
     var videoIdA = getPersistedVideoId('A') || CFG.TEST_VIDEO_A;
@@ -388,7 +754,8 @@
     createDeckPlayer('A', videoIdA);
     createDeckPlayer('B', videoIdB);
 
-    Mixer.init(state.players);
+    updateModeButton();
+    syncSettingsModeSelect();
   }
 
   // Exposer pour debug console
