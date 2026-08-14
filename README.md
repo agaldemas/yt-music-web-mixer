@@ -27,7 +27,7 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
   - **DJ filter** sweep (lowpass ↔ highpass, log-scale knob) per deck, double-click = bypass.
   - **Pitch / tempo** slider (±8%) per deck with `preservesPitch` (tempo change without pitch shift), double-click reset, BPM readout shows the *effective* BPM (`bpm × playbackRate`).
   - **RAZ (reset) buttons** (↺) next to each vertical DJ slider for one-click reset to neutral.
-  - **Real-time BPM detection** per deck (spectral-flux onset + histogram of inter-beat intervals, locking after stable cycles). Red badge while calculating, green when locked; the displayed value only updates on a real change (>3%) so it does not flicker.
+  - **Real-time BPM detection** per deck (spectral-flux onset + histogram of inter-beat intervals, locking after stable cycles). Three visual states: **red** during acquisition (`idle`/`detecting`), **orange** as soon as a provisional BPM is available (~2-3 s, `estimating` state), **green** when the value is locked (`locked`). The provisional BPM is computed by median of intervals and shown early, while the histogram keeps refining in the background until locking. The **RAZ** (↺) button under the value stays visible at all times to restart detection. The locked value only updates on a real change (>3%) to avoid flicker.
   - **SYNC button** to match deck B's tempo to deck A (clamped to ±8%, reflects on the pitch slider).
   - **Spectrum/waveform visualizers** per deck and a master spectrum in the mixer bar (via `AnalyserNode`, 30+ FPS).
 - **Persistence** via `localStorage`: API key, last queries, last video IDs, EQ, DJ filter, pitch per deck are saved and restored on reload and on mode switch.
@@ -122,7 +122,7 @@ yt-music-web-mixer/
     ├── audio-player.js  # audio player used by DJ mode (autoplay-safe, optimistic play/pause)
     ├── audio-engine.js  # Web Audio graph: source, EQ, filter, gain, analyser and pitch
     ├── visualizer.js    # canvas spectrum/waveform via AnalyserNode
-    ├── bpm-detector.js  # real-time BPM detection (spectral flux + histogram, locking)
+    ├── bpm-detector.js  # real-time BPM detection (spectral flux + histogram, provisional BPM then locking, states idle/detecting/estimating/locked)
     ├── deck-controls.js # per-deck transport buttons (optimistic play/pause)
     ├── search.js        # YouTube Data API + Piped (keyless) search + results display
     ├── mixer.js         # crossfade logic (GainNode in DJ mode, volume in IFrame mode)
@@ -141,7 +141,7 @@ yt-music-web-mixer/
 4. Start playback (**▶️ Play both**), or use the per-deck play/pause button.
 5. Move the **crossfader** to gradually transition from A to B. In DJ mode this uses Web Audio gain nodes; in IFrame mode it controls player volumes.
 6. Adjust the **master volume** as needed.
-7. **DJ mode only**: tweak the per-deck **EQ** (Low/Mid/High), **DJ filter**, **pitch/tempo** slider, and watch the **BPM** badge (red while calculating, green when locked). Use the **RAZ** (↺) buttons to reset any vertical DJ slider to neutral. Press **SYNC** to match deck B's tempo to deck A.
+7. **DJ mode only**: tweak the per-deck **EQ** (Low/Mid/High), **DJ filter**, **pitch/tempo** slider, and watch the **BPM** badge (red during acquisition, **orange** as soon as a provisional BPM appears, **green** when locked). The **RAZ** (↺) button under the BPM value restarts detection at any time. The **RAZ** buttons next to the vertical DJ sliders reset each slider to neutral. Press **SYNC** to match deck B's tempo to deck A.
 8. Optional: **Sync B → A** to align B to A's position.
 
 ---
@@ -157,7 +157,7 @@ yt-music-web-mixer/
   - If playback stutters, lower the quality on YouTube's side (not controllable by the app).
 - **YouTube Data API quotas.** 10,000 units/day by default, one search = 100 units. Beyond that, official search is blocked until the next day. The keyless **Piped search mode** does not use this Google quota, but public Piped instances can be unavailable.
 - **Continuous sync is imperfect.** A residual offset of 200–500 ms is normal (seeking + buffering causes a micro-gap). No *frame-accurate* sync is possible on YouTube.
-- **BPM detection is approximate** (±2–3 BPM). Transitions, builds and breaks can fool the detector; the displayed value is only refreshed on a real change (>3%) to avoid flicker, and the badge turns red while calculating, green when locked.
+- **BPM detection is approximate** (±2–3 BPM). Transitions, builds and breaks can fool the detector. A **provisional BPM** (orange) appears after ~2-3 s so the readout isn't empty, then the histogram refines in the background until locking (green). The locked value is only refreshed on a real change (>3%) to avoid flicker. The **RAZ** (↺) button restarts detection on demand.
 - **DJ controls are Piped/DSP-only.** EQ, filter, pitch, BPM and visualizers require the local backend (or a CORS-usable Piped fallback). They are hidden in IFrame mode.
 - **Limited persistence.** In private browsing or after clearing the cache, `localStorage` data is lost.
 - **Autoplay.** Players start `muted` on initial page load. Sound is automatically enabled when you select a new track (the selection click counts as a user gesture). In DJ mode, playback also auto-starts after the audio stream is ready; the first play/pause click on a deck updates the button immediately (optimistic) and is confirmed/corrected by the player state.

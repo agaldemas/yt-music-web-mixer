@@ -27,7 +27,7 @@ L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le s
   - **Filtre DJ** sweep (lowpass ↔ highpass, knob log-scale) par voie, double-clic = bypass.
   - **Slider pitch / tempo** (±8%) par voie avec `preservesPitch` (changement de tempo sans changement de hauteur), reset double-clic, l'afficheur BPM montre le BPM *effectif* (`bpm × playbackRate`).
   - **Boutons RAZ** (↺) à côté de chaque slider vertical DJ pour un reset en un clic à la valeur neutre.
-  - **Détection BPM temps réel** par voie (spectral-flux onset + histogramme des intervalles inter-beat, verrouillage après cycles stables). Badge rouge pendant le calcul, vert quand verrouillé ; la valeur affichée ne se met à jour qu'en cas de vrai changement (>3%) pour éviter le clignotement.
+  - **Détection BPM temps réel** par voie (spectral-flux onset + histogramme des intervalles inter-beat, verrouillage après cycles stables). Trois états visuels : **rouge** pendant l'acquisition (`idle`/`detecting`), **orange** dès qu'un BPM provisoire est disponible (~2-3 s, état `estimating`), **vert** quand la valeur est verrouillée (`locked`). Le BPM provisoire est calculé par médiane des intervalles et s'affiche tôt, puis l'histogramme continue d'affiner en arrière-plan jusqu'au verrouillage. Le bouton **RAZ** (↺) sous la valeur reste toujours visible pour relancer le calcul. La valeur verrouillée ne se met à jour qu'en cas de vrai changement (>3%) pour éviter le clignotement.
   - **Bouton SYNC** pour matcher le tempo de la voie B sur la voie A (limité à ±8%, répercuté sur le slider de pitch).
   - **Visualiseurs spectre/waveform** par voie + spectre master dans la barre de mixage (via `AnalyserNode`, 30+ FPS).
 - **Persistance** via `localStorage` : clé API, dernières requêtes, derniers videoIds, EQ, filtre DJ, pitch par voie sauvegardés et restaurés au reload et à la bascule de mode.
@@ -130,7 +130,7 @@ yt-music-web-mixer/
     ├── audio-player.js  # lecteur audio du mode DJ (autoplay sûr, play/pause optimiste)
     ├── audio-engine.js  # graphe Web Audio : source, EQ, filtre, gain, analyseur et pitch
     ├── visualizer.js    # canvas spectre/waveform via AnalyserNode
-    ├── bpm-detector.js  # détection BPM temps réel (spectral flux + histogramme, verrouillage)
+    ├── bpm-detector.js  # détection BPM temps réel (spectral flux + histogramme, BPM provisoire puis verrouillage, états idle/detecting/estimating/locked)
     ├── deck-controls.js # boutons de transport par voie (play/pause optimiste)
     ├── search.js        # recherche YouTube Data API + Piped (sans clé) + affichage résultats
     ├── mixer.js         # crossfade (GainNode en mode DJ, volume en mode IFrame)
@@ -149,7 +149,7 @@ yt-music-web-mixer/
 4. Lancez la lecture (**▶️ Play both**), ou utilisez le bouton lecture/pause de chaque voie.
 5. Bougez le **crossfader** pour passer progressivement de A à B. En mode DJ, il utilise les gains Web Audio ; en mode IFrame, il contrôle le volume des lecteurs.
 6. Ajustez le **volume master** si besoin.
-7. **Mode DJ uniquement** : réglez l'**EQ** (Low/Mid/High), le **filtre DJ**, le slider **pitch/tempo** de chaque voie, et surveillez le badge **BPM** (rouge pendant le calcul, vert quand verrouillé). Utilisez les boutons **RAZ** (↺) pour réinitialiser n'importe quel slider vertical DJ à la valeur neutre. Appuyez sur **SYNC** pour matcher le tempo de la voie B sur la voie A.
+7. **Mode DJ uniquement** : réglez l'**EQ** (Low/Mid/High), le **filtre DJ**, le slider **pitch/tempo** de chaque voie, et surveillez le badge **BPM** (rouge pendant l'acquisition, **orange** dès qu'un BPM provisoire s'affiche, **vert** quand verrouillé). Le bouton **RAZ** (↺) sous la valeur BPM relance le calcul à tout moment. Les boutons **RAZ** à côté des sliders verticaux DJ réinitialisent chaque slider à la valeur neutre. Appuyez sur **SYNC** pour matcher le tempo de la voie B sur la voie A.
 8. Optionnel : **Sync B → A** pour aligner B sur la position de A.
 
 ---
@@ -165,7 +165,7 @@ yt-music-web-mixer/
   - Si la lecture saccade, réduisez la qualité côté YouTube (non contrôlable par l'app).
 - **Quotas API YouTube Data.** 10 000 unités/jour par défaut, une recherche = 100 unités. Au-delà, la recherche officielle est bloquée jusqu'au lendemain. Le **mode de recherche Piped** sans clé n'utilise pas ce quota Google, mais les instances Piped publiques peuvent être indisponibles.
 - **Sync continu imparfait.** Un écart résiduel de 200–500ms est normal (le seek + buffering crée une micro-coupure). Pas de sync *frame-accurate* possible sur YouTube.
-- **Détection BPM approximative** (±2–3 BPM). Les transitions, builds et breaks peuvent tromper le détecteur ; la valeur affichée n'est rafraîchie qu'en cas de vrai changement (>3%) pour éviter le clignotement, et le badge passe au rouge pendant le calcul, au vert une fois verrouillé.
+- **Détection BPM approximative** (±2–3 BPM). Les transitions, builds et breaks peuvent tromper le détecteur. Un **BPM provisoire** (orange) s'affiche dès ~2-3 s pour ne pas laisser le compteur vide, puis l'histogramme affine en arrière-plan jusqu'au verrouillage (vert). La valeur verrouillée n'est rafraîchie qu'en cas de vrai changement (>3%) pour éviter le clignotement. Le bouton **RAZ** (↺) relance le calcul à la demande.
 - **Les contrôles DJ sont propres au mode Piped/DSP.** L'EQ, le filtre, le pitch, le BPM et les visualiseurs nécessitent le backend local (ou un fallback Piped utilisable en CORS). Ils sont masqués en mode IFrame.
 - **Persistance limitée.** En navigation privée ou après vidage du cache, les données `localStorage` sont perdues.
 - **Autoplay.** Les lecteurs démarrent en `muted` au chargement de la page. Le son est activé automatiquement lors de la sélection d'un nouveau morceau (le clic de sélection compte comme geste utilisateur). En mode DJ, la lecture démarre aussi automatiquement une fois le flux audio prêt ; le premier clic play/pause sur une voie met à jour le bouton immédiatement (optimiste) et est confirmé/corrigé par l'état du lecteur.

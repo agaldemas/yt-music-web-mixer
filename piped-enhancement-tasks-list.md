@@ -364,35 +364,25 @@ Estimer le tempo de chaque morceau en temps réel via l'`AnalyserNode`.
   - La détection est approximative (±2-3 BPM). Les transitions, builds et breaks peuvent fausser la détection.
   - Le beatmatch n'est pas parfait — un écart résiduel de quelques BPM reste possible.
   - Ne pas promettre un sync frame-accurate.
-- [x] Exposer : `window.BPMDetector = { start(deck), getBPM(deck), syncBtoA() }`
+- [x] Exposer : `window.BPMDetector = { start(deck), stop(deck), getBPM(deck), getProvisionalBPM(deck), getEffectiveBPM(deck), getEffectiveBPMIfChanged(deck), getState(deck), syncBtoA(), reset(deck), onBPMUpdate(deck) }` — `getState()` retourne `'idle' | 'detecting' | 'estimating' | 'locked'` (voir 9.2 pour l'état `estimating`).
 
-### 9.1 Stabilisation de l'affichage BPM & UX du calcul
+### 9.2 Affichage précoce d'un BPM provisoire + bouton RAZ persistant
 
-La première version du détecteur BPM sautait constamment (chiffre qui change à chaque mesure), rendant la lecture impossible pendant le beatmatch.
+La version précédente attendait le verrouillage complet (3 cycles stables, ~15-30 s) avant d'afficher le moindre chiffre — le `—` persistait trop longtemps, donnant l'impression que le détecteur ne marchait pas.
 
-- [x] **Algorithme refondu (histogramme d'intervalles)** : remplacement de la médiane brute par un histogramme à 40 bins des intervalles inter-beat. Le pic de l'histogramme est robuste au jitter et aux beats manqués. Verrouillage (`lockedBPM`) après 3 cycles stables consécutifs avec un pic dominant (≥55 % des intervalles dans un bin ±tolérance).
-- [x] **Pas de valeur provisoire** : `getBPM()` ne retourne plus une EMA instable, mais `lockedBPM` (0 tant que non acquisé). Tant que le système calcule, l'UI n'affiche pas de chiffre instable.
-- [x] **États de calcul explicites** : `getState(deck)` retourne `'idle' | 'detecting' | 'locked'`. Le badge porte un attribut `data-bpm-state` qui pilote la couleur :
-  - `idle` / `detecting` → **rouge** (`#f87171`) + bordure rouge qui pulse (`@keyframes bpm-pulse`)
-  - `locked` → **vert** (`#4ade80`) + bordure verte
-- [x] **Mise à jour UI conditionnelle** : `getEffectiveBPMIfChanged(deck)` ne renvoie une valeur que si elle diffère de plus de **3 %** de la dernière valeur affichée. Le compteur ne clignote plus entre 127/128/129.
-- [x] **Fenêtre de détection glissante** de ~8 s (`WINDOW_MS=8000`) avec polling à 40 ms. On attend d'avoir assez de beats avant de proposer une valeur.
-- [x] **Boucle d'affichage découplée** : `startBpmDisplayLoop()` (`app.js`) tourne à 500 ms, lit `getEffectiveBPMIfChanged()` et ne touche au texte du badge que si une vraie changement (>3 %) est détecté. La couleur (`data-bpm-state`) est rafraîchie indépendamment, sans toucher au chiffre.
-- [x] **Reset à changement de morceau** : `onSearchSelect` (`app.js`) appelle `BPMDetector.reset(deck)` pour vider l'historique des beats et repasser en `idle` sur la nouvelle piste.
+- [x] **BPM provisoire exposé tôt** : nouvel état `'estimating'` entre `'detecting'` et `'locked'`. Dès qu'on a `MIN_BEATS_PROVISIONAL` (4) beats accumulés (~2-3 s), on calcule un BPM provisoire par **médiane des intervalles inter-beat** (`getProvisionalBPM(deck)`). L'UI l'affiche immédiatement en **orange** au lieu du `—`.
+- [x] **Trois états visuels** (`data-bpm-state` sur `.dj-bpm`) :
+  - `idle` / `detecting` → **rouge** (`#f87171`) + bordure pulse (`@keyframes bpm-pulse`) — acquisition en cours, pas encore de valeur.
+  - `estimating` → **orange** (`#fb923c`) — BPM provisoire affiché, affinage en arrière-plan.
+  - `locked` → **vert** (`#4ade80`) + bordure verte — valeur verrouillée, fiable.
+- [x] **Affinage en arrière-plan** : l'histogramme continue de tourner pendant l'état `estimating`. Quand il converge (pic dominant ≥55 % stable sur 3 cycles), on passe en `locked` (vert) et la valeur se fige. Le provisoire ne fait que *devancer* l'affichage, pas remplacer le verrouillage.
+- [x] **Mise à jour périodique du provisoire** : `getEffectiveBPMIfChanged()` garde la tolérance de 3 % en `locked`, mais le provisoire utilise une tolérance plus large (`UI_CHANGE_TOL_PROVISIONAL = 6 %`) pour accepter l'affinage sans clignotement permanent.
+- [x] **Boucle d'affichage plus réactive** : `startBpmDisplayLoop()` (`app.js`) passe de 500 ms (~2 Hz) à 250 ms (~4 Hz) pendant l'estimation, pour que le provisoire se mette à jour visiblement.
+- [x] **Bouton RAZ (`↺`) toujours visible** : le bouton de recalcul du BPM n'est plus masqué pendant le calcul. Il reste affiché en permanence sous la valeur, et un clic déclenche `BPMDetector.reset(deck)` + `BPMDetector.start(deck)` — relance proprement l'acquisition des beats et repasse en `idle`/`detecting`.
+- [x] **Callback de transition** : `BPMDetector.onBPMUpdate(deck)` est déclenché à chaque changement d'état (`detecting` → `estimating` → `locked`, ou déverrouillage sur changement de tempo), pour que l'UI puisse réagir immédiatement.
+- [x] **Reset à changement de morceau** : `onSearchSelect` (`app.js`) appelle toujours `BPMDetector.reset(deck)` — repart de zéro sur la nouvelle piste.
 
-### 9.1 Stabilisation de l'affichage BPM & UX du calcul
-
-La première version du détecteur BPM sautait constamment (chiffre qui change à chaque mesure), rendant la lecture impossible pendant le beatmatch.
-
-- [x] **Algorithme refondu (histogramme d'intervalles)** : remplacement de la médiane brute par un histogramme à 40 bins des intervalles inter-beat. Le pic de l'histogramme est robuste au jitter et aux beats manqués. Verrouillage (`lockedBPM`) après 3 cycles stables consécutifs avec un pic dominant (≥55 % des intervalles dans un bin ±tolérance).
-- [x] **Pas de valeur provisoire** : `getBPM()` ne retourne plus une EMA instable, mais `lockedBPM` (0 tant que non acquisé). Tant que le système calcule, l'UI n'affiche pas de chiffre instable.
-- [x] **États de calcul explicites** : `getState(deck)` retourne `'idle' | 'detecting' | 'locked'`. Le badge porte un attribut `data-bpm-state` qui pilote la couleur :
-  - `idle` / `detecting` → **rouge** (`#f87171`) + bordure rouge qui pulse (`@keyframes bpm-pulse`)
-  - `locked` → **vert** (`#4ade80`) + bordure verte
-- [x] **Mise à jour UI conditionnelle** : `getEffectiveBPMIfChanged(deck)` ne renvoie une valeur que si elle diffère de plus de **3 %** de la dernière valeur affichée. Le compteur ne clignote plus entre 127/128/129.
-- [x] **Fenêtre de détection glissante** de ~8 s (`WINDOW_MS=8000`) avec polling à 40 ms. On attend d'avoir assez de beats avant de proposer une valeur.
-- [x] **Boucle d'affichage découplée** : `startBpmDisplayLoop()` (`app.js`) tourne à 500 ms, lit `getEffectiveBPMIfChanged()` et ne touche au texte du badge que si une vraie changement (>3 %) est détecté. La couleur (`data-bpm-state`) est rafraîchie indépendamment, sans toucher au chiffre.
-- [x] **Reset à changement de morceau** : `onSearchSelect` (`app.js`) appelle `BPMDetector.reset(deck)` pour vider l'historique des beats et repasser en `idle` sur la nouvelle piste.
+API étendue : `window.BPMDetector` expose désormais `getProvisionalBPM(deck)`, `onBPMUpdate(deck)`, et `getState(deck)` retourne `'idle' | 'detecting' | 'estimating' | 'locked'`.
 
 ---
 
