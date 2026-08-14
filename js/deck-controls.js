@@ -106,12 +106,12 @@
         var st = (typeof p.getPlayerState === 'function') ? p.getPlayerState() : STATE.UNSTARTED;
         if (st === STATE.PLAYING || st === STATE.BUFFERING) {
           if (typeof p.pauseVideo === 'function') p.pauseVideo();
-          // Optimiste : on affiche 'play' tout de suite (la pause est quasi
-          // instantanée sur un <audio> / iframe).
-          if (st === STATE.PLAYING) {
-            c.lastState = STATE.PAUSED;
-            renderState(c);
-          }
+          // Optimiste : on affiche 'play' (PAUSED) tout de suite, y compris
+          // si on était en BUFFERING (sinon le spinner restait bloqué tant
+          // que l'événement 'pause' réel n'arrivait pas — or un <audio> en
+          // attente de buffer peut tarder à émettre 'pause' après pause()).
+          c.lastState = STATE.PAUSED;
+          renderState(c);
         } else {
           if (typeof p.playVideo === 'function') {
             var ret = p.playVideo();
@@ -131,9 +131,7 @@
           }
         }
       });
-    }
-
-    // --- Slider de seek ---
+    }    // --- Slider de seek ---
     // 'input' = glisser en cours (on prévisualise le temps sans appliquer),
     // 'change' = relâchement (on applique le seek). On ignore les mises à jour
     // automatiques de la valeur tant que l'utilisateur glisse (sinon le curseur

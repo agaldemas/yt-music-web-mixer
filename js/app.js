@@ -39,6 +39,12 @@
     pipedAvailable: false,               // Piped reachable au dernier test
     visualizers: { A: null, B: null, master: null }, // instances Visualizer par voie + master
     bpmRafId: null,                      // boucle de rafraîchissement des badges BPM
+    // Cue points & boucles (phase 10) — mode Piped uniquement
+    cue: { A: null, B: null },             // position de cue par voie (s, ou null)
+    loopIn: { A: null, B: null },          // marqueur loop-in (s, ou null)
+    loopOut: { A: null, B: null },         // marqueur loop-out (s, ou null)
+    loopActive: { A: false, B: false },    // boucle A↔B active par voie
+    loopRafId: null,                       // boucle de surveillance des loops
   };
 
   // ===== Helpers UI =====
@@ -722,6 +728,38 @@
     // Visualiseurs : démarrés uniquement en mode Piped (besoin d'AnalyserNode).
     if (target === 'piped') { startVisualizers(); startBpmDetection(); }
     else { stopVisualizers(); stopBpmDetection(); }
+    // Cue/loop (phase 10) : ne fonctionne qu'en mode Piped (loop précis sur
+    // <audio>). En IFrame, on désactive toute boucle active et on arrête la
+    // surveillance. Les marqueurs restent en mémoire (et localStorage) pour
+    // un retour éventuel en Piped, mais ils ne sont pas appliqués.
+    if (target === 'iframe') {
+      state.loopActive.A = false; state.loopActive.B = false;
+      updateCueLoopUI('A'); updateCueLoopUI('B');
+      stopLoopWatch();
+    } else {
+      // Retour en Piped : on rafraîchit l'UI (marqueurs restaurés depuis le
+      // localStorage). On ne réactive pas la boucle automatiquement (une
+      // boucle auto-active au reload serait surprenante).
+      ['A', 'B'].forEach(function (deck) { updateCueLoopUI(deck); });
+      // Si une boucle était active avant la bascule IFrame, on la relance.
+      if (state.loopActive.A || state.loopActive.B) startLoopWatch();
+    }
+    // Cue/loop (phase 10) : ne fonctionne qu'en mode Piped (loop précis sur
+    // <audio>). En IFrame, on désactive toute boucle active et on arrête la
+    // surveillance. Les marqueurs restent en mémoire (et localStorage) pour
+    // un retour éventuel en Piped, mais ils ne sont pas appliqués.
+    if (target === 'iframe') {
+      state.loopActive.A = false; state.loopActive.B = false;
+      updateCueLoopUI('A'); updateCueLoopUI('B');
+      stopLoopWatch();
+    } else {
+      // Retour en Piped : on rafraîchit l'UI (marqueurs restaurés depuis le
+      // localStorage). On ne réactive pas la boucle automatiquement (une
+      // boucle auto-active au reload serait surprenante).
+      ['A', 'B'].forEach(function (deck) { updateCueLoopUI(deck); });
+      // Si une boucle était active avant la bascule IFrame, on la relance.
+      if (state.loopActive.A || state.loopActive.B) startLoopWatch();
+    }
     // Le badge de mode (Piped/IFrame) change immédiatement à la bascule : on
     // rafraîchit le now-playing tout de suite (les métadonnées détaillées
     // arriveront au onReady du nouveau lecteur).
@@ -771,6 +809,21 @@
       BPMDetector.reset(deck);
       BPMDetector.start(deck);
     }
+
+    // Cue/loop (phase 10) : les marqueurs de boucle et le cue point sont
+    // liés à l'ancien morceau (positions en secondes dans ce morceau) → on
+    // les efface pour éviter un seek vers une position sans sens dans le
+    // nouveau morceau. La surveillance des loops est stoppée si plus aucune
+    // voie n'a de boucle active.
+    state.cue[deck] = null;
+    persistCuePoint(deck, null);
+    state.loopIn[deck] = null;
+    state.loopOut[deck] = null;
+    state.loopActive[deck] = false;
+    persistLoopMarker(deck, 'in', null);
+    persistLoopMarker(deck, 'out', null);
+    updateCueLoopUI(deck);
+    if (!state.loopActive.A && !state.loopActive.B) stopLoopWatch();
 
     // Activer le son systématiquement au changement de vidéo
     setDeckMuted(deck, false);
@@ -1004,6 +1057,320 @@
     });
   }
 
+  // ===== Cue points & boucles (phase 10) — mode Piped uniquement =====
+  //
+  // Fonctions DJ de navigation dans le morceau. Disponible uniquement en
+  // mode Piped (l'IFrame ne permet pas un loop précis ni l'accès au
+  // currentTime à la milliseconde). Le bloc .deck-cue-loop est masqué en
+  // IFrame via CSS (body.mode-iframe).
+  //
+  // - CUE : bouton par voie. Premier clic = mémorise la position courante.
+  //   Re-clic = seek au point mémorisé. Double-clic = play depuis le cue.
+  // - LOOP IN / OUT : 2 marqueurs par voie. Quand les deux sont posés, on
+  //   peut activer la boucle (bouton LOOP) : l'audio rejoue de loopIn dès
+  //   qu'on atteint loopOut. Une boucle de surveillance (requestAnimationFrame)
+  //   vérifie currentTime à ~60 Hz pour une transition quasi sample-accurate.
+  // - Loop de N beats : 1/2/4/8 → calcule la durée d'un beat à partir du BPM
+  //   détecté (BPMDetector.getBPM) et pose loopIn=position actuelle,
+  //   loopOut=loopIn + N beats. Active immédiatement la boucle.
+  // - Persistance : cueA/B, loopInA/OutA, loopInB/OutB en localStorage. Les
+  //   marqueurs sont restaurés au démarrage mais restent inactifs tant que
+  //   l'utilisateur ne relance pas la boucle (une boucle auto-active au
+  //   reload serait surprenante).
+
+  function cueStorageKey(deck) { return CFG.STORAGE_KEYS['CUE_' + deck]; }
+  function loopInStorageKey(deck) { return CFG.STORAGE_KEYS['LOOP_IN_' + deck]; }
+  function loopOutStorageKey(deck) { return CFG.STORAGE_KEYS['LOOP_OUT_' + deck]; }
+
+  function loadCuePoint(deck) {
+    try {
+      var v = localStorage.getItem(cueStorageKey(deck));
+      if (v !== null) { var f = parseFloat(v); if (isFinite(f) && f >= 0) return f; }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function loadLoopMarker(deck, which) {
+    var key = (which === 'in') ? loopInStorageKey(deck) : loopOutStorageKey(deck);
+    try {
+      var v = localStorage.getItem(key);
+      if (v !== null) { var f = parseFloat(v); if (isFinite(f) && f >= 0) return f; }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function persistCuePoint(deck, sec) {
+    try {
+      if (sec == null) localStorage.removeItem(cueStorageKey(deck));
+      else localStorage.setItem(cueStorageKey(deck), String(sec));
+    } catch (e) { /* ignore */ }
+  }
+
+  function persistLoopMarker(deck, which, sec) {
+    var key = (which === 'in') ? loopInStorageKey(deck) : loopOutStorageKey(deck);
+    try {
+      if (sec == null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(sec));
+    } catch (e) { /* ignore */ }
+  }
+
+  // Met à jour l'aspect visuel des boutons cue/loop selon l'état.
+  function updateCueLoopUI(deck) {
+    var root = document.querySelector('.deck-cue-loop[data-deck="' + deck + '"]');
+    if (!root) return;
+
+    var cueBtn = root.querySelector('.cl-cue');
+    if (cueBtn) cueBtn.classList.toggle('is-set', state.cue[deck] != null);
+
+    var inBtn = root.querySelector('.cl-loop-in');
+    if (inBtn) inBtn.setAttribute('aria-pressed', state.loopIn[deck] != null ? 'true' : 'false');
+
+    var outBtn = root.querySelector('.cl-loop-out');
+    if (outBtn) outBtn.setAttribute('aria-pressed', state.loopOut[deck] != null ? 'true' : 'false');
+
+    var toggleBtn = root.querySelector('.cl-loop-toggle');
+    if (toggleBtn) {
+      toggleBtn.setAttribute('aria-pressed', state.loopActive[deck] ? 'true' : 'false');
+      // On n'active la boucle que si les deux marqueurs sont posés.
+      var canLoop = (state.loopIn[deck] != null && state.loopOut[deck] != null
+        && state.loopOut[deck] > state.loopIn[deck]);
+      toggleBtn.disabled = !canLoop;
+      toggleBtn.style.opacity = canLoop ? '1' : '0.5';
+    }
+  }
+
+  // Active/désactive la boucle A↔B d'une voie. Si active, la boucle de
+  // surveillance (startLoopWatch) la prend en charge.
+  function setLoopActive(deck, active) {
+    state.loopActive[deck] = active;
+    updateCueLoopUI(deck);
+    if (active) startLoopWatch();
+  }
+
+  // Efface les marqueurs de boucle d'une voie et désactive la boucle.
+  function clearLoop(deck) {
+    state.loopIn[deck] = null;
+    state.loopOut[deck] = null;
+    state.loopActive[deck] = false;
+    persistLoopMarker(deck, 'in', null);
+    persistLoopMarker(deck, 'out', null);
+    updateCueLoopUI(deck);
+  }
+
+  // Pose un loop de N beats à partir de la position actuelle. Nécessite le
+  // BPM détecté (BPMDetector.getBPM) ; si non acquis, on signale l'utilisateur.
+  function setBeatLoop(deck, beats) {
+    var player = state.players[deck];
+    if (!player || !state.ready[deck]) return;
+    var bpm = BPMDetector ? BPMDetector.getBPM(deck) : 0;
+    if (!bpm) {
+      // BPM non verrouillé : on tente le provisoire (moins fiable mais utile).
+      if (BPMDetector && typeof BPMDetector.getProvisionalBPM === 'function') {
+        bpm = BPMDetector.getProvisionalBPM(deck);
+      }
+    }
+    if (!bpm) {
+      flashLoopStatus(deck, 'BPM non détecté — impossible de calibrer la boucle.');
+      return;
+    }
+    var beatSec = 60 / bpm;
+    var pos = player.getCurrentTime() || 0;
+    var loopIn = pos;
+    var loopOut = Math.min(pos + beats * beatSec, player.getDuration() || Infinity);
+    if (!(loopOut > loopIn)) {
+      flashLoopStatus(deck, 'Impossible de définir la boucle (durée insuffisante).');
+      return;
+    }
+    state.loopIn[deck] = loopIn;
+    state.loopOut[deck] = loopOut;
+    persistLoopMarker(deck, 'in', loopIn);
+    persistLoopMarker(deck, 'out', loopOut);
+    setLoopActive(deck, true);
+    flashLoopStatus(deck, 'Boucle ' + beats + ' beat' + (beats > 1 ? 's' : '') + ' activée (' + bpm + ' BPM).');
+  }
+
+  // Affiche un message temporaire sous le bloc cue/loop (zone de statut sync
+  // réutilisée si elle existe, sinon on bascule une classe sur le bloc).
+  function flashLoopStatus(deck, msg) {
+    var statusEl = document.getElementById('sync-status');
+    if (statusEl) {
+      statusEl.textContent = msg;
+      statusEl.hidden = false;
+      clearTimeout(statusEl._t);
+      statusEl._t = setTimeout(function () { statusEl.hidden = true; }, 2500);
+    }
+  }
+
+  // Boucle de surveillance des loops (une seule rAF pour les 2 voies).
+  // Vérifie currentTime à ~60 Hz ; si on atteint loopOut, on re-seek loopIn.
+  function startLoopWatch() {
+    if (state.loopRafId) return;
+    function tick() {
+      state.loopRafId = requestAnimationFrame(tick);
+      ['A', 'B'].forEach(function (deck) {
+        if (!state.loopActive[deck]) return;
+        if (state.loopIn[deck] == null || state.loopOut[deck] == null) return;
+        var player = state.players[deck];
+        if (!player || !state.ready[deck]) return;
+        var cur = player.getCurrentTime();
+        if (!isFinite(cur)) return;
+        // Si on dépasse loopOut (ou qu'on est avant loopIn après un seek
+        // manuel), on reboucle vers loopIn.
+        if (cur >= state.loopOut[deck] || cur < state.loopIn[deck] - 0.05) {
+          if (typeof player.seekTo === 'function') {
+            player.seekTo(state.loopIn[deck]);
+          }
+        }
+      });
+    }
+    state.loopRafId = requestAnimationFrame(tick);
+  }
+
+  function stopLoopWatch() {
+    if (state.loopRafId) {
+      cancelAnimationFrame(state.loopRafId);
+      state.loopRafId = null;
+    }
+  }
+
+  function wireDeckCueLoop(deck) {
+    var root = document.querySelector('.deck-cue-loop[data-deck="' + deck + '"]');
+    if (!root) return;
+
+    // --- Bouton CUE ---
+    // Clic simple : si pas de cue → mémorise la position. Si cue existe →
+    // seek au cue. Double-clic → play depuis le cue (comportement console DJ).
+    var cueBtn = root.querySelector('.cl-cue');
+    if (cueBtn) {
+      var lastCueClick = 0;
+      cueBtn.addEventListener('click', function () {
+        var player = state.players[deck];
+        if (!player || !state.ready[deck]) return;
+        var now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        var dbl = (now - lastCueClick) < 350;
+        lastCueClick = now;
+
+        if (dbl && state.cue[deck] != null) {
+          // Double-clic : play depuis le cue.
+          player.seekTo(state.cue[deck]);
+          if (typeof player.playVideo === 'function') player.playVideo();
+          return;
+        }
+        if (state.cue[deck] == null) {
+          // Premier posé : mémorise la position courante.
+          state.cue[deck] = player.getCurrentTime() || 0;
+          persistCuePoint(deck, state.cue[deck]);
+          updateCueLoopUI(deck);
+          flashLoopStatus(deck, 'Cue point défini à ' + formatTime(state.cue[deck]) + '.');
+        } else {
+          // Cue déjà posé : seek au cue.
+          player.seekTo(state.cue[deck]);
+        }
+      });
+      // Maintien long (clic droit similaire) = reset du cue. On l'obtient
+      // via un bouton dédié ? Non : on garde le cue simple. Reset = double
+      // clic sans cue existant → on clear.
+      cueBtn.addEventListener('dblclick', function (e) {
+        e.preventDefault();
+        // Le dblclick natif arrive APRÈS le 2e click ; si pas de cue, on
+        // n'a rien à clearer — le handler click a déjà posé le cue.
+        // On ne clear donc que via le bouton LOOP CLEAR (qui clear tout).
+      });
+    }
+
+    // --- LOOP IN ---
+    var inBtn = root.querySelector('.cl-loop-in');
+    if (inBtn) {
+      inBtn.addEventListener('click', function () {
+        var player = state.players[deck];
+        if (!player || !state.ready[deck]) return;
+        var pos = player.getCurrentTime() || 0;
+        // Si loopOut existe et est avant pos → on clear loopOut (invalide).
+        if (state.loopOut[deck] != null && state.loopOut[deck] <= pos) {
+          state.loopOut[deck] = null;
+          persistLoopMarker(deck, 'out', null);
+        }
+        state.loopIn[deck] = pos;
+        persistLoopMarker(deck, 'in', pos);
+        // Invalide la boucle active si les marqueurs ne sont plus cohérents.
+        if (state.loopActive[deck] && !(state.loopOut[deck] > pos)) {
+          state.loopActive[deck] = false;
+        }
+        updateCueLoopUI(deck);
+        flashLoopStatus(deck, 'Loop In à ' + formatTime(pos) + '.');
+      });
+    }
+
+    // --- LOOP OUT ---
+    var outBtn = root.querySelector('.cl-loop-out');
+    if (outBtn) {
+      outBtn.addEventListener('click', function () {
+        var player = state.players[deck];
+        if (!player || !state.ready[deck]) return;
+        var pos = player.getCurrentTime() || 0;
+        if (state.loopIn[deck] != null && pos <= state.loopIn[deck]) {
+          // loopOut avant loopIn → on clear loopIn (invalide).
+          state.loopIn[deck] = null;
+          persistLoopMarker(deck, 'in', null);
+        }
+        state.loopOut[deck] = pos;
+        persistLoopMarker(deck, 'out', pos);
+        if (state.loopActive[deck] && !(pos > state.loopIn[deck])) {
+          state.loopActive[deck] = false;
+        }
+        updateCueLoopUI(deck);
+        flashLoopStatus(deck, 'Loop Out à ' + formatTime(pos) + '.');
+      });
+    }
+
+    // --- Loop de N beats (1/2/4/8) ---
+    var beatBtns = root.querySelectorAll('.cl-beat-loop');
+    Array.prototype.forEach.call(beatBtns, function (btn) {
+      btn.addEventListener('click', function () {
+        var beats = parseInt(btn.getAttribute('data-beats'), 10);
+        if (!beats) return;
+        setBeatLoop(deck, beats);
+      });
+    });
+
+    // --- LOOP toggle ---
+    var toggleBtn = root.querySelector('.cl-loop-toggle');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', function () {
+        if (state.loopIn[deck] == null || state.loopOut[deck] == null) return;
+        if (!(state.loopOut[deck] > state.loopIn[deck])) return;
+        setLoopActive(deck, !state.loopActive[deck]);
+      });
+    }
+
+    // --- LOOP CLEAR ---
+    var clearBtn = root.querySelector('.cl-loop-clear');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', function () {
+        clearLoop(deck);
+        flashLoopStatus(deck, 'Boucle effacée.');
+      });
+    }
+
+    // Restauration initiale depuis le localStorage (sans activer la boucle).
+    state.cue[deck] = loadCuePoint(deck);
+    state.loopIn[deck] = loadLoopMarker(deck, 'in');
+    state.loopOut[deck] = loadLoopMarker(deck, 'out');
+    state.loopActive[deck] = false;
+    updateCueLoopUI(deck);
+  }
+
+  // Formate des secondes en "M:SS" (réutilise DeckTransport si dispo).
+  function formatTime(sec) {
+    if (DeckTransport && typeof DeckTransport.fmtTime === 'function') {
+      return DeckTransport.fmtTime(sec);
+    }
+    var s = Number(sec) || 0;
+    var m = Math.floor(s / 60);
+    var ss = Math.floor(s % 60);
+    return m + ':' + String(ss).padStart(2, '0');
+  }
+
   // ===== Recherche par voie =====
 
   function wireSearch(deck) {
@@ -1231,6 +1598,8 @@
     wireDeckTransport('B');
     wireDeckDj('A');
     wireDeckDj('B');
+    wireDeckCueLoop('A');
+    wireDeckCueLoop('B');
     wireSearch('A');
     wireSearch('B');
     initSettingsModal();

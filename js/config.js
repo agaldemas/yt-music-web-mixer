@@ -17,6 +17,10 @@ window.YT_CONFIG = {
     EQ_LOW_B: 'eqLowB', EQ_MID_B: 'eqMidB', EQ_HIGH_B: 'eqHighB', DJ_FILTER_B: 'djFilterB',
     // Mode Piped DJ (phase 7) : pitch / tempo par voie (en %, -8..+8).
     PITCH_A: 'pitchA', PITCH_B: 'pitchB',
+    // Mode Piped DJ (phase 10) : cue points & boucles par voie.
+    CUE_A: 'cueA', CUE_B: 'cueB',
+    LOOP_IN_A: 'loopInA', LOOP_OUT_A: 'loopOutA',
+    LOOP_IN_B: 'loopInB', LOOP_OUT_B: 'loopOutB',
   },
   // Vidéos de test chargées au démarrage (cue, sans lecture auto)
   TEST_VIDEO_A: 'lfmxnzJAbl8',

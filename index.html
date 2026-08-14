@@ -197,6 +197,20 @@
         <!-- SYNC B→A (phase 9) : bouton beatmatch (déplacé vers la barre de mixage) -->
       </div>
 
+      <!-- Bloc CUE & boucles (phase 10) — visible uniquement en mode Piped -->
+      <div class="deck-cue-loop" data-deck="A">
+        <button class="cl-btn cl-cue" type="button" data-deck="A" aria-label="Cue point">◆ CUE</button>
+        <button class="cl-btn cl-loop-in" type="button" data-deck="A" aria-pressed="false" aria-label="Loop In">⤓ IN</button>
+        <button class="cl-btn cl-loop-out" type="button" data-deck="A" aria-pressed="false" aria-label="Loop Out">⤒ OUT</button>
+        <span class="cl-divider" aria-hidden="true"></span>
+        <button class="cl-btn cl-beat-loop" type="button" data-deck="A" data-beats="1" aria-label="Loop 1 beat">1</button>
+        <button class="cl-btn cl-beat-loop" type="button" data-deck="A" data-beats="2" aria-label="Loop 2 beats">2</button>
+        <button class="cl-btn cl-beat-loop" type="button" data-deck="A" data-beats="4" aria-label="Loop 4 beats">4</button>
+        <button class="cl-btn cl-beat-loop" type="button" data-deck="A" data-beats="8" aria-label="Loop 8 beats">8</button>
+        <button class="cl-btn cl-loop-toggle" type="button" data-deck="A" aria-pressed="false" aria-label="Activer/désactiver la boucle">🔁 LOOP</button>
+        <button class="cl-btn cl-loop-clear" type="button" data-deck="A" aria-label="Effacer la boucle">✕</button>
+      </div>
+
       <div class="deck-error" data-deck="A" hidden></div>
     </section>
 
@@ -281,6 +295,20 @@
           <span class="dj-bpm-value" title="BPM effectif (tenant compte du pitch)">—</span>
           <span class="dj-band-label">BPM</span>
         </div>
+      </div>
+
+      <!-- Bloc CUE & boucles (phase 10) — visible uniquement en mode Piped -->
+      <div class="deck-cue-loop" data-deck="B">
+        <button class="cl-btn cl-cue" type="button" data-deck="B" aria-label="Cue point">◆ CUE</button>
+        <button class="cl-btn cl-loop-in" type="button" data-deck="B" aria-pressed="false" aria-label="Loop In">⤓ IN</button>
+        <button class="cl-btn cl-loop-out" type="button" data-deck="B" aria-pressed="false" aria-label="Loop Out">⤒ OUT</button>
+        <span class="cl-divider" aria-hidden="true"></span>
+        <button class="cl-btn cl-beat-loop" type="button" data-deck="B" data-beats="1" aria-label="Loop 1 beat">1</button>
+        <button class="cl-btn cl-beat-loop" type="button" data-deck="B" data-beats="2" aria-label="Loop 2 beats">2</button>
+        <button class="cl-btn cl-beat-loop" type="button" data-deck="B" data-beats="4" aria-label="Loop 4 beats">4</button>
+        <button class="cl-btn cl-beat-loop" type="button" data-deck="B" data-beats="8" aria-label="Loop 8 beats">8</button>
+        <button class="cl-btn cl-loop-toggle" type="button" data-deck="B" aria-pressed="false" aria-label="Activer/désactiver la boucle">🔁 LOOP</button>
+        <button class="cl-btn cl-loop-clear" type="button" data-deck="B" aria-label="Effacer la boucle">✕</button>
       </div>
 
       <div class="deck-error" data-deck="B" hidden></div>

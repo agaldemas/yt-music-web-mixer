@@ -245,12 +245,31 @@
     // d'erreur. 'timeupdate' sert juste à mémoriser lastKnownTime pour
     // la reprise après refresh (sans déclencher onStateChange — c'est un
     // événement haute fréquence).
+    //
+    // ⚠️ Bug historique play/pause : les événements 'canplay' /
+    // 'canplaythrough' / 'loadeddata' / 'loadedmetadata' sont émis par
+    // l'élément <audio> CHAQUE FOIS que suffisamment de données sont
+    // bufferisées — y compris en plein playback (re-buffering après un
+    // seek, ou quand le buffer se remplit pendant la lecture). Si on
+    // signale CUED à ce moment, l'icône revient à '▶' (play) alors que
+    // l'audio joue → l'utilisateur clique "play" en pensant que c'est en
+    // pause, et le bouton se désynchronise. On ne signale donc CUED que
+    // si l'audio est effectivement en pause (pas en lecture). En lecture,
+    // on garde l'état PLAYING et on ne rétrograde pas.
     audio.addEventListener('loadstart', function () { reportState(STATE.UNSTARTED); });
     audio.addEventListener('emptied', function () { reportState(STATE.UNSTARTED); });
-    audio.addEventListener('loadedmetadata', function () { reportState(STATE.CUED); });
-    audio.addEventListener('loadeddata', function () { reportState(STATE.CUED); });
-    audio.addEventListener('canplay', function () { reportState(STATE.CUED); });
-    audio.addEventListener('canplaythrough', function () { reportState(STATE.CUED); });
+    audio.addEventListener('loadedmetadata', function () {
+      if (audio.paused) reportState(STATE.CUED);
+    });
+    audio.addEventListener('loadeddata', function () {
+      if (audio.paused) reportState(STATE.CUED);
+    });
+    audio.addEventListener('canplay', function () {
+      if (audio.paused) reportState(STATE.CUED);
+    });
+    audio.addEventListener('canplaythrough', function () {
+      if (audio.paused) reportState(STATE.CUED);
+    });
     audio.addEventListener('playing', function () { reportState(STATE.PLAYING); });
     audio.addEventListener('pause', function () { reportState(STATE.PAUSED); });
     audio.addEventListener('waiting', function () { reportState(STATE.BUFFERING); });

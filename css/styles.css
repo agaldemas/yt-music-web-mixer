@@ -1193,6 +1193,70 @@ body.mode-piped .deck-dj { display: flex; }
   100% { transform: scale(1); }
 }
 
+/* ============================================================
+ * Cue points & boucles (phase 10) — mode Piped uniquement
+ * ============================================================
+ * Bloc de boutons placé sous .deck-dj. Masqué par défaut en IFrame
+ * (le loop précis n'y est pas possible). body.mode-piped l'affiche. */
+.deck-cue-loop {
+  display: none;             /* masqué par défaut ; body.mode-piped l'affiche */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 14px 10px;
+  padding: 8px 10px;
+  background: #15181f;
+  border: 1px solid #232733;
+  border-radius: 8px;
+}
+body.mode-piped .deck-cue-loop { display: flex; }
+
+.cl-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  background: #1a1f2b;
+  color: #cbd5e1;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+  line-height: 1;
+  white-space: nowrap;
+}
+.cl-btn:hover { background: #232a3a; color: #f1f5f9; border-color: #3a4254; }
+.cl-btn:active { transform: scale(0.94); }
+.cl-btn[aria-pressed="true"] { background: #2563eb; border-color: #3b82f6; color: #fff; }
+
+/* Boutons spécifiques */
+.cl-cue { background: #1e293b; border-color: #334155; }
+.cl-cue:hover { background: #243449; border-color: #6ee7b7; }
+.cl-cue.is-set { border-color: #22c55e; color: #4ade80; }
+.cl-loop-in[aria-pressed="true"], .cl-loop-out[aria-pressed="true"] {
+  background: #b45309; border-color: #f59e0b; color: #fef3c7;
+}
+.cl-loop-toggle[aria-pressed="true"] {
+  background: #15803d; border-color: #22c55e; color: #fff;
+}
+.cl-beat-loop { min-width: 30px; padding: 6px 8px; }
+.cl-loop-clear {
+  width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  color: #9aa0ac;
+}
+.cl-loop-clear:hover { color: #fca5a5; border-color: #7f1d1d; background: #2a1518; }
+
+/* Séparateur vertical entre marqueurs manuels et loops de N beats */
+.cl-divider {
+  width: 1px;
+  align-self: stretch;
+  background: #232733;
+  margin: 0 4px;
+}
+
 /* Statut sync BPM (phase 9) : texte compact sous les boutons de sync */
 .mixer-sync-status {
   font-size: 0.72rem;

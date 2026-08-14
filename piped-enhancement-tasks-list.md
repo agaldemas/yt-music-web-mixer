@@ -386,17 +386,31 @@ API étendue : `window.BPMDetector` expose désormais `getProvisionalBPM(deck)`,
 
 ---
 
-## 10. Cue points & boucles [ ]
+## 10. Cue points & boucles [x]
 
 Fonctionnalités DJ de navigation dans le morceau.
 
-- [ ] **Cue point** : bouton "CUE" par voie → sauvegarde le `currentTime` actuel comme point de départ. Re-clic → seek au point sauvegardé.
-- [ ] **Bouton PLAY/PAUSE** par voie (en plus du play/pause both) : contrôle individuel
-- [ ] **Loop A↔B** : 2 marqueurs (loop-in, loop-out) par voie. Quand les deux sont définis, l'audio boucle entre ces positions :
-  - `audio.addEventListener('timeupdate')` → si `currentTime >= loopOut` → `audio.currentTime = loopIn`
-- [ ] **Loop de N beats** : bouton "1/2/4/8" → définit un loop de 1/2/4/8 beats à partir de la position actuelle (nécessite le BPM de la section 9)
-- [ ] Persistance : `cueA`, `cueB`, `loopInA`, `loopOutA`, etc. en `localStorage`
-- [ ] ⚠️ Disponible uniquement en mode Piped (l'IFrame ne permet pas le loop précis)
+- [x] **Cue point** : bouton "CUE" par voie → sauvegarde le `currentTime` actuel comme point de départ. Re-clic → seek au point sauvegardé. Double-clic → play depuis le cue (comportement console DJ).
+- [x] **Bouton PLAY/PAUSE** par voie (en plus du play/pause both) : contrôle individuel — déjà présent dans `.deck-transport` (`js/deck-controls.js`), conservé et fiabilisé (cf. 10.1).
+- [x] **Loop A↔B** : 2 marqueurs (loop-in, loop-out) par voie. Quand les deux sont définis, l'audio boucle entre ces positions :
+  - une boucle `requestAnimationFrame` (`startLoopWatch` dans `app.js`) surveille `currentTime` à ~60 Hz ; si `currentTime >= loopOut` → `seekTo(loopIn)` (transition quasi sample-accurate, plus fiable que `timeupdate` qui ne fire qu'~4 Hz)
+- [x] **Loop de N beats** : boutons "1/2/4/8" → définit un loop de 1/2/4/8 beats à partir de la position actuelle (utilise le BPM détecté de la section 9, avec fallback sur le BPM provisoire). Active immédiatement la boucle.
+- [x] Persistance : `cueA`/`cueB`, `loopInA`/`loopOutA`, `loopInB`/`loopOutB` en `localStorage` (clés ajoutées dans `config.js` `STORAGE_KEYS`). Restauration au démarrage via `wireDeckCueLoop`, mais la boucle n'est **pas** réactivée automatiquement au reload (une boucle auto-active serait surprenante).
+- [x] ⚠️ Disponible uniquement en mode Piped (l'IFrame ne permet pas le loop précis) — le bloc `.deck-cue-loop` est masqué en IFrame via CSS (`body.mode-iframe`). À la bascule IFrame, toute boucle active est désactivée et la surveillance est arrêtée.
+
+### 10.1 Fiabilisation du bouton PLAY/PAUSE (mode Piped)
+
+Le bouton play/pause par voie existait déjà (`js/deck-controls.js`), mais il se désynchronisait dans plusieurs cas. Corrections apportées :
+
+- [x] **Les événements `canplay`/`canplaythrough`/`loadeddata`/`loadedmetadata` n'émettent plus `CUED` pendant la lecture** (`js/audio-player.js`). Ces événements sont émis par l'`<audio>` CHAQUE FOIS que le buffer se remplit — y compris en plein playback (re-buffering après un seek, remplissage progressif). Si on signalait `CUED` à ce moment, l'icône revenait à `▶` (play) alors que l'audio jouait → l'utilisateur cliquait "play" en pensant que c'était en pause, et le bouton se désynchronisait. Maintenant on ne signale `CUED` que si l'`<audio>` est effectivement en pause (`audio.paused`).
+- [x] **Le bouton play affiche `PAUSED` immédiatement au clic, même depuis `BUFFERING`** (`js/deck-controls.js`). Avant, depuis `BUFFERING`, on n'updait pas l'icône en attendant l'événement `pause` réel — or un `<audio>` en attente de buffer peut tarder à émettre `pause` après `pause()`, laissant le spinner bloqué. Maintenant l'optimiste `PAUSED` s'applique dans tous les cas de pause-demandée.
+- [x] `reportState()` ne filtre plus les doublons (déjà en place depuis 3.1) : un même état publié deux fois est toujours notifié, pour que `onStateChange` force le rafraîchissement de l'icône après un échec de `play()` optimiste.
+
+### 10.2 Détails d'implémentation
+
+- **HTML** (`index.html`) : nouveau bloc `.deck-cue-loop` par voie (A et B), placé sous `.deck-dj`, contenant : bouton `◆ CUE`, `⤓ IN`, `⤒ OUT`, séparateur, boutons `1`/`2`/`4`/`8` (loop de N beats), `🔁 LOOP` (toggle), `✕` (clear).
+- **CSS** (`css/styles.css`) : styles du bloc `.deck-cue-loop` et des boutons `.cl-btn` (états `aria-pressed`, couleurs distinctes pour cue set / loop in-out actifs / loop toggle actif). Masqué par défaut, affiché en `body.mode-piped`.
+- **Logique** (`js/app.js`) : `wireDeckCueLoop(deck)` câble tous les boutons ; `startLoopWatch()`/`stopLoopWatch()` gèrent la surveillance des loops (une seule rAF pour les 2 voies). Les marqueurs sont effacés à chaque changement de morceau (`onSearchSelect`) car leurs positions (en secondes) ne sont plus pertinentes dans le nouveau morceau.
 
 ---
 
