@@ -24,7 +24,7 @@
  * plus de UI_CHANGE_TOL % du précédent → le compteur ne clignote pas.
  *
  * beatmatch (SYNC) : ajuste audioB.playbackRate pour matcher le BPM de A.
- *   ratio = bpmA / bpmB → playbackRate = clamp(ratio, 0.92, 1.08).
+ *   ratio = bpmA / bpmB → playbackRate = clamp(ratio, 0.85, 1.15).
  *   La préservation de la hauteur (preservesPitch) est déjà posée sur
  *   l'<audio> par audio-player.js → on change la vitesse sans changer
  *   le pitch (pas d'effet "chipmunk").
@@ -65,8 +65,12 @@
   var MIN_BASS_ENERGY = 0.015;
   // Anti-burst : ignore un beat à < 280 ms du précédent (≈ 214 BPM max).
   var MIN_BEAT_GAP_MS = 280;
-  // Tempo de sync : limite du pitch en % (cohérent avec PITCH_RANGE_PERCENT).
-  var SYNC_LIMIT = 0.08;              // ±8 %
+  // Tempo de sync : limite du pitch en %. Dérivée de PITCH_RANGE_PERCENT
+  // (config.js) au lieu d'être codée en dur — la plage du SYNC BPM reste
+  // cohérente avec la plage du fader PITCH. Fallback ±8 % si la config
+  // n'est pas chargée.
+  var PITCH_RANGE_PCT = (window.YT_CONFIG && window.YT_CONFIG.PITCH_RANGE_PERCENT) || 8;
+  var SYNC_LIMIT = PITCH_RANGE_PCT / 100;   // ex: 15 → 0.15 (±15 %)
 
   // ----- Stabilisation de la mesure -----
   // Seuil MIN_BEATS pour EXPOSER un BPM provisoire (état 'estimating') : dès

@@ -37,8 +37,10 @@ window.YT_CONFIG = {
   // Timeout de chargement de l'API IFrame (ms)
   API_LOAD_TIMEOUT_MS: 10000,
   // Pitch / tempo (phase 7) : plage du slider en % autour de 0.
-  // ±8% est le standard des sliders pitch DJ physiques (Technics SL-1200).
-  PITCH_RANGE_PERCENT: 8,
+  // ±8% est le standard des sliders pitch DJ physiques (Technics SL-1200),
+  // mais on l'élargit à ±15% pour permettre des ajustements de tempo plus
+  // larges (beatmatch entre morceaux éloignés, transitions rapide/lent).
+  PITCH_RANGE_PERCENT: 15,
   // playerVars minimum vital. `origin` est ajouté au runtime par youtube.js
   // uniquement quand on est en http(s) ; en file:// il déclenche l'erreur 153.
   PLAYER_VARS: {

@@ -1006,11 +1006,18 @@
     }
 
     // --- Fader pitch / tempo (phase 7) ---
-    // Slider vertical -8..+8 %, centré à 0. Double-clic = reset.
+    // Slider vertical centré à 0. La plage min/max est pilotée par
+    // config.PITCH_RANGE_PERCENT (source de vérité unique) : les attributs
+    // HTML restent à -8/+8 par défaut, on les remet à jour ici au boot pour
+    // que tout changement de PITCH_RANGE_PERCENT se répercute sans toucher
+    // au HTML. Double-clic = reset.
     // ⚠️ Ne fonctionne qu'en mode Piped (playbackRate <audio>). En IFrame,
     // le fader reste visible dans .deck-dj (masqué en IFrame via CSS).
     var pitchFader = root.querySelector('.dj-pitch-fader');
     if (pitchFader) {
+      var pitchRange = CFG.PITCH_RANGE_PERCENT || 8;
+      pitchFader.min = String(-pitchRange);
+      pitchFader.max = String(pitchRange);
       pitchFader.value = loadPitchValue(deck);
       pitchFader.addEventListener('input', function () {
         var v = parseFloat(pitchFader.value) || 0;
