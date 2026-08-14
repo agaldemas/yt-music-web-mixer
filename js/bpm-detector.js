@@ -13,13 +13,14 @@
  *   7. Calcule les intervalles inter-beat → médiane = intervalle moyen
  *   8. bpm = 60000 / intervalleMoyen, filtré dans [60..200]
  *
- * PHILOSOPHIE D'AFFICHAGE — la mesure doit être STABLE, pas réactive.
- * Le tempo d'un morceau ne change pas toutes les secondes. On accumule des
- * beats pendant une fenêtre de quelques secondes, on ne dévoile un BPM à
- * l'UI que lorsqu'une valeur cohérente émerge (histogramme d'intervalles
- * dominé par un pic net). Tant que la mesure n'est pas verrouillée,
- * l'UI affiche « … » (rien du tout, pas de valeur provisoire qui saute).
- * On ne met à jour le chiffre affiché que si le nouveau BPM diffère de
+ * PHILOSOPHIE D'AFFICHAGE — on affiche TÔT, on stabilise ensuite.
+ * Dès qu'on a quelques beats (~2-3 s), on expose un BPM « provisoire »
+ * (orange, état 'estimating') calculé par médiane des intervalles — c'est
+ * moins stable que verrouillé mais ça donne une valeur exploitable vite,
+ * au lieu de laisser le « — » pendant de longues secondes. En arrière-plan
+ * l'histogramme continue d'affiner ; quand il converge (pic net stable sur
+ * LOCK_CONSEC cycles), on passe en 'locked' (vert) et la valeur se fige.
+ * Le verrouillage n'écrase l'affichage que si le nouveau BPM diffère de
  * plus de UI_CHANGE_TOL % du précédent → le compteur ne clignote pas.
  *
  * beatmatch (SYNC) : ajuste audioB.playbackRate pour matcher le BPM de A.
@@ -34,7 +35,9 @@
  *   BPMDetector.startAll() / stopAll()
  *   BPMDetector.getBPM(deck)        : BPM détecté (number, 0 si inconnu)
  *   BPMDetector.getEffectiveBPM(deck) : BPM * playbackRate (effectif)
- *   BPMDetector.getState(deck)      : 'idle' | 'detecting' | 'locked'
+ *   BPMDetector.getState(deck)      : 'idle' | 'detecting' | 'estimating' | 'locked'
+ *   BPMDetector.getProvisionalBPM(deck) : BPM provisoire (orange), 0 si non acquis
+ *   BPMDetector.onBPMUpdate(deck)   : callback de transition d'état/valeur (UI)
  *   BPMDetector.syncBtoA()         : ajuste le pitch de B pour matcher A
  *
  * Limitations :
@@ -66,9 +69,13 @@
   var SYNC_LIMIT = 0.08;              // ±8 %
 
   // ----- Stabilisation de la mesure -----
-  // Nombre minimum de beats accumulés avant d'espérer un BPM fiable. À 128
-  // BPM, 8 s → ~17 beats ; on exige au moins 6 beats (≈ 3 s) pour démarrer
-  // l'analyse d'histogramme.
+  // Seuil MIN_BEATS pour EXPOSER un BPM provisoire (état 'estimating') : dès
+  // qu'on a MIN_BEATS_PROVISIONAL beats accumulés (~2 s à 128 BPM), on calcule
+  // un BPM provisoire par médiane des intervalles et on l'affiche (orange).
+  // Plus petit que le seuil de verrouillage → valeur affichée vite.
+  var MIN_BEATS_PROVISIONAL = 4;
+  // Nombre minimum de beats accumulés avant d'espérer un BPM fiable pour le
+  // VERROUILLAGE. À 128 BPM, ~6 beats (≈ 3 s) pour démarrer l'histogramme.
   var MIN_BEATS_FOR_ANALYSIS = 6;
   // Nombre d'intervalles voisins qu'on regroupe dans l'histogramme (en bins
   // de résolution). Plus c'est grand, plus on tolère le jitter ; plus c'est
@@ -94,6 +101,10 @@
   // de UI_CHANGE_TOL % du dernier affiché. Évite que le compteur clignote
   // entre 127/128/129. 3 % → ~3-4 BPM de plage de tolérance à 128 BPM.
   var UI_CHANGE_TOL = 0.03;
+  // Tolérance plus large pour le BPM provisoire (orange) : on accepte des
+  // sauts un peu plus grands pendant la phase d'estimation (l'affinage
+  // continue en arrière-plan), tout en évitant le clignotement permanent.
+  var UI_CHANGE_TOL_PROVISIONAL = 0.06;
 
   // ===== État par voie =====
   var detectors = { A: null, B: null };
@@ -109,14 +120,18 @@
       fluxHistory: [],          // fenêtre glissante du flux (seuil adaptatif)
       // BPM verrouillé : la valeur stable qu'on expose à l'UI. 0 = non acquis.
       lockedBPM: 0,
-      // Dernier BPM affiché (pour la comparaison UI_CHANGE_TOL). L'UI ne
-      // reçoit une nouvelle valeur que si elle diffère assez.
+      // BPM provisoire (orange, état 'estimating') : exposé tôt par médiane
+      // des intervalles, avant le verrouillage. 0 = non acquis.
+      provisionalBPM: 0,
+      // Dernier BPM verrouillé affiché (pour la comparaison UI_CHANGE_TOL).
       displayedBPM: 0,
+      // Dernier BPM provisoire affiché (comparaison UI_CHANGE_TOL_PROVISIONAL).
+      displayedProvisional: 0,
       // Compteur de cycles consécutifs stables (pic d'histogramme cohérent).
       stableCount: 0,
       // Dernier BPM candidat issu de l'histogramme (pour le verrouillage).
       lastCandidate: 0,
-      state: 'idle',            // 'idle' | 'detecting' | 'locked'
+      state: 'idle',            // 'idle' | 'detecting' | 'estimating' | 'locked'
       onBeat: null,             // callback optionnel (beat visuel)
     };
   }
@@ -145,6 +160,24 @@
     guard = 0;
     while (bpm > BPM_MAX && guard < 4) { bpm /= 2; guard++; }
     return clamp(bpm, BPM_MIN, BPM_MAX);
+  }
+
+  // Médiane d'un tableau de nombres (copie triée). Utilisée pour le BPM
+  // provisoire : plus robuste que la moyenne face aux intervalles aberrants.
+  function median(arr) {
+    if (!arr || !arr.length) return 0;
+    var s = arr.slice().sort(function (a, b) { return a - b; });
+    var n = s.length;
+    return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  }
+
+  // Callback global de transition d'état/valeur (défini par app.js). Appelé
+  // quand l'état d'une voie change ou qu'une nouvelle valeur mérite un
+  // rafraîchissement UI. Stocké sur l'objet public pour rester simple.
+  function notifyUpdate(deck) {
+    if (typeof window.BPMDetector.onBPMUpdate === 'function') {
+      try { window.BPMDetector.onBPMUpdate(deck); } catch (e) { /* ignore */ }
+    }
   }
 
   // ===== Boucle de détection =====
@@ -208,11 +241,45 @@
     while (det.beats.length && det.beats[0] < cutoff) det.beats.shift();
     if (det.beats.length > MAX_BEATS) det.beats.splice(0, det.beats.length - MAX_BEATS);
 
+    // ----- BPM provisoire (orange) : exposé tôt, avant le verrouillage -----
+    // Dès qu'on a MIN_BEATS_PROVISIONAL beats (~2 s), on calcule un BPM
+    // provisoire par médiane des intervalles inter-beat. C'est moins stable
+    // que le verrouillage mais ça donne une valeur à l'UI au lieu du « — ».
+    // On recalcule à chaque tick → l'affinage continue en arrière-plan.
+    if (det.beats.length >= MIN_BEATS_PROVISIONAL && det.state !== 'locked') {
+      var provIntervals = [];
+      for (var pi = 1; pi < det.beats.length; pi++) {
+        provIntervals.push(det.beats[pi] - det.beats[pi - 1]);
+      }
+      if (provIntervals.length >= 2) {
+        var medItv = median(provIntervals);
+        if (medItv > 0) {
+          var prov = Math.round(foldBPM(60000 / medItv));
+          // On pousse la valeur provisoire seulement si elle a suffisamment
+          // bougé (UI_CHANGE_TOL_PROVISIONAL) pour limiter le clignotement,
+          // mais on notifie l'UI à chaque transition d'état.
+          var changed = det.displayedProvisional === 0
+            || Math.abs(prov - det.displayedProvisional) / Math.max(1, det.displayedProvisional) > UI_CHANGE_TOL_PROVISIONAL;
+          if (prov !== det.provisionalBPM || changed) {
+            det.provisionalBPM = prov;
+            det.displayedProvisional = prov;
+          }
+          if (det.state === 'detecting') {
+            det.state = 'estimating';
+            notifyUpdate(deck);
+          }
+        }
+      }
+    }
+
     // ----- Analyse d'histogramme : cherche un BPM dominant et stable -----
-    // On ne calcule rien tant qu'on n'a pas assez de beats accumulés. Pendant
-    // cette phase d'acquisition, l'UI affiche « … » (pas de valeur provisoire).
+    // On ne calcule le verrouillage que si on a assez de beats. Pendant la
+    // phase d'acquisition, l'UI affiche le BPM provisoire (si acquis) en
+    // orange — pas de « — » qui persiste.
     if (det.beats.length < MIN_BEATS_FOR_ANALYSIS) {
-      if (det.state !== 'locked') det.state = 'detecting';
+      if (det.state === 'idle' || (det.state === 'detecting' && det.provisionalBPM === 0)) {
+        det.state = 'detecting';
+      }
       return;
     }
 
@@ -264,14 +331,23 @@
         if (det.stableCount >= LOCK_CONSEC) {
           det.lockedBPM = Math.round(candidateBPM);
           det.state = 'locked';
-        } else {
-          det.state = 'detecting';
+          det.displayedBPM = 0; // force le prochain rafraîchissement UI (vert)
+          notifyUpdate(deck);
+        } else if (det.state !== 'estimating') {
+          // Pas encore verrouillé mais on a un candidat : on reste en
+          // 'estimating' (provisoire orange) tant qu'on accumule la preuve.
+          det.state = 'estimating';
         }
       } else {
-        // Pas de pic net : on reste en détection, on ne verrouille pas.
+        // Pas de pic net : on reste en estimation si on a un provisoire,
+        // sinon en détection pure. On ne verrouille pas.
         det.stableCount = 0;
-        det.state = 'detecting';
         det.lastCandidate = candidateBPM;
+        if (det.provisionalBPM > 0 && det.state !== 'estimating') {
+          det.state = 'estimating';
+        } else if (det.provisionalBPM === 0) {
+          det.state = 'detecting';
+        }
       }
     } else {
       // Déjà verrouillé : on ne déverrouille QUE si un nouveau BPM émerge très
@@ -283,7 +359,8 @@
         // détection courte pour confirmer le nouveau tempo avant de l'afficher.
         det.lockedBPM = 0;
         det.stableCount = 0;
-        det.state = 'detecting';
+        det.state = det.provisionalBPM > 0 ? 'estimating' : 'detecting';
+        notifyUpdate(deck);
       }
       // Sinon : on reste verrouillé sur l'ancien BPM (stable).
     }
@@ -316,11 +393,18 @@
   function startAll() { start('A'); start('B'); }
   function stopAll() { stop('A'); stop('B'); }
 
-  // Retourne le BPM verrouillé (0 si non acquis). C'est la seule valeur
-  // exposée à l'UI : pas de BPM provisoire pendant la détection.
+  // Retourne le BPM verrouillé (0 si non acquis).
   function getBPM(deck) {
     var det = detectors[deck];
     return det ? det.lockedBPM : 0;
+  }
+
+  // BPM provisoire (orange, état 'estimating'). Exposé tôt, avant le
+  // verrouillage. 0 si non acquis. C'est la valeur qu'affiche l'UI pendant
+  // la phase d'estimation.
+  function getProvisionalBPM(deck) {
+    var det = detectors[deck];
+    return det ? det.provisionalBPM : 0;
   }
 
   // BPM effectif = BPM verrouillé * playbackRate (tient compte du pitch).
@@ -416,17 +500,21 @@
     startAll: startAll,
     stopAll: stopAll,
     getBPM: getBPM,
+    getProvisionalBPM: getProvisionalBPM,
     getEffectiveBPM: getEffectiveBPM,
     getEffectiveBPMIfChanged: getEffectiveBPMIfChanged,
     getState: getState,
     syncBtoA: syncBtoA,
     reset: reset,
+    onBPMUpdate: null,        // callback(deck) — défini par app.js
     CONST: {
       POLL_MS: POLL_MS,
       BPM_MIN: BPM_MIN,
       BPM_MAX: BPM_MAX,
       SYNC_LIMIT: SYNC_LIMIT,
       UI_CHANGE_TOL: UI_CHANGE_TOL,
+      UI_CHANGE_TOL_PROVISIONAL: UI_CHANGE_TOL_PROVISIONAL,
+      MIN_BEATS_PROVISIONAL: MIN_BEATS_PROVISIONAL,
     },
   };
 })();

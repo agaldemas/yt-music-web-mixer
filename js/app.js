@@ -146,7 +146,7 @@
   function startBpmDisplayLoop() {
     if (state.bpmRafId) return;
     var last = 0;
-    var INTERVAL = 500; // ~2 Hz : la mesure est stable, inutile de rafraîchir plus
+    var INTERVAL = 250; // ~4 Hz : plus réactif pendant la phase d'estimation
     function loop(t) {
       state.bpmRafId = requestAnimationFrame(loop);
       if (t - last < INTERVAL) return;
@@ -160,18 +160,27 @@
         if (badge) badge.setAttribute('data-bpm-state', st);
 
         if (st === 'locked') {
-          // BPM verrouillé : on ne met à jour le chiffre QUE s'il a
+          // BPM verrouillé (vert) : on ne met à jour le chiffre QUE s'il a
           // vraiment changé (> 3 %). Sinon on garde le chiffre affiché
           // tel quel — le compteur ne clignote pas.
           var changed = BPMDetector.getEffectiveBPMIfChanged(deck);
           if (changed !== null) {
             el.textContent = changed + ' BPM';
           }
+        } else if (st === 'estimating') {
+          // BPM provisoire (orange) : on affiche la valeur provisoire dès
+          // qu'elle est dispo. On accepte des mises à jour plus fréquentes
+          // car l'affinage continue en arrière-plan.
+          var prov = BPMDetector.getProvisionalBPM(deck);
+          if (prov > 0) {
+            el.textContent = prov + ' BPM';
+          }
         } else {
-          // Phase de calcul (idle/detecting) : on NE touche PAS au texte.
-          // Si un BPM était déjà affiché (verrouillé avant un reset), on le
-          // garde. Sinon c'est '—' au démarrage. La couleur rouge
-          // (data-bpm-state != locked) signale que le système calcule.
+          // idle / detecting : pas encore de valeur. On garde le texte
+          // courant (reset garde l'ancienne valeur en grisé) ou '—'.
+          if (!el.textContent || el.textContent === '—' || /BPM$/.test(el.textContent) === false) {
+            el.textContent = '—';
+          }
         }
       });
     }
@@ -213,6 +222,87 @@
         statusEl._t = setTimeout(function () { statusEl.hidden = true; }, 2500);
       }
     });
+    // Create reset buttons if they don't exist
+    var resetBtnA = document.querySelector('.deck[data-deck="A"] .dj-bpm .dj-reset');
+    if (!resetBtnA) {
+      resetBtnA = document.createElement('button');
+      resetBtnA.className = 'dj-reset';
+      resetBtnA.textContent = '↺';
+      resetBtnA.title = 'Recalculer le BPM';
+      resetBtnA.style.marginLeft = '5px';
+      resetBtnA.addEventListener('click', function () {
+        if (!BPMDetector) return;
+        BPMDetector.reset('A');
+        BPMDetector.start('A');
+        var statusEl = document.getElementById('sync-status');
+        if (statusEl) {
+          statusEl.textContent = 'Recalcul du BPM en cours...';
+          statusEl.hidden = false;
+          clearTimeout(statusEl._t);
+          statusEl._t = setTimeout(function () { statusEl.hidden = true; }, 2500);
+        }
+      });
+      var bpmContainerA = document.querySelector('.deck[data-deck="A"] .dj-bpm');
+      if (bpmContainerA) {
+        bpmContainerA.appendChild(resetBtnA);
+      }
+    }
+    
+    var resetBtnB = document.querySelector('.deck[data-deck="B"] .dj-bpm .dj-reset');
+    if (!resetBtnB) {
+      resetBtnB = document.createElement('button');
+      resetBtnB.className = 'dj-reset';
+      resetBtnB.textContent = '↺';
+      resetBtnB.title = 'Recalculer le BPM';
+      resetBtnB.style.marginLeft = '5px';
+      resetBtnB.addEventListener('click', function () {
+        if (!BPMDetector) return;
+        BPMDetector.reset('B');
+        BPMDetector.start('B');
+        var statusEl = document.getElementById('sync-status');
+        if (statusEl) {
+          statusEl.textContent = 'Recalcul du BPM en cours...';
+          statusEl.hidden = false;
+          clearTimeout(statusEl._t);
+          statusEl._t = setTimeout(function () { statusEl.hidden = true; }, 2500);
+        }
+      });
+      var bpmContainerB = document.querySelector('.deck[data-deck="B"] .dj-bpm');
+      if (bpmContainerB) {
+        bpmContainerB.appendChild(resetBtnB);
+      }
+    }
+    
+    // Function to update reset button visibility based on BPM state
+    function updateResetButtonVisibility(deck) {
+      var bpmValueDiv = document.querySelector('.deck[data-deck="' + deck + '"] .dj-bpm-value');
+      var resetBtn = document.querySelector('.deck[data-deck="' + deck + '"] .dj-bpm .dj-reset');
+      if (bpmValueDiv && resetBtn) {
+        var bpmValue = bpmValueDiv.textContent.trim();
+        // Show button only when BPM is stable (not calculating or '--')
+        if (bpmValue && bpmValue !== '--' && bpmValue !== 'Calcul...') {
+          resetBtn.style.display = 'inline-block';
+          // Add green color to indicate BPM is stable
+          bpmValueDiv.style.color = '#4CAF50';
+        } else {
+          resetBtn.style.display = 'none';
+          bpmValueDiv.style.color = '';
+        }
+      }
+    }
+    
+    // Initial visibility check - hide buttons initially
+    var resetBtnA = document.querySelector('.deck[data-deck="A"] .dj-bpm .dj-reset');
+    var resetBtnB = document.querySelector('.deck[data-deck="B"] .dj-bpm .dj-reset');
+    if (resetBtnA) resetBtnA.style.display = 'none';
+    if (resetBtnB) resetBtnB.style.display = 'none';
+    
+    // Update button visibility when BPM changes
+    if (BPMDetector) {
+      BPMDetector.onBPMUpdate = function(deck) {
+        updateResetButtonVisibility(deck);
+      };
+    }
   }
   //
   // Calcule les infos à afficher (titre, uploader, miniature, badge de mode)
