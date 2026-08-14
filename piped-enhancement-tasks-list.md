@@ -472,11 +472,23 @@ Trois approches, à choisir ou combiner :
 
 ### UI — modification de `index.html` + `css/styles.css`
 
-- [ ] Ajouter `.platter` (disque circulaire ~120-160 px) dans chaque `.deck`, sous ou à côté du visualizer.
-- [ ] Marqueur de position angulaire sur le disque (repère visuel qui tourne pendant la lecture et suit le doigt en scratch).
-- [ ] État visuel : `idle` (disque immobile en pause / tourne en lecture), `engaged` (highlight, suit le pointeur), `loading` (spinner pendant `decodeAudioData`).
-- [ ] `touch-action: none` sur la platine (empêche le scroll / pinch tactile pendant le scratch).
-- [ ] Responsive : sur mobile, la platine reste manipulable au doigt (Pointer Events natifs).
+Intégration du Scratch dans l'espace d'un deck :
+- Le visualiser (`<canvas>`) occupe le tiers gauche : largeur = 1/2 × (largeurDeck - padding) → ~350–400 px si le deck fait ~768×340.
+- La platine et ses contrôles (`.platter`, `knob`s pitch/vinyl, marqueurs cue) occupent les 2/3 restants : largeur ≈ reste de l'espace horizontal.
+- Le split est un ratio ~35% left | 65% right. Les contrôle scratch sont à droite du canvas pour éviter le clash avec la waveform gauche.
+
+Liste UI détaillée :
+
+### Left Pane (visualizer) — `~320–400 px`:
+- Un `<canvas id="waveformCanvas">` sous l'élément `.spectral-overlay`. Styles : 
+  - `width: calc((100% * 0.56) + var(--gutter)); height: inherit; background: radial-gradient(circle at center, #2a2e39, #1c1f28);`
+  - Ondulation de la waveform via Web Audio AnalyserNode.
+
+### Right Pane (scratch controls) — `~60–75% du deck`:
+- `.platter` (disque circulaire ~120 px), marqueurs angulaires, state (`idle/engaged/loading`).
+- Boutons/sliders de pitch control (-8..+8%), vinyl slider pour le sweep ±45 BPM.
+
+- [ ] `touch-action: none`, pointer-events natifs (tactile + mouse) sur `.platter` et ses sliders. Responsive, manipulations directes.
 
 ### Limites à documenter dans l'UI
 

@@ -361,6 +361,26 @@
           }
           audio.src = newUrl;
           audio.load();
+          // ⚠️ La spécification HTML media réinitialise `playbackRate` à 1
+          // (et `defaultPlaybackRate`) quand on change `src` / on appelle
+          // `load()`. Le pitch (réglé par l'UI PITCH via AudioEngine.setPitch)
+          // est donc perdu à chaque changement de morceau. On le restaure
+          // ici dès que les nouvelles métadonnées sont prêtes, en lisant la
+          // valeur persistée via AudioEngine (seule source de vérité du
+          // playbackRate). Sans ça, le pitch paraissait "ne plus marcher"
+          // après l'ajout du BPM (en fait il marchait mais était écrasé à
+          // chaque loadVideoById, et l'UI ne le restaurait qu'au prochain
+          // onReady — or onReady arrive APRÈS canplay, trop tard pour le
+          // badge BPM effectif qui s'était déjà affiché avec rate=1).
+          audio.addEventListener('loadedmetadata', function restoreRate() {
+            audio.removeEventListener('loadedmetadata', restoreRate);
+            var AE = window.AudioEngine;
+            if (!AE || typeof AE.getPitch !== 'function') return;
+            try {
+              var saved = AE.getPitch(deckId); // pitch persisté en %, 0 si neutre
+              if (saved) AE.setPitch(deckId, saved);
+            } catch (e) { /* ignore */ }
+          }, { once: true });
         }).catch(function (err) {
           const classified = PipedStreams.classifyError(err);
           const uiErr = {

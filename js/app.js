@@ -167,17 +167,20 @@
 
         if (st === 'locked') {
           // BPM verrouillé (vert) : on ne met à jour le chiffre QUE s'il a
-          // vraiment changé (> 3 %). Sinon on garde le chiffre affiché
-          // tel quel — le compteur ne clignote pas.
+          // vraiment changé (> 3 % OU > 1 BPM absolu pour suivre le pitch).
+          // Sinon on garde le chiffre affiché tel quel — le compteur ne
+          // clignote pas.
           var changed = BPMDetector.getEffectiveBPMIfChanged(deck);
           if (changed !== null) {
             el.textContent = changed + ' BPM';
           }
         } else if (st === 'estimating') {
           // BPM provisoire (orange) : on affiche la valeur provisoire dès
-          // qu'elle est dispo. On accepte des mises à jour plus fréquentes
-          // car l'affinage continue en arrière-plan.
-          var prov = BPMDetector.getProvisionalBPM(deck);
+          // qu'elle est dispo. On utilise le BPM provisoire EFFECTIF (tenant
+          // compte du pitch) pour rester cohérent avec l'état 'locked'.
+          var prov = (typeof BPMDetector.getProvisionalBPMEffective === 'function')
+            ? BPMDetector.getProvisionalBPMEffective(deck)
+            : BPMDetector.getProvisionalBPM(deck);
           if (prov > 0) {
             el.textContent = prov + ' BPM';
           }
@@ -900,14 +903,6 @@
     return 0;
   }
 
-  function loadPitchValue(deck) {
-    try {
-      var v = localStorage.getItem(pitchStorageKey(deck));
-      if (v !== null) return parseFloat(v) || 0;
-    } catch (e) { /* ignore */ }
-    return 0;
-  }
-
   // Pousse une valeur d'EQ vers l'AudioEngine + met à jour le fader DOM.
   function applyEq(deck, band, value) {
     var fader = document.querySelector(
@@ -940,6 +935,13 @@
     }
     if (AudioEngine && AudioEngine.hasDeck(deck)) {
       try { AudioEngine.setPitch(deck, value); } catch (e) { /* deck pas prêt */ }
+    }
+    // Force le rafraîchissement du badge BPM effectif : le playbackRate vient
+    // de changer, on réinitialise la mémoire du dernier affichage pour que la
+    // boucle d'affichage (getEffectiveBPMIfChanged) renvoie la nouvelle valeur
+    // dès le prochain tick au lieu d'attendre que l'écart dépasse 3 %.
+    if (BPMDetector && typeof BPMDetector.resetEffectiveDisplay === 'function') {
+      try { BPMDetector.resetEffectiveDisplay(deck); } catch (e) { /* ignore */ }
     }
   }
 

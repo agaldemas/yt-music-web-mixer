@@ -411,14 +411,28 @@
   function getEffectiveBPM(deck) {
     var det = detectors[deck];
     if (!det || !det.lockedBPM) return 0;
+    return Math.round(det.lockedBPM * currentPlaybackRate(deck));
+  }
+
+  // Taux de lecture courant d'une voie (1.0 = vitesse native). Extrait de
+  // l'élément <audio> via AudioEngine. Centralisé ici pour que le BPM
+  // provisoire ET le BPM verrouillé tiennent tous les deux compte du pitch.
+  function currentPlaybackRate(deck) {
     var AudioEngine = window.AudioEngine;
-    if (!AudioEngine) return det.lockedBPM;
-    var rate = 1;
+    if (!AudioEngine) return 1;
     try {
       var el = AudioEngine.getDeckAudioElement(deck);
-      if (el && isFinite(el.playbackRate)) rate = el.playbackRate;
+      if (el && isFinite(el.playbackRate) && el.playbackRate > 0) return el.playbackRate;
     } catch (e) { /* ignore */ }
-    return Math.round(det.lockedBPM * rate);
+    return 1;
+  }
+
+  // BPM provisoire EFFECTIF = provisoire * playbackRate. Utilisé par l'UI
+  // pendant la phase 'estimating' pour refléter le pitch (comme le locked).
+  function getProvisionalBPMEffective(deck) {
+    var det = detectors[deck];
+    if (!det || !det.provisionalBPM) return 0;
+    return Math.round(det.provisionalBPM * currentPlaybackRate(deck));
   }
 
   function getState(deck) {
@@ -429,6 +443,14 @@
   // Indique si le BPM effectif a changé depuis le dernier appel → l'UI ne
   // met à jour le badge que si vrai. Comparaison à UI_CHANGE_TOL % de tolérance.
   // Retourne null si pas de changement (l'UI garde sa valeur affichée).
+  //
+  // ⚠️ Bug historique : on ne comparait que `eff` à `det.displayedBPM`, sans
+  // prendre en compte que le pitch peut avoir changé depuis le dernier affichage.
+  // Comme `eff` = lockedBPM × playbackRate, un changement de pitch fait bien
+  // varier `eff`, MAIS la tolérance de 3 % empêchait les petits ajustements
+  // (±1 BPM) de se propager → le BPM paraissait figé quand on bougeait le
+  // pitch. On assouplit maintenant à 1 BPM d'écart absolu en plus du seuil
+  // relatif, pour que le badge suive le pitch en temps réel.
   function getEffectiveBPMIfChanged(deck) {
     var det = detectors[deck];
     if (!det || !det.lockedBPM) return null;
@@ -437,7 +459,10 @@
       det.displayedBPM = eff;
       return eff;
     }
-    if (Math.abs(eff - det.displayedBPM) / det.displayedBPM > UI_CHANGE_TOL) {
+    var relDiff = Math.abs(eff - det.displayedBPM) / Math.max(1, det.displayedBPM);
+    // Changement significatif : soit > UI_CHANGE_TOL %, soit > 1 BPM absolu
+    // (pour suivre le pitch même à petit écart à BPM élevé).
+    if (relDiff > UI_CHANGE_TOL || Math.abs(eff - det.displayedBPM) >= 1) {
       det.displayedBPM = eff;
       return eff;
     }
@@ -494,6 +519,15 @@
     }
   }
 
+  // Force le prochain getEffectiveBPMIfChanged à renvoyer la valeur (même si
+  // l'écart est faible). Appelé quand le pitch change depuis l'UI, pour que
+  // le badge BPM effectif se rafraîchisse immédiatement (au prochain tick de
+  // la boucle d'affichage) au lieu d'attendre que l'écart dépasse 3 %.
+  function resetEffectiveDisplay(deck) {
+    var det = detectors[deck];
+    if (det) det.displayedBPM = 0;
+  }
+
   window.BPMDetector = {
     start: start,
     stop: stop,
@@ -501,11 +535,14 @@
     stopAll: stopAll,
     getBPM: getBPM,
     getProvisionalBPM: getProvisionalBPM,
+    getProvisionalBPMEffective: getProvisionalBPMEffective,
     getEffectiveBPM: getEffectiveBPM,
     getEffectiveBPMIfChanged: getEffectiveBPMIfChanged,
     getState: getState,
+    getPlaybackRate: currentPlaybackRate,
     syncBtoA: syncBtoA,
     reset: reset,
+    resetEffectiveDisplay: resetEffectiveDisplay,
     onBPMUpdate: null,        // callback(deck) — défini par app.js
     CONST: {
       POLL_MS: POLL_MS,
