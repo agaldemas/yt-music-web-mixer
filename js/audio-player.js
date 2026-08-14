@@ -173,12 +173,15 @@
     }
 
     // ===== Mapping STATE =====
-    // On notifie onStateChange à chaque transition d'état, avec une mémoire
-    // du dernier état pour éviter les doublons.
+    // On notifie onStateChange à chaque transition d'état. On garde une
+    // mémoire du dernier état publié, mais on autorise quand même à
+    // republier le MÊME état si le caller l'exige (ex: le bouton play/pause
+    // pose un état optimiste au clic, puis l'événement réel confirme le
+    // même état → il faut quand même rafraîchir l'icône). C'est reportState
+    // qui est appelé par les listeners <audio>.
     let lastReportedState = STATE.UNSTARTED;
     function reportState(newState) {
       if (newState == null) return;
-      if (newState === lastReportedState) return;
       lastReportedState = newState;
       try { onStateChange({ data: newState }); } catch (e) { /* ignore */ }
     }
@@ -263,7 +266,8 @@
     // canplay → onReady (équivalent de l'événement "lecteur prêt à jouer"
     // de YTWrapper). À ce stade l'audio est bufferisé, on peut appeler
     // play() sans attente supplémentaire. Si pendingPlay est true (l'user
-    // a cliqué play avant que le buffer soit prêt), on lance la lecture.
+    // a cliqué play avant que le buffer soit prêt, ou a sélectionné un
+    // morceau en mode Piped → autoplay demandé), on lance la lecture.
     audio.addEventListener('canplay', function () {
       if (state.refreshCount === 0) {
         // 1er ready de la session — on notifie le caller
@@ -274,8 +278,23 @@
         // resume() débloque l'AudioContext (politique autoplay) AVANT play().
         // Sans cela, l'AudioContext reste suspended et le son ne sort pas.
         AudioEngine.resume().then(function () {
-          audio.play().catch(function () { /* autoplay bloqué — silencieux */ });
-        }).catch(function () { /* resume a échoué — on tente quand même */ });
+          var pr = audio.play();
+          if (pr && typeof pr.catch === 'function') {
+            pr.catch(function (err) {
+              // Autoplay peut être bloqué si l'AudioContext n'a pas encore
+              // été débloqué par un geste utilisateur. On retente une fois
+              // après un court délai — le geste de sélection de recherche
+              // compte normalement comme interaction.
+              setTimeout(function () {
+                audio.play().catch(function () { /* échec définitif — silencieux */ });
+              }, 150);
+            });
+          }
+        }).catch(function () {
+          // resume() a échoué : on tente quand même le play (le son sortira
+          // peut-être en direct si le contexte est déjà actif).
+          audio.play().catch(function () { /* silencieux */ });
+        });
       }
     });
 
@@ -287,6 +306,11 @@
       _audio: audio,
       _state: state,
       _ready: false,
+      // Drapeau d'autoplay : positionné par le caller (app.js) AVANT
+      // loadVideoById pour demander la lecture auto au prochain canplay.
+      // Initialisé ici (et non juste posé à la volée) pour que le check
+      // `'_pendingPlayRequested' in player` côté app.js fonctionne.
+      _pendingPlayRequested: false,
 
       // loadVideoById(id) → fetch Piped → audio.src = CORS-safe → load()
       // Si autoplay/lecture en cours avant ce load, on la reprend après ready.
@@ -295,7 +319,12 @@
         state.currentVideoId = id;
         state.lastKnownTime = 0;
         state.refreshCount = 0;
-        state.pendingPlay = false;
+        // On capture l'intention d'autoplay MAINTENANT (avant le fetch réseau)
+        // pour éviter une race : si le caller a posé _pendingPlayRequested=true
+        // juste avant cet appel, on le gèle dans pendingPlay. Sinon, si l'audio
+        // joue déjà, on veut reprendre après le changement de src.
+        state.pendingPlay = (p._pendingPlayRequested === true) || (!audio.paused);
+        p._pendingPlayRequested = false;
         // Si l'audio joue actuellement, on mémorise pour reprendre après load.
         state.wasPlayingBeforeError = !audio.paused;
 
@@ -311,9 +340,6 @@
             try { onError(err); } catch (e) { /* ignore */ }
             return;
           }
-          // Si l'utilisateur a demandé playVideo() entre temps, on l'honore
-          // au moment du canplay.
-          state.pendingPlay = p._pendingPlayRequested === true;
           audio.src = newUrl;
           audio.load();
         }).catch(function (err) {
@@ -363,13 +389,21 @@
 
       // playVideo() → AudioEngine.resume() puis audio.play()
       // resume() débloque l'AudioContext après le 1er geste utilisateur.
+      // On retourne la promesse de play() pour que le caller puisse
+      // réagir à un échec (ex: bouton play/pause qui ne se met pas à jour).
       playVideo: function () {
-        AudioEngine.resume().then(function () {
-          // play() retourne une promesse rejetée si autoplay est bloqué
-          // (rare ici car on est dans un click handler, mais on catch quand
-          // même).
-          audio.play().catch(function () { /* silencieux */ });
-        }).catch(function () { /* silencieux */ });
+        return AudioEngine.resume().then(function () {
+          var pr = audio.play();
+          if (pr && typeof pr.catch === 'function') {
+            return pr.catch(function (err) {
+              // Autoplay bloqué : on signale l'état PAUSED pour que l'UI
+              // reste cohérente (le bouton montre 'play' au lieu de 'pause').
+              reportState(STATE.PAUSED);
+              throw err;
+            });
+          }
+          return undefined;
+        });
       },
 
       pauseVideo: function () { audio.pause(); },

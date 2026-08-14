@@ -94,15 +94,41 @@
     controllers[deck] = c;
 
     // --- Bouton play / pause ---
+    // On bascule entre lecture et pause selon l'état courant. Pour éviter que
+    // l'icône reste désynchronisée (ex: play() rejeté par autoplay, ou
+    // transition PLAYING→BUFFERING→PLAYING qui lisse mal), on met à jour
+    // l'icône de façon optimiste juste après le clic, puis l'événement réel
+    // (onStateChange) confirmera/rectifiera.
     if (playBtn) {
       playBtn.addEventListener('click', function () {
         var p = getPlayer();
         if (!p || !getReady()) return;
         var st = (typeof p.getPlayerState === 'function') ? p.getPlayerState() : STATE.UNSTARTED;
-        if (st === STATE.PLAYING) {
+        if (st === STATE.PLAYING || st === STATE.BUFFERING) {
           if (typeof p.pauseVideo === 'function') p.pauseVideo();
+          // Optimiste : on affiche 'play' tout de suite (la pause est quasi
+          // instantanée sur un <audio> / iframe).
+          if (st === STATE.PLAYING) {
+            c.lastState = STATE.PAUSED;
+            renderState(c);
+          }
         } else {
-          if (typeof p.playVideo === 'function') p.playVideo();
+          if (typeof p.playVideo === 'function') {
+            var ret = p.playVideo();
+            // Optimiste : on passe en BUFFERING (icône pause + spinner)
+            // pendant que le play() se résout. Si ça échoue (autoplay
+            // bloqué), playVideo() re-signale PAUSED → onStateChange
+            // rectifiera l'icône.
+            c.lastState = STATE.BUFFERING;
+            renderState(c);
+            if (ret && typeof ret.catch === 'function') {
+              ret.catch(function () {
+                // play() rejeté : on revient à PAUSED.
+                c.lastState = STATE.PAUSED;
+                renderState(c);
+              });
+            }
+          }
         }
       });
     }
@@ -149,6 +175,9 @@
   }
 
   // Notifié par app.js à chaque changement d'état du lecteur.
+  // On accepte Toutes les transitions y compris vers le même état que le
+  // précédent (utile quand l'état optimiste posé au clic diffère de l'état
+  // réel confirmé par l'<audio>).
   function onStateChange(deck, st) {
     var c = controllers[deck];
     if (!c) return;

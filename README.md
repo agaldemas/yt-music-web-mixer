@@ -17,12 +17,20 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
 - **A↔B crossfader** (0 = full A, 100 = full B, 50 = balanced) with an *equal-power* curve to avoid the level dip in the middle.
 - **Global master volume** (0–100%).
 - **Per-deck mute/unmute buttons** (required to work around browser autoplay policies).
-- **Playback controls**: *play both* / *pause both*.
+- **Playback controls**: *play both* / *pause both*, plus per-deck play/pause.
 - **Sync B → A**: align B to A's position (one-shot or continuous).
 - **Auto-unmute on track change**: selecting a new track automatically enables sound (the click counts as a user gesture for autoplay policies).
 - **Separate A/B volume readout**: the crossfade bar shows individual volume percentages for each deck.
 - **Mixer-style crossfade thumb**: rectangular 15×30px handle with `ew-resize` cursor, like a hardware mixer fader.
-- **Persistence** via `localStorage`: API key, last queries, and last video IDs are saved. Queries are restored in the search fields on reload.
+- **DJ controls (Piped/DSP mode only)**:
+  - **3-band EQ** (Low / Mid / High, ±12 dB) per deck with double-click reset.
+  - **DJ filter** sweep (lowpass ↔ highpass, log-scale knob) per deck, double-click = bypass.
+  - **Pitch / tempo** slider (±8%) per deck with `preservesPitch` (tempo change without pitch shift), double-click reset, BPM readout shows the *effective* BPM (`bpm × playbackRate`).
+  - **RAZ (reset) buttons** (↺) next to each vertical DJ slider for one-click reset to neutral.
+  - **Real-time BPM detection** per deck (spectral-flux onset + histogram of inter-beat intervals, locking after stable cycles). Red badge while calculating, green when locked; the displayed value only updates on a real change (>3%) so it does not flicker.
+  - **SYNC button** to match deck B's tempo to deck A (clamped to ±8%, reflects on the pitch slider).
+  - **Spectrum/waveform visualizers** per deck and a master spectrum in the mixer bar (via `AnalyserNode`, 30+ FPS).
+- **Persistence** via `localStorage`: API key, last queries, last video IDs, EQ, DJ filter, pitch per deck are saved and restored on reload and on mode switch.
 - **One-click launch scripts**: `start.sh` (macOS/Linux/WSL) and `start.bat` (Windows) start the local Express server on port 5400 and open the app in your default browser.
 - **Responsive**: collapses to a single column on small screens.
 
@@ -111,8 +119,11 @@ yt-music-web-mixer/
     ├── config.js        # constants, API key and player configuration
     ├── youtube.js       # YouTube IFrame API wrapper (IFrame fallback)
     ├── piped-streams.js # local backend first, Piped stream fallback, cache and refresh
-    ├── audio-player.js  # audio player used by DJ mode
-    ├── audio-engine.js  # Web Audio graph: source, EQ, filter, gain and analyser
+    ├── audio-player.js  # audio player used by DJ mode (autoplay-safe, optimistic play/pause)
+    ├── audio-engine.js  # Web Audio graph: source, EQ, filter, gain, analyser and pitch
+    ├── visualizer.js    # canvas spectrum/waveform via AnalyserNode
+    ├── bpm-detector.js  # real-time BPM detection (spectral flux + histogram, locking)
+    ├── deck-controls.js # per-deck transport buttons (optimistic play/pause)
     ├── search.js        # YouTube Data API + Piped (keyless) search + results display
     ├── mixer.js         # crossfade logic (GainNode in DJ mode, volume in IFrame mode)
     └── app.js           # bootstrap, event wiring, mode and global state
@@ -127,10 +138,11 @@ yt-music-web-mixer/
 1. Start the Express server for the full experience, then in **deck A**, search for or paste a track → select it → it loads into player A (sound is enabled automatically).
 2. Do the same for **deck B**.
 3. (Optional) Toggle **🔇 / 🔊** on a deck to mute/unmute individually.
-4. Start playback (**▶️ Play both**).
+4. Start playback (**▶️ Play both**), or use the per-deck play/pause button.
 5. Move the **crossfader** to gradually transition from A to B. In DJ mode this uses Web Audio gain nodes; in IFrame mode it controls player volumes.
 6. Adjust the **master volume** as needed.
-7. Optional: **Sync B → A** to align B to A's position.
+7. **DJ mode only**: tweak the per-deck **EQ** (Low/Mid/High), **DJ filter**, **pitch/tempo** slider, and watch the **BPM** badge (red while calculating, green when locked). Use the **RAZ** (↺) buttons to reset any vertical DJ slider to neutral. Press **SYNC** to match deck B's tempo to deck A.
+8. Optional: **Sync B → A** to align B to A's position.
 
 ---
 
@@ -145,8 +157,10 @@ yt-music-web-mixer/
   - If playback stutters, lower the quality on YouTube's side (not controllable by the app).
 - **YouTube Data API quotas.** 10,000 units/day by default, one search = 100 units. Beyond that, official search is blocked until the next day. The keyless **Piped search mode** does not use this Google quota, but public Piped instances can be unavailable.
 - **Continuous sync is imperfect.** A residual offset of 200–500 ms is normal (seeking + buffering causes a micro-gap). No *frame-accurate* sync is possible on YouTube.
+- **BPM detection is approximate** (±2–3 BPM). Transitions, builds and breaks can fool the detector; the displayed value is only refreshed on a real change (>3%) to avoid flicker, and the badge turns red while calculating, green when locked.
+- **DJ controls are Piped/DSP-only.** EQ, filter, pitch, BPM and visualizers require the local backend (or a CORS-usable Piped fallback). They are hidden in IFrame mode.
 - **Limited persistence.** In private browsing or after clearing the cache, `localStorage` data is lost.
-- **Autoplay.** Players start `muted` on initial page load. Sound is automatically enabled when you select a new track (the selection click counts as a user gesture). You can still mute/unmute per deck at any time.
+- **Autoplay.** Players start `muted` on initial page load. Sound is automatically enabled when you select a new track (the selection click counts as a user gesture). In DJ mode, playback also auto-starts after the audio stream is ready; the first play/pause click on a deck updates the button immediately (optimistic) and is confirmed/corrected by the player state.
 
 ---
 

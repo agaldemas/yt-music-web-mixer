@@ -15,6 +15,8 @@ window.YT_CONFIG = {
     // Mode Piped DJ (phase 6) : EQ 3 bandes + filtre DJ par voie.
     EQ_LOW_A: 'eqLowA', EQ_MID_A: 'eqMidA', EQ_HIGH_A: 'eqHighA', DJ_FILTER_A: 'djFilterA',
     EQ_LOW_B: 'eqLowB', EQ_MID_B: 'eqMidB', EQ_HIGH_B: 'eqHighB', DJ_FILTER_B: 'djFilterB',
+    // Mode Piped DJ (phase 7) : pitch / tempo par voie (en %, -8..+8).
+    PITCH_A: 'pitchA', PITCH_B: 'pitchB',
   },
   // Vidéos de test chargées au démarrage (cue, sans lecture auto)
   TEST_VIDEO_A: 'lfmxnzJAbl8',
@@ -30,6 +32,9 @@ window.YT_CONFIG = {
   CROSSFADE_STEP_INTERVAL_MS: 0,
   // Timeout de chargement de l'API IFrame (ms)
   API_LOAD_TIMEOUT_MS: 10000,
+  // Pitch / tempo (phase 7) : plage du slider en % autour de 0.
+  // ±8% est le standard des sliders pitch DJ physiques (Technics SL-1200).
+  PITCH_RANGE_PERCENT: 8,
   // playerVars minimum vital. `origin` est ajouté au runtime par youtube.js
   // uniquement quand on est en http(s) ; en file:// il déclenche l'erreur 153.
   PLAYER_VARS: {

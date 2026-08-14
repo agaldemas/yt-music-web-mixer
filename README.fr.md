@@ -17,12 +17,20 @@ L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le s
 - **Crossfader A↔B** (0 = full A, 100 = full B, 50 = équilibré) avec courbe *equal-power* pour éviter le creux de niveau au milieu.
 - **Volume master** global (0–100%).
 - **Boutons mute/unmute par voie** (obligatoire pour contourner les politiques d'autoplay des navigateurs).
-- **Contrôles de lecture** : *play both* / *pause both*.
+- **Contrôles de lecture** : *play both* / *pause both*, plus bouton lecture/pause par voie.
 - **Sync B → A** : aligner B sur la position de A (ponctuel ou continu).
 - **Démutage automatique au changement de vidéo** : la sélection d'un nouveau morceau active le son automatiquement (le clic compte comme geste utilisateur pour les politiques d'autoplay).
 - **Affichage séparé des volumes A/B** : la barre de crossfade affiche le pourcentage de volume de chaque voie individuellement.
 - **Curseur de crossfade style mixage** : rectangle 15×30px avec curseur `ew-resize`, comme un fader de console matérielle.
-- **Persistance** via `localStorage` : clé API, dernières requêtes et derniers videoIds sauvegardés. Les requêtes sont restaurées dans les champs de recherche au reload.
+- **Contrôles DJ (mode Piped/DSP uniquement)** :
+  - **EQ 3 bandes** (Low / Mid / High, ±12 dB) par voie avec reset double-clic.
+  - **Filtre DJ** sweep (lowpass ↔ highpass, knob log-scale) par voie, double-clic = bypass.
+  - **Slider pitch / tempo** (±8%) par voie avec `preservesPitch` (changement de tempo sans changement de hauteur), reset double-clic, l'afficheur BPM montre le BPM *effectif* (`bpm × playbackRate`).
+  - **Boutons RAZ** (↺) à côté de chaque slider vertical DJ pour un reset en un clic à la valeur neutre.
+  - **Détection BPM temps réel** par voie (spectral-flux onset + histogramme des intervalles inter-beat, verrouillage après cycles stables). Badge rouge pendant le calcul, vert quand verrouillé ; la valeur affichée ne se met à jour qu'en cas de vrai changement (>3%) pour éviter le clignotement.
+  - **Bouton SYNC** pour matcher le tempo de la voie B sur la voie A (limité à ±8%, répercuté sur le slider de pitch).
+  - **Visualiseurs spectre/waveform** par voie + spectre master dans la barre de mixage (via `AnalyserNode`, 30+ FPS).
+- **Persistance** via `localStorage` : clé API, dernières requêtes, derniers videoIds, EQ, filtre DJ, pitch par voie sauvegardés et restaurés au reload et à la bascule de mode.
 - **Scripts de lancement en un clic** : `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) démarrent le serveur Express local sur le port 5400 et ouvrent l'app dans le navigateur par défaut.
 - **Responsive** : passe en une colonne sur petit écran.
 
@@ -119,8 +127,11 @@ yt-music-web-mixer/
     ├── config.js        # constantes, clé API et configuration lecteur
     ├── youtube.js       # wrapper YouTube IFrame API (fallback IFrame)
     ├── piped-streams.js # backend local prioritaire, fallback flux Piped, cache et refresh
-    ├── audio-player.js  # lecteur audio du mode DJ
-    ├── audio-engine.js  # graphe Web Audio : source, EQ, filtre, gain et analyseur
+    ├── audio-player.js  # lecteur audio du mode DJ (autoplay sûr, play/pause optimiste)
+    ├── audio-engine.js  # graphe Web Audio : source, EQ, filtre, gain, analyseur et pitch
+    ├── visualizer.js    # canvas spectre/waveform via AnalyserNode
+    ├── bpm-detector.js  # détection BPM temps réel (spectral flux + histogramme, verrouillage)
+    ├── deck-controls.js # boutons de transport par voie (play/pause optimiste)
     ├── search.js        # recherche YouTube Data API + Piped (sans clé) + affichage résultats
     ├── mixer.js         # crossfade (GainNode en mode DJ, volume en mode IFrame)
     └── app.js           # bootstrap, câblage événements, modes et état global
@@ -135,10 +146,11 @@ yt-music-web-mixer/
 1. Démarrez le serveur Express pour l'expérience complète, puis dans la **voie A**, recherchez ou collez un morceau → sélectionnez-le → il se charge dans le lecteur A (le son est activé automatiquement).
 2. Faites de même pour la **voie B**.
 3. (Optionnel) Basculez **🔇 / 🔊** sur une voie pour muter/démuter individuellement.
-4. Lancez la lecture (**▶️ Play both**).
+4. Lancez la lecture (**▶️ Play both**), ou utilisez le bouton lecture/pause de chaque voie.
 5. Bougez le **crossfader** pour passer progressivement de A à B. En mode DJ, il utilise les gains Web Audio ; en mode IFrame, il contrôle le volume des lecteurs.
 6. Ajustez le **volume master** si besoin.
-7. Optionnel : **Sync B → A** pour aligner B sur la position de A.
+7. **Mode DJ uniquement** : réglez l'**EQ** (Low/Mid/High), le **filtre DJ**, le slider **pitch/tempo** de chaque voie, et surveillez le badge **BPM** (rouge pendant le calcul, vert quand verrouillé). Utilisez les boutons **RAZ** (↺) pour réinitialiser n'importe quel slider vertical DJ à la valeur neutre. Appuyez sur **SYNC** pour matcher le tempo de la voie B sur la voie A.
+8. Optionnel : **Sync B → A** pour aligner B sur la position de A.
 
 ---
 
@@ -153,8 +165,10 @@ yt-music-web-mixer/
   - Si la lecture saccade, réduisez la qualité côté YouTube (non contrôlable par l'app).
 - **Quotas API YouTube Data.** 10 000 unités/jour par défaut, une recherche = 100 unités. Au-delà, la recherche officielle est bloquée jusqu'au lendemain. Le **mode de recherche Piped** sans clé n'utilise pas ce quota Google, mais les instances Piped publiques peuvent être indisponibles.
 - **Sync continu imparfait.** Un écart résiduel de 200–500ms est normal (le seek + buffering crée une micro-coupure). Pas de sync *frame-accurate* possible sur YouTube.
+- **Détection BPM approximative** (±2–3 BPM). Les transitions, builds et breaks peuvent tromper le détecteur ; la valeur affichée n'est rafraîchie qu'en cas de vrai changement (>3%) pour éviter le clignotement, et le badge passe au rouge pendant le calcul, au vert une fois verrouillé.
+- **Les contrôles DJ sont propres au mode Piped/DSP.** L'EQ, le filtre, le pitch, le BPM et les visualiseurs nécessitent le backend local (ou un fallback Piped utilisable en CORS). Ils sont masqués en mode IFrame.
 - **Persistance limitée.** En navigation privée ou après vidage du cache, les données `localStorage` sont perdues.
-- **Autoplay.** Les lecteurs démarrent en `muted` au chargement de la page. Le son est activé automatiquement lors de la sélection d'un nouveau morceau (le clic de sélection compte comme geste utilisateur). Vous pouvez toujours muter/démuter chaque voie à tout moment.
+- **Autoplay.** Les lecteurs démarrent en `muted` au chargement de la page. Le son est activé automatiquement lors de la sélection d'un nouveau morceau (le clic de sélection compte comme geste utilisateur). En mode DJ, la lecture démarre aussi automatiquement une fois le flux audio prêt ; le premier clic play/pause sur une voie met à jour le bouton immédiatement (optimiste) et est confirmé/corrigé par l'état du lecteur.
 
 ---
 

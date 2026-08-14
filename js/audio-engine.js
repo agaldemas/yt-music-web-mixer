@@ -9,6 +9,9 @@
  *   - applyMasterVolume(v)              : 0..100 → gain master (multiplicatif)
  *   - setEQ(deck, band, gainDb)         : low/mid/high (-12..+12 dB)
  *   - setDjFilter(deck, position)       : -1..+1 (lowpass ↔ bypass ↔ highpass)
+ *   - setPitch(deck, pitchPct)          : -8..+8 % → audioEl.playbackRate (tempo)
+ *   - getPitch(deck)                    : pitch courant en % (0 = vitesse native)
+ *   - resetPitch(deck)                  : remet le tempo à 0 % (playbackRate = 1)
  *   - getAnalyser(deck)                 : AnalyserNode par voie (visualizer)
  *   - getMasterAnalyser()               : AnalyserNode global (master spectrum)
  *
@@ -268,6 +271,36 @@
     node.gain.setTargetAtTime(clamped, ctx.currentTime, RAMP_TC);
   }
 
+  // ===== Pitch / Tempo (phase 7) =====
+  //
+  // Agit sur audioEl.playbackRate pour le beatmatching. Le pitch est donné
+  // en pourcentage (-8..+8 typiquement) : playbackRate = 1 + pitch/100.
+  // La préservation de la hauteur (pas d'effet "chipmunk") est posée sur
+  // l'élément <audio> dès sa création dans audio-player.js (preservesPitch).
+  // Les préfixes moz/webkit sont gérés là-bas — ici on ne fait que la vitesse.
+  function setPitch(deckId, pitchPercent) {
+    const chain = chains[deckId];
+    if (!chain || !chain.audioEl) return;
+    const p = Number(pitchPercent) || 0;
+    // On clamp conservative via PITCH_RANGE_PERCENT si dispo, sinon ±8%.
+    const limit = (window.YT_CONFIG && window.YT_CONFIG.PITCH_RANGE_PERCENT) || 8;
+    const clamped = Math.max(-limit, Math.min(limit, p));
+    const rate = 1 + clamped / 100;
+    // Garde-fou : ne jamais tomber à 0 ou négatif (lecture cassée).
+    chain.audioEl.playbackRate = Math.max(0.0625, rate);
+  }
+
+  function getPitch(deckId) {
+    const chain = chains[deckId];
+    if (!chain || !chain.audioEl) return 0;
+    const rate = chain.audioEl.playbackRate;
+    return isFinite(rate) ? (rate - 1) * 100 : 0;
+  }
+
+  function resetPitch(deckId) {
+    setPitch(deckId, 0);
+  }
+
   // ===== Filtre DJ (sweep LowPass ↔ Bypass ↔ HighPass) =====
 
   // position ∈ [-1..+1]
@@ -337,6 +370,9 @@
     applyMasterVolume: applyMasterVolume,
     setEQ: setEQ,
     setDjFilter: setDjFilter,
+    setPitch: setPitch,
+    getPitch: getPitch,
+    resetPitch: resetPitch,
     getAnalyser: getAnalyser,
     getMasterAnalyser: getMasterAnalyser,
     hasDeck: hasDeck,

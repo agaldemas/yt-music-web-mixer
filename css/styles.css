@@ -971,6 +971,94 @@ body.mode-piped .deck-dj { display: flex; }
   padding-left: 10px;
   border-left: 1px solid #232733;
 }
+/* Pitch / Tempo (phase 7) : même forme que le filtre, séparé par une bordure */
+.dj-pitch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding-left: 10px;
+  border-left: 1px solid #232733;
+}
+.dj-pitch-value {
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  color: #9aa0ac;
+  min-height: 0.9rem;
+}
+/* BPM détecté (phase 9) : badge compact à droite des contrôles DJ */
+.dj-bpm {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  margin-left: 4px;
+  background: #1a1f2b;
+  border: 1px solid #2a3243;
+  border-radius: 6px;
+  min-width: 52px;
+}
+.dj-bpm-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #e5e7eb;
+  line-height: 1;
+}
+.deck-a .dj-bpm-value { color: #93c5fd; }
+.deck-b .dj-bpm-value { color: #f9a8d4; }
+/* BPM détecté (phase 9) : badge compact à droite des contrôles DJ */
+.dj-bpm {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  margin-left: 4px;
+  background: #1a1f2b;
+  border: 1px solid #2a3243;
+  border-radius: 6px;
+  min-width: 52px;
+}
+.dj-bpm-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #e5e7eb;
+  line-height: 1;
+}
+.deck-a .dj-bpm-value { color: #93c5fd; }
+.deck-b .dj-bpm-value { color: #f9a8d4; }
+/* États de détection (phase 9) :
+ * - rouge (calcul en cours) tant que la mesure n'est pas verrouillée,
+ * - bordure + valeur verte une fois 'locked' (valeur fiable).
+ * Le chiffre n'est JAMAIS écrasé pendant le calcul — seule la couleur change. */
+.dj-bpm[data-bpm-state="idle"] .dj-bpm-value,
+.dj-bpm[data-bpm-state="detecting"] .dj-bpm-value {
+  color: #f87171;   /* rouge : le système calcule, la valeur affichée est provisoire */
+}
+.dj-bpm[data-bpm-state="idle"],
+.dj-bpm[data-bpm-state="detecting"] {
+  border-color: #7f1d1d;
+  animation: bpm-pulse 1.2s ease-in-out infinite;
+}
+.dj-bpm[data-bpm-state="locked"] { border-color: #22c55e; }
+.dj-bpm[data-bpm-state="locked"] .dj-bpm-value {
+  color: #4ade80;   /* vert : valeur verrouillée, fiable */
+  opacity: 1;
+}
+.deck-a .dj-bpm[data-bpm-state="locked"] .dj-bpm-value { color: #4ade80; }
+.deck-b .dj-bpm[data-bpm-state="locked"] .dj-bpm-value { color: #4ade80; }
+@keyframes bpm-pulse {
+  0%, 100% { border-color: #7f1d1d; }
+  50% { border-color: #f87171; }
+}
 .dj-band-label {
   font-size: 0.65rem;
   letter-spacing: 0.04em;
@@ -978,10 +1066,34 @@ body.mode-piped .deck-dj { display: flex; }
   font-weight: 600;
 }
 
+/* Bouton RAZ compact à côté de chaque slider vertical DJ (phase 7/9).
+ * Reset à zéro de la bande/filtre/pitch correspondant. */
+.dj-reset {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #3a4254;
+  background: #1a1f2b;
+  color: #9aa0ac;
+  font-size: 9px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+.dj-reset:hover { background: #232a3a; color: #e5e7eb; border-color: #6ee7b7; }
+.dj-reset:active { transform: scale(0.9); }
+
 /* Faders verticaux EQ + knob filtre.
  * `writing-mode: vertical-lr` + `direction: rtl` rend les range verticaux
  * avec le bas = min, le haut = max (sens console DJ) dans Chrome/Firefox. */
-.dj-fader, .dj-knob {
+.dj-fader, .dj-knob, .dj-pitch-fader {
   -webkit-appearance: none;
   appearance: none;
   width: 8px;
@@ -997,19 +1109,22 @@ body.mode-piped .deck-dj { display: flex; }
 
 /* Track centré pour visualiser le 0 dB / bypass au milieu */
 .dj-fader::-webkit-slider-runnable-track,
-.dj-knob::-webkit-slider-runnable-track {
+.dj-knob::-webkit-slider-runnable-track,
+.dj-pitch-fader::-webkit-slider-runnable-track {
   width: 6px;
   background: #2e3444;
   border-radius: 3px;
 }
 .dj-fader::-moz-range-track,
-.dj-knob::-moz-range-track {
+.dj-knob::-moz-range-track,
+.dj-pitch-fader::-moz-range-track {
   width: 6px;
   background: #2e3444;
   border-radius: 3px;
 }
 
-.dj-fader::-webkit-slider-thumb {
+.dj-fader::-webkit-slider-thumb,
+.dj-pitch-fader::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 22px;
@@ -1020,7 +1135,8 @@ body.mode-piped .deck-dj { display: flex; }
   cursor: ns-resize;
   margin-left: -8px;
 }
-.dj-fader::-moz-range-thumb {
+.dj-fader::-moz-range-thumb,
+.dj-pitch-fader::-moz-range-thumb {
   width: 22px;
   height: 12px;
   border-radius: 3px;
@@ -1048,8 +1164,50 @@ body.mode-piped .deck-dj { display: flex; }
   border: 2px solid #0f1115;
   cursor: ns-resize;
 }
-/* Teinte A (bleu) / B (rose) sur les EQ faders pour distinguer les voies */
-.deck-a .dj-fader::-webkit-slider-thumb { background: #93c5fd; border-color: #b9d4fd; }
-.deck-a .dj-fader::-moz-range-thumb { background: #93c5fd; border-color: #b9d4fd; }
-.deck-b .dj-fader::-webkit-slider-thumb { background: #f9a8d4; border-color: #fbcfe8; }
-.deck-b .dj-fader::-moz-range-thumb { background: #f9a8d4; border-color: #fbcfe8; }
+/* Teinte A (bleu) / B (rose) sur les EQ + pitch faders pour distinguer les voies */
+.deck-a .dj-fader::-webkit-slider-thumb,
+.deck-a .dj-pitch-fader::-webkit-slider-thumb { background: #93c5fd; border-color: #b9d4fd; }
+.deck-a .dj-fader::-moz-range-thumb,
+.deck-a .dj-pitch-fader::-moz-range-thumb { background: #93c5fd; border-color: #b9d4fd; }
+.deck-b .dj-fader::-webkit-slider-thumb,
+.deck-b .dj-pitch-fader::-webkit-slider-thumb { background: #f9a8d4; border-color: #fbcfe8; }
+.deck-b .dj-fader::-moz-range-thumb,
+.deck-b .dj-pitch-fader::-moz-range-thumb { background: #f9a8d4; border-color: #fbcfe8; }
+
+/* Statut sync BPM (phase 9) : texte compact sous les boutons de sync */
+.mixer-sync-status {
+  font-size: 0.72rem;
+  color: #9aa0ac;
+  align-self: center;
+  margin-left: 6px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mixer-btn.is-error { color: #fca5a5; border-color: #7f1d1d; }
+.mixer-btn.is-pulsing { animation: btn-pulse 0.5s ease-out; }
+@keyframes btn-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+/* Statut sync BPM (phase 9) : texte compact sous les boutons de sync */
+.mixer-sync-status {
+  font-size: 0.72rem;
+  color: #9aa0ac;
+  align-self: center;
+  margin-left: 6px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mixer-btn.is-error { color: #fca5a5; border-color: #7f1d1d; }
+.mixer-btn.is-pulsing { animation: btn-pulse 0.5s ease-out; }
+@keyframes btn-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}

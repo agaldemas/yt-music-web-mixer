@@ -23,6 +23,7 @@
   const PipedStreams = window.PipedStreams;
   const DeckTransport = window.DeckTransport;
   const Visualizer = window.Visualizer;
+  const BPMDetector = window.BPMDetector;
 
   // État global
   const state = {
@@ -37,6 +38,7 @@
     resolvedMode: 'iframe',              // 'piped' | 'iframe' (mode réellement actif)
     pipedAvailable: false,               // Piped reachable au dernier test
     visualizers: { A: null, B: null, master: null }, // instances Visualizer par voie + master
+    bpmRafId: null,                      // boucle de rafraîchissement des badges BPM
   };
 
   // ===== Helpers UI =====
@@ -108,6 +110,109 @@
 
   function stopVisualizers() {
     if (Visualizer) Visualizer.stopAll();
+  }
+
+  // ===== Détection BPM & affichage (phase 9) =====
+  //
+  // Le BPMDetector échantillonne les AnalyserNode à ~50 ms. On démarre/
+  // arrête la détection en même temps que les visualiseurs (mode Piped
+  // uniquement — en IFrame il n'y a pas d'AnalyserNode).
+  // Une boucle requestAnimationFrame légère (throttlée ~10 Hz) rafraîchit
+  // les badges BPM par voie : on affiche le BPM effectif (tenant compte du
+  // pitch courant) plutôt que le BPM brut, pour que l'utilisateur voie le
+  // tempo réel de sortie.
+  function startBpmDetection() {
+    if (!BPMDetector) return;
+    ['A', 'B'].forEach(function (deck) {
+      BPMDetector.reset(deck);
+      BPMDetector.start(deck);
+    });
+    startBpmDisplayLoop();
+  }
+
+  function stopBpmDetection() {
+    if (!BPMDetector) return;
+    BPMDetector.stopAll();
+    stopBpmDisplayLoop();
+    // Remet les badges à l'état inactif (pas de calcul en cours).
+    ['A', 'B'].forEach(function (deck) {
+      var badge = document.querySelector('.dj-bpm[data-deck="' + deck + '"]');
+      if (badge) badge.setAttribute('data-bpm-state', 'idle');
+      var el = badge ? badge.querySelector('.dj-bpm-value') : null;
+      if (el) el.textContent = '—';
+    });
+  }
+
+  function startBpmDisplayLoop() {
+    if (state.bpmRafId) return;
+    var last = 0;
+    var INTERVAL = 500; // ~2 Hz : la mesure est stable, inutile de rafraîchir plus
+    function loop(t) {
+      state.bpmRafId = requestAnimationFrame(loop);
+      if (t - last < INTERVAL) return;
+      last = t;
+      ['A', 'B'].forEach(function (deck) {
+        var el = document.querySelector('.dj-bpm[data-deck="' + deck + '"] .dj-bpm-value');
+        if (!el) return;
+        if (!BPMDetector) return;
+        var st = BPMDetector.getState(deck);
+        var badge = el.parentElement;
+        if (badge) badge.setAttribute('data-bpm-state', st);
+
+        if (st === 'locked') {
+          // BPM verrouillé : on ne met à jour le chiffre QUE s'il a
+          // vraiment changé (> 3 %). Sinon on garde le chiffre affiché
+          // tel quel — le compteur ne clignote pas.
+          var changed = BPMDetector.getEffectiveBPMIfChanged(deck);
+          if (changed !== null) {
+            el.textContent = changed + ' BPM';
+          }
+        } else {
+          // Phase de calcul (idle/detecting) : on NE touche PAS au texte.
+          // Si un BPM était déjà affiché (verrouillé avant un reset), on le
+          // garde. Sinon c'est '—' au démarrage. La couleur rouge
+          // (data-bpm-state != locked) signale que le système calcule.
+        }
+      });
+    }
+    state.bpmRafId = requestAnimationFrame(loop);
+  }
+
+  function stopBpmDisplayLoop() {
+    if (state.bpmRafId) {
+      cancelAnimationFrame(state.bpmRafId);
+      state.bpmRafId = null;
+    }
+  }
+
+  // Bouton SYNC BPM (beatmatch B→A) dans la barre de mixage.
+  // Ajuste le playbackRate de B pour matcher le BPM de A (±8 %). Affiche
+  // un retour statut dans la zone sync-ba (réutilise le statut du sync
+  // positionnel, sans ajouter de nouveau bloc DOM).
+  function wireSyncBpmButton() {
+    var btn = document.getElementById('sync-bpm');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (!BPMDetector) return;
+      var res = BPMDetector.syncBtoA();
+      // Reflète le pitch résultant sur le slider PITCH de B (si sync ok).
+      if (res.ok && AudioEngine && typeof AudioEngine.getPitch === 'function') {
+        var pitchPct = AudioEngine.getPitch('B');
+        applyPitch('B', pitchPct);
+        persistPitch('B', pitchPct);
+      }
+      // Retour visuel : on clignote le bouton brièvement + message.
+      btn.classList.toggle('is-error', !res.ok);
+      btn.classList.add('is-pulsing');
+      setTimeout(function () { btn.classList.remove('is-pulsing'); }, 500);
+      var statusEl = document.getElementById('sync-status');
+      if (statusEl) {
+        statusEl.textContent = res.message || (res.ok ? 'Sync BPM OK' : 'Sync BPM impossible');
+        statusEl.hidden = false;
+        clearTimeout(statusEl._t);
+        statusEl._t = setTimeout(function () { statusEl.hidden = true; }, 2500);
+      }
+    });
   }
   //
   // Calcule les infos à afficher (titre, uploader, miniature, badge de mode)
@@ -444,6 +549,8 @@
       },
       onStateChange: function (evt) {
         // Notifie l'UI de transport (icône play/pause + spinner de buffering).
+        // On force toujours la mise à jour (même si l'état n'a pas changé)
+        // pour resynchroniser l'icône après un échec de play() optimiste.
         if (DeckTransport) DeckTransport.onStateChange(deck, evt && evt.data);
       },
       onError: function (err) {
@@ -523,7 +630,8 @@
     syncSettingsModeSelect();
     Mixer.applyVolumes();
     // Visualiseurs : démarrés uniquement en mode Piped (besoin d'AnalyserNode).
-    if (target === 'piped') startVisualizers(); else stopVisualizers();
+    if (target === 'piped') { startVisualizers(); startBpmDetection(); }
+    else { stopVisualizers(); stopBpmDetection(); }
     // Le badge de mode (Piped/IFrame) change immédiatement à la bascule : on
     // rafraîchit le now-playing tout de suite (les métadonnées détaillées
     // arriveront au onReady du nouveau lecteur).
@@ -566,6 +674,13 @@
       player._pendingPlayRequested = true;
     }
     player.loadVideoById(videoId);
+
+    // Réinitialise la détection BPM de la voie : le morceau change, les
+    // beats accumulés ne sont plus pertinents. On repart en 'detecting'.
+    if (BPMDetector && state.resolvedMode === 'piped') {
+      BPMDetector.reset(deck);
+      BPMDetector.start(deck);
+    }
 
     // Activer le son systématiquement au changement de vidéo
     setDeckMuted(deck, false);
@@ -613,6 +728,10 @@
     return CFG.STORAGE_KEYS['DJ_FILTER_' + deck];
   }
 
+  function pitchStorageKey(deck) {
+    return CFG.STORAGE_KEYS['PITCH_' + deck];
+  }
+
   // Lit la valeur persistée d'une bande d'EQ (number, défaut 0).
   function loadEqValue(deck, band) {
     try {
@@ -626,6 +745,22 @@
     try {
       var v = localStorage.getItem(djFilterStorageKey(deck));
       if (v !== null) return (parseFloat(v) || 0) / 100; // stocké en -100..+100
+    } catch (e) { /* ignore */ }
+    return 0;
+  }
+
+  function loadPitchValue(deck) {
+    try {
+      var v = localStorage.getItem(pitchStorageKey(deck));
+      if (v !== null) return parseFloat(v) || 0;
+    } catch (e) { /* ignore */ }
+    return 0;
+  }
+
+  function loadPitchValue(deck) {
+    try {
+      var v = localStorage.getItem(pitchStorageKey(deck));
+      if (v !== null) return parseFloat(v) || 0;
     } catch (e) { /* ignore */ }
     return 0;
   }
@@ -648,11 +783,29 @@
     }
   }
 
+  // Pousse la valeur de pitch vers l'AudioEngine + met à jour fader + affichage.
+  // L'ajustement de tempo ne fonctionne qu'en mode Piped (playbackRate <audio>).
+  // En mode IFrame, l'<iframe> YouTube n'expose pas playbackRate → no-op.
+  function applyPitch(deck, value) {
+    var root = document.querySelector('.deck-dj[data-deck="' + deck + '"]');
+    var fader = root ? root.querySelector('.dj-pitch-fader') : null;
+    var valEl = root ? root.querySelector('.dj-pitch-value') : null;
+    if (fader) fader.value = value;
+    if (valEl) {
+      var sign = value > 0 ? '+' : '';
+      valEl.textContent = sign + value.toFixed(1) + '%';
+    }
+    if (AudioEngine && AudioEngine.hasDeck(deck)) {
+      try { AudioEngine.setPitch(deck, value); } catch (e) { /* deck pas prêt */ }
+    }
+  }
+
   // Restore toutes les valeurs DJ persistées d'un deck vers l'AudioEngine.
   // Appelé après création de la chaîne (onReady) et après bascule de mode.
   function restoreDeckDj(deck) {
     EQ_BANDS.forEach(function (band) { applyEq(deck, band, loadEqValue(deck, band)); });
     applyDjFilter(deck, loadDjFilterValue(deck));
+    applyPitch(deck, loadPitchValue(deck));
   }
 
   function persistEq(deck, band, value) {
@@ -661,6 +814,10 @@
 
   function persistDjFilter(deck, position) {
     try { localStorage.setItem(djFilterStorageKey(deck), String(Math.round(position * 100))); } catch (e) { /* ignore */ }
+  }
+
+  function persistPitch(deck, value) {
+    try { localStorage.setItem(pitchStorageKey(deck), String(value)); } catch (e) { /* ignore */ }
   }
 
   function wireDeckDj(deck) {
@@ -702,6 +859,45 @@
         persistDjFilter(deck, 0);
       });
     }
+
+    // --- Fader pitch / tempo (phase 7) ---
+    // Slider vertical -8..+8 %, centré à 0. Double-clic = reset.
+    // ⚠️ Ne fonctionne qu'en mode Piped (playbackRate <audio>). En IFrame,
+    // le fader reste visible dans .deck-dj (masqué en IFrame via CSS).
+    var pitchFader = root.querySelector('.dj-pitch-fader');
+    if (pitchFader) {
+      pitchFader.value = loadPitchValue(deck);
+      pitchFader.addEventListener('input', function () {
+        var v = parseFloat(pitchFader.value) || 0;
+        applyPitch(deck, v);
+        persistPitch(deck, v);
+      });
+      pitchFader.addEventListener('dblclick', function () {
+        pitchFader.value = 0;
+        applyPitch(deck, 0);
+        persistPitch(deck, 0);
+      });
+    }
+
+    // --- Boutons RAZ (reset) par slider vertical (phase 7/9) ---
+    // data-reset="eq-low" | "eq-mid" | "eq-high" | "filter" | "pitch"
+    var resetBtns = root.querySelectorAll('.dj-reset[data-reset]');
+    Array.prototype.forEach.call(resetBtns, function (btn) {
+      btn.addEventListener('click', function () {
+        var target = btn.getAttribute('data-reset');
+        if (target === 'eq-low' || target === 'eq-mid' || target === 'eq-high') {
+          var band = target.replace('eq-', '');
+          applyEq(deck, band, 0);
+          persistEq(deck, band, 0);
+        } else if (target === 'filter') {
+          applyDjFilter(deck, 0);
+          persistDjFilter(deck, 0);
+        } else if (target === 'pitch') {
+          applyPitch(deck, 0);
+          persistPitch(deck, 0);
+        }
+      });
+    });
   }
 
   // ===== UI de transport par voie (deck-controls.js) =====
@@ -952,6 +1148,8 @@
     wireModeButton();
     wireSettingsModeSelect();
     wireFallbackAlert();
+    wireSyncBpmButton();
+    wireSyncBpmButton();
 
     // L'API IFrame est chargée en arrière-plan (utile si l'utilisateur
     // bascule en IFrame, ou si le mode résolu est IFrame).
@@ -1007,7 +1205,7 @@
     if (DeckTransport) DeckTransport.start();
 
     // Visualiseurs : démarrés en mode Piped (les canvas sont masqués en IFrame).
-    if (state.resolvedMode === 'piped') startVisualizers();
+    if (state.resolvedMode === 'piped') { startVisualizers(); startBpmDetection(); }
 
     // Recalcule les backing stores des canvas au redimensionnement de fenêtre.
     window.addEventListener('resize', function () {
@@ -1017,6 +1215,12 @@
 
   // Exposer pour debug console
   window.state = state;
+  // Exposé pour que bpm-detector.js puisse reporter le pitch résultant d'un
+  // sync BPM vers le slider de l'UI (applyPitch est défini dans la closure).
+  window.YTMixerApp = { applyPitch: applyPitch };
+  // Exposé pour que bpm-detector.js puisse reporter le pitch résultant d'un
+  // sync BPM vers le slider de l'UI (applyPitch est défini dans la closure).
+  window.YTMixerApp = { applyPitch: applyPitch };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

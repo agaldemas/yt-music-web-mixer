@@ -181,6 +181,16 @@ Remplacer (ou compléter) le lecteur IFrame YouTube par un lecteur `<audio>` bra
 - [x] **`crossOrigin="anonymous"`** obligatoire sur l'élément `<audio>` — sinon le `MediaElementAudioSourceNode` reçoit du silence (audio tainted)
 - [x] Tests : `tests/test_audio_player.js` (71 assertions : API publique, mappage STATE, loadVideoById, cueVideoById, playVideo/pauseVideo/seekTo, mute/unMute, setVolume no-op, expiration avec refreshStream, erreur retryable/non-retryable, épuisement après 2 tentatives, propagation onError)
 
+### 3.1 Lecture automatique & boutons lecture/pause robustes (mode DJ)
+
+La lecture automatique en mode DJ ne démarrait pas après la sélection d'un morceau dans les résultats de recherche (alors que ça marche en IFrame), et les boutons lecture/pause des decks ne se mettaient pas à jour dans certains cas.
+
+- [x] **Fix race condition autoplay dans `loadVideoById`** : `state.pendingPlay` était lu **dans le `.then()`** après le fetch réseau, après que `_pendingPlayRequested` avait pu être réinitialisé. Maintenant, `pendingPlay` est **capturé avant le fetch** dès l'entrée dans `loadVideoById`, et `_pendingPlayRequested` est initialisé à `false` sur le wrapper du lecteur.
+- [x] **Retry `play()` après 150 ms** : le handler `canplay` retente `audio.play()` une fois après 150 ms si la première tentative échoue (le geste de sélection de recherche compte comme interaction, mais l'`AudioContext` peut ne pas encore être resumé).
+- [x] **`playVideo()` retourne la promesse** de `play()` pour que le caller puisse réagir à un échec et re-signaler `PAUSED` sur rejet.
+- [x] **`reportState()` ne filtre plus les doublons** : avant, un même état publié deux fois était ignoré → l'icône restait désynchronisée après un échec de `play()` optimiste. Maintenant on publie toujours, et `onStateChange` force la mise à jour de l'icône.
+- [x] **Boutons lecture/pause optimistes** (`js/deck-controls.js`) : le click handler bascule l'icône immédiatement (`BUFFERING` → spinner pendant que `play()` se résout). Si `play()` échoue, `playVideo()` re-signale `PAUSED` → l'icône revient à `▶`.
+
 ---
 
 ## 4. Abstraction lecteur (dual mode Piped / IFrame) [x]
@@ -298,62 +308,91 @@ Remplacer le crossfade `setVolume` par un crossfade `GainNode` avec ramping flui
 
 ---
 
-## 7. Pitch / Tempo control [ ]
+## 7. Pitch / Tempo control [x]
 
 Permettre d'ajuster la vitesse de lecture pour le beatmatching.
 
-- [ ] **UI** : 1 slider vertical par voie, range -8% à +8%, centré à 0%. Affichage du BPM ajusté.
-- [ ] **Logique** : `audio.playbackRate = 1 + (pitch / 100)` (ex: pitch = +4% → `playbackRate = 1.04`)
-- [ ] **Préservation du pitch** : `audio.preservesPitch = true` (ou `audio.mozPreservesPitch = true`, `audio.webkitPreservesPitch = true`) → change la vitesse sans changer la hauteur (pas d'effet "chipmunk"). Requis pour le beatmatch.
-- [ ] Affichage BPM : si le BPM original est détecté (section 9), afficher `bpm * playbackRate` (BPM effectif)
-- [ ] **Reset** : double-clic → `playbackRate = 1.0` (reset pitch à 0%)
-- [ ] Persistance : `pitchA`, `pitchB` en `localStorage`
-- [ ] ⚠️ Le pitch ne fonctionne qu'en mode Piped (IFrame YouTube n'expose pas `playbackRate`)
+- [x] **UI** : 1 slider vertical par voie, range -8% à +8%, centré à 0%. Affichage du pitch courant (%).
+- [x] **Logique** : `audio.playbackRate = 1 + (pitch / 100)` (ex: pitch = +4% → `playbackRate = 1.04`)
+- [x] **Préservation du pitch** : `audio.preservesPitch = true` (ou `audio.mozPreservesPitch = true`, `audio.webkitPreservesPitch = true`) → change la vitesse sans changer la hauteur (pas d'effet "chipmunk"). Requis pour le beatmatch. (posé dès `audio-player.js` createAudioElement)
+- [x] Affichage BPM : si le BPM original est détecté (section 9), afficher `bpm * playbackRate` (BPM effectif)
+- [x] **Reset** : double-clic → `playbackRate = 1.0` (reset pitch à 0%)
+- [x] **Boutons RAZ** : petit bouton circulaire (↺) à côté de chaque slider vertical (EQ, filtre DJ, pitch) pour reset à 0 en un clic (`data-reset` attribute câblé dans `app.js` `wireDeckDj`)
+- [x] Persistance : `pitchA`, `pitchB` en `localStorage` + restauration au chargement via `restoreDeckDj` + ré-application après bascule de mode
+- [x] ⚠️ Le pitch ne fonctionne qu'en mode Piped (IFrame YouTube n'expose pas `playbackRate`)
 
 ---
 
-## 8. Analyse spectrale & visualisation — `js/visualizer.js` [ ]
+## 8. Analyse spectrale & visualisation — `js/visualizer.js` [x]
 
 Visualiser le signal audio en temps réel via les `AnalyserNode` du moteur audio.
 
-- [ ] **`js/visualizer.js`** : nouveau module de rendering canvas
-- [ ] **`createVisualizer(canvas, analyser, options)`** : boucle `requestAnimationFrame` qui :
+- [x] **`js/visualizer.js`** : nouveau module de rendering canvas
+- [x] **`createVisualizer(canvas, analyser, options)`** : boucle `requestAnimationFrame` qui :
   - Récupère `analyser.getByteFrequencyData(freqData)` → spectre de fréquences
   - Récupère `analyser.getByteTimeDomainData(waveData)` → waveform (forme d'onde)
   - Dessine sur le canvas
-- [ ] **Mode spectre** (bars) : dessiner des barres verticales colorées (dégradé bleu→rose pour A, inverse pour B). Hauteur proportionnelle à l'amplitude par bande de fréquence.
-- [ ] **Mode waveform** (ligne) : dessiner la forme d'onde. Utile pour voir les beats (pics = transitoires/basses).
-- [ ] **Canvas par voie** : un canvas dans chaque `.deck` (remplaçant ou complétant la zone `.deck-player`). Taille responsive.
-- [ ] **Canvas master** : un petit canvas dans la barre de mixage affichant le spectre global (post-masterGain).
-- [ ] **Performance** : `requestAnimationFrame` (pas `setInterval`), `fftSize=2048` (bon compromis résolution/perf), limiter le FPS à 30 si besoin.
-- [ ] Exposer : `window.Visualizer = { createVisualizer, start, stop }`
+- [x] **Mode spectre** (bars) : dessiner des barres verticales colorées (dégradé bleu→rose pour A, inverse pour B). Hauteur proportionnelle à l'amplitude par bande de fréquence.
+- [x] **Mode waveform** (ligne) : dessiner la forme d'onde. Utile pour voir les beats (pics = transitoires/basses).
+- [x] **Canvas par voie** : un canvas dans chaque `.deck` (remplaçant ou complétant la zone `.deck-player`). Taille responsive.
+- [x] **Canvas master** : un petit canvas dans la barre de mixage affichant le spectre global (post-masterGain).
+- [x] **Performance** : `requestAnimationFrame` (pas `setInterval`), `fftSize=2048` (bon compromis résolution/perf), limiter le FPS à 30 si besoin.
+- [x] Exposer : `window.Visualizer = { createVisualizer, start, stop }`
 
 ---
 
-## 9. Détection BPM & beatmatch [ ]
+## 9. Détection BPM & beatmatch [x]
 
 Estimer le tempo de chaque morceau en temps réel via l'`AnalyserNode`.
 
-- [ ] **`js/bpm-detector.js`** (ou intégré à `audio-engine.js`) : algorithme de détection de beat en temps réel :
-  1. Récupérer `analyser.getByteFrequencyData(freqData)` à intervalle régulier (~50ms)
+- [x] **`js/bpm-detector.js`** : algorithme de détection de beat en temps réel :
+  1. Récupérer `analyser.getByteFrequencyData(freqData)` à intervalle régulier (~40ms)
   2. Isoler la bande bass (bins correspondant à 20-150Hz — kick drum)
   3. Calculer l'énergie de cette bande (somme des amplitudes)
   4. Détecter les pics d'énergie (beat = pic dépassant un seuil adaptatif)
-  5. Stocker les timestamps des beats dans une fenêtre glissante (~10s)
+  5. Stocker les timestamps des beats dans une fenêtre glissante (~8s)
   6. Calculer les intervalles inter-beat → médiane = intervalle moyen
   7. `bpm = 60000 / intervalleMoyen` (si intervalle en ms)
   8. Filtrer dans la plage plausible 60-200 BPM
-- [ ] **Affichage BPM** : un badge/afficheur par voie montrant le BPM détecté (ex: `128 BPM`)
-- [ ] **Slider de pitch** (section 7) : afficher le BPM effectif = `bpm * playbackRate`
-- [ ] **Bouton SYNC** (nouveau, distinct du sync de position) : ajuster automatiquement le `playbackRate` de B pour matcher le BPM de A :
+- [x] **Affichage BPM** : un badge/afficheur par voie montrant le BPM détecté (ex: `128 BPM`)
+- [x] **Slider de pitch** (section 7) : afficher le BPM effectif = `bpm * playbackRate`
+- [x] **Bouton SYNC** (nouveau, distinct du sync de position) : ajuster automatiquement le `playbackRate` de B pour matcher le BPM de A :
   - `ratio = bpmA / bpmB`
   - `audioB.playbackRate = clamp(ratio, 0.92, 1.08)` (limiter à ±8%)
   - Si le ratio sort de la plage → afficher "BPM trop éloigné, sync impossible"
-- [ ] **Limitations documentées** :
+- [x] **Limitations documentées** :
   - La détection est approximative (±2-3 BPM). Les transitions, builds et breaks peuvent fausser la détection.
   - Le beatmatch n'est pas parfait — un écart résiduel de quelques BPM reste possible.
   - Ne pas promettre un sync frame-accurate.
-- [ ] Exposer : `window.BPMDetector = { start(deck), getBPM(deck), syncBtoA() }`
+- [x] Exposer : `window.BPMDetector = { start(deck), getBPM(deck), syncBtoA() }`
+
+### 9.1 Stabilisation de l'affichage BPM & UX du calcul
+
+La première version du détecteur BPM sautait constamment (chiffre qui change à chaque mesure), rendant la lecture impossible pendant le beatmatch.
+
+- [x] **Algorithme refondu (histogramme d'intervalles)** : remplacement de la médiane brute par un histogramme à 40 bins des intervalles inter-beat. Le pic de l'histogramme est robuste au jitter et aux beats manqués. Verrouillage (`lockedBPM`) après 3 cycles stables consécutifs avec un pic dominant (≥55 % des intervalles dans un bin ±tolérance).
+- [x] **Pas de valeur provisoire** : `getBPM()` ne retourne plus une EMA instable, mais `lockedBPM` (0 tant que non acquisé). Tant que le système calcule, l'UI n'affiche pas de chiffre instable.
+- [x] **États de calcul explicites** : `getState(deck)` retourne `'idle' | 'detecting' | 'locked'`. Le badge porte un attribut `data-bpm-state` qui pilote la couleur :
+  - `idle` / `detecting` → **rouge** (`#f87171`) + bordure rouge qui pulse (`@keyframes bpm-pulse`)
+  - `locked` → **vert** (`#4ade80`) + bordure verte
+- [x] **Mise à jour UI conditionnelle** : `getEffectiveBPMIfChanged(deck)` ne renvoie une valeur que si elle diffère de plus de **3 %** de la dernière valeur affichée. Le compteur ne clignote plus entre 127/128/129.
+- [x] **Fenêtre de détection glissante** de ~8 s (`WINDOW_MS=8000`) avec polling à 40 ms. On attend d'avoir assez de beats avant de proposer une valeur.
+- [x] **Boucle d'affichage découplée** : `startBpmDisplayLoop()` (`app.js`) tourne à 500 ms, lit `getEffectiveBPMIfChanged()` et ne touche au texte du badge que si une vraie changement (>3 %) est détecté. La couleur (`data-bpm-state`) est rafraîchie indépendamment, sans toucher au chiffre.
+- [x] **Reset à changement de morceau** : `onSearchSelect` (`app.js`) appelle `BPMDetector.reset(deck)` pour vider l'historique des beats et repasser en `idle` sur la nouvelle piste.
+
+### 9.1 Stabilisation de l'affichage BPM & UX du calcul
+
+La première version du détecteur BPM sautait constamment (chiffre qui change à chaque mesure), rendant la lecture impossible pendant le beatmatch.
+
+- [x] **Algorithme refondu (histogramme d'intervalles)** : remplacement de la médiane brute par un histogramme à 40 bins des intervalles inter-beat. Le pic de l'histogramme est robuste au jitter et aux beats manqués. Verrouillage (`lockedBPM`) après 3 cycles stables consécutifs avec un pic dominant (≥55 % des intervalles dans un bin ±tolérance).
+- [x] **Pas de valeur provisoire** : `getBPM()` ne retourne plus une EMA instable, mais `lockedBPM` (0 tant que non acquisé). Tant que le système calcule, l'UI n'affiche pas de chiffre instable.
+- [x] **États de calcul explicites** : `getState(deck)` retourne `'idle' | 'detecting' | 'locked'`. Le badge porte un attribut `data-bpm-state` qui pilote la couleur :
+  - `idle` / `detecting` → **rouge** (`#f87171`) + bordure rouge qui pulse (`@keyframes bpm-pulse`)
+  - `locked` → **vert** (`#4ade80`) + bordure verte
+- [x] **Mise à jour UI conditionnelle** : `getEffectiveBPMIfChanged(deck)` ne renvoie une valeur que si elle diffère de plus de **3 %** de la dernière valeur affichée. Le compteur ne clignote plus entre 127/128/129.
+- [x] **Fenêtre de détection glissante** de ~8 s (`WINDOW_MS=8000`) avec polling à 40 ms. On attend d'avoir assez de beats avant de proposer une valeur.
+- [x] **Boucle d'affichage découplée** : `startBpmDisplayLoop()` (`app.js`) tourne à 500 ms, lit `getEffectiveBPMIfChanged()` et ne touche au texte du badge que si une vraie changement (>3 %) est détecté. La couleur (`data-bpm-state`) est rafraîchie indépendamment, sans toucher au chiffre.
+- [x] **Reset à changement de morceau** : `onSearchSelect` (`app.js`) appelle `BPMDetector.reset(deck)` pour vider l'historique des beats et repasser en `idle` sur la nouvelle piste.
 
 ---
 
