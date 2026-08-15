@@ -35,10 +35,13 @@
   // angulaire (rad/ms) pour obtenir un rate de scratch perceptif. MAX_RATE
   // borne le rate (avant/arrière) — cohérent avec AudioEngine.SCRATCH_MAX_RATE.
   // SMOOTH : facteur de lissage (low-pass) du rate pour éviter le jitter
-  // des Pointer Events (~60-120 Hz vs audio 44.1 kHz).
+  // des Pointer Events (~60-120 Hz vs audio 44.1 kHz). Bas = réactif.
+  // GEAR : rapport rotation platter / angle du curseur pendant un scratch.
+  // 1.0 = la platine suit 1:1 le doigt (vraie sensation vinyle attrapé).
   var SENS = 0.020;
   var MAX_RATE = 3;
-  var SMOOTH = 0.35;          // 0 = pas de lissage, 1 = figé
+  var SMOOTH = 0.15;          // 0 = pas de lissage, 1 = figé
+  var GEAR = 1.0;             // rotation visuelle par radian de mouvement curseur
 
   // (Ancien DECODE_TIMEOUT_MS supprimé : le Promise.race/timeout cassait
   // l'état — rejetait l'appelant tout en laissant le decode tourner en
@@ -125,9 +128,10 @@
       var AE = window.AudioEngine;
       if (!AE) return;
       if (AE.isScratchEngaged(deck)) {
-        // En scratch : la rotation suit le rate lissé (avant/arrière).
-        var rate = p.smoothRate;
-        p.rotation += rate * dt * 2.5; // facteur visuel (plus lent que l'audio)
+        // En scratch : la rotation est pilotée directement par updateRate()
+        // (platine collée au doigt, 1:1 via GEAR). On ne fait RIEN ici — sinon
+        // on superposerait une rotation "libre" qui brouillerait la sensation.
+        // Le marker est déjà mis à jour dans updateRate().
       } else {
         // En streaming : rotation liée à la position de lecture (1 tour = morceau).
         var audio = AE.getDeckAudioElement(deck);
@@ -420,6 +424,11 @@ function disengage(deck) {
     var dAngle = normalizeDelta(angle - p.lastAngle);
     p.lastAngle = angle;
     p.lastTime = t;
+
+    // La platine est "collée" au doigt (vraie sensation vinyle attrapé) :
+    // sa rotation visuelle suit 1:1 (× GEAR) le déplacement angulaire du curseur.
+    p.rotation += dAngle * GEAR;
+    if (p.marker) p.marker.style.transform = 'rotate(' + p.rotation + 'rad)';
 
     // Vitesse angulaire (rad/ms).
     var vel = dAngle / dt;

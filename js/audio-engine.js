@@ -623,13 +623,14 @@
   }
 
   // Ajuste le playbackRate du scratch (vitesse + direction). rate=0 fige,
-  // rate<0 = lecture arrière (vrai scratch), rate>0 = avant. Lissage via
-  // setTargetAtTime pour éviter les craquements d'inversion de sens.
+  // rate<0 = lecture arrière (vrai scratch), rate>0 = avant. Lissage court via
+  // setTargetAtTime (3ms) : évite les craquements d'inversion de sens tout en
+  // restant très réactif au doigt (sensation vinyle collé).
   function setScratchRate(deckId, rate) {
     const chain = chains[deckId];
     if (!ctx || !chain || !chain.scratchNode) return;
     const r = Math.max(-SCRATCH_MAX_RATE, Math.min(SCRATCH_MAX_RATE, Number(rate) || 0));
-    chain.scratchNode.playbackRate.setTargetAtTime(r, ctx.currentTime, 0.008);
+    chain.scratchNode.playbackRate.setTargetAtTime(r, ctx.currentTime, 0.003);
   }
 
   // Recrée le nœud scratch à un offset précis (seek scratch). Comme
