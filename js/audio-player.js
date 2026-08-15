@@ -150,6 +150,12 @@
       wasPlayingBeforeError: false,
       // Compteur de refresh (anti-boucle en cas d'URL toujours invalide)
       refreshCount: 0,
+      // blobUrl: URL same-origin (blob:) actuellement branchée sur audio.src.
+      // Tee du flux : un seul fetch → Blob pour la lecture + décodage scratch.
+      blobUrl: null,
+      // Dédup : si l'utilisateur relance loadVideoById pendant qu'un download
+      // est en cours, on attend la même promesse au lieu de relancer un fetch.
+      loadPromise: null,
     };
 
     // Crée la chaîne Web Audio pour cette voie. ⚠️ À faire ICI (au moment
@@ -186,6 +192,73 @@
       try { onStateChange({ data: newState }); } catch (e) { /* ignore */ }
     }
 
+    // ===== Download complet en une fois → Blob (lecture) + buffer scratch =====
+    //
+    // KISS : fetch().arrayBuffer() télécharge TOUT le flux en une requête HTTP,
+    // en un seul ArrayBuffer. On le partage :
+    //   - new Blob([buf], {type: mime}) → audio.src (lecture <audio>, same-origin)
+    //   - buf.slice(0) → AudioEngine.loadDeckBufferFromBlob (scratch, decodeAudioData)
+    // Pas de streaming progressif, pas de lecture en morceaux : download complet,
+    // puis lecture. Le scratch récupère le buffer déjà téléchargé (pas de 2e requête).
+
+    // Révoque le précédent blob URL et annule la promesse de download en cours.
+    function resetSource() {
+      if (state.blobUrl) {
+        try { URL.revokeObjectURL(state.blobUrl); } catch (e) { /* ignore */ }
+        state.blobUrl = null;
+      }
+      state.loadPromise = null;
+    }
+
+    // Télécharge l'URL en un seul ArrayBuffer (download complet, pas de morceaux).
+    // Retourne une Promise<ArrayBuffer> (dédup via state.loadPromise).
+    function loadDeckArrayBuffer(url) {
+      if (state.loadPromise) return state.loadPromise;
+      var _t0 = performance.now();
+      console.log('%c[audio:' + deckId + '] ▼ download START — '
+        + (url.length > 80 ? url.slice(0, 80) + '…' : url), 'color:#08e');
+      var full = fetch(url, { headers: { Range: 'bytes=0-' } }).then(function (res) {
+        // 200 (full) ou 206 (partial/range) : les deux sont valides. Le Range
+        // est crucial : le CDN YouTube throttle les downloads complets (200)
+        // à ~30 Ko/s, mais laisse passer les Range (206) à pleine vitesse.
+        if (!res.ok && res.status !== 206) throw new Error('download HTTP ' + res.status);
+        var mime = res.headers.get('content-type') || 'audio/mpeg';
+        // arrayBuffer() : download complet en une fois, pas de streaming.
+        return res.arrayBuffer().then(function (buf) {
+          var dlMs = (performance.now() - _t0).toFixed(0);
+          var mo = (buf.byteLength / 1024 / 1024).toFixed(2);
+          console.log('%c[audio:' + deckId + '] ▼ download ← ' + mo + ' Mo en ' + dlMs + 'ms  (mime=' + mime + ')', 'color:#08e;font-weight:bold');
+          return { buf: buf, mime: mime };
+        });
+      }).then(function (r) {
+        // 1) Blob same-origin avec le bon type MIME → audio.src décodable.
+        var blob = new Blob([r.buf], { type: r.mime });
+        state.blobUrl = URL.createObjectURL(blob);
+        audio.src = state.blobUrl;
+        audio.load();
+        // 2) Copie pour le décodage scratch (decodeAudioData peut neutered l'entrée).
+        var AE = window.AudioEngine;
+        try {
+          if (AE && typeof AE.loadDeckBufferFromBlob === 'function') {
+            AE.loadDeckBufferFromBlob(deckId, r.buf.slice(0));
+          }
+        } catch (e) {
+          console.warn('[audio:' + deckId + '] loadDeckBufferFromBlob échec', e);
+        }
+        return r.buf;
+      });
+      full.catch(function (err) {
+        // Fallback : streaming direct (le scratch repassera par l'ancien XHR).
+        console.warn('[audio:' + deckId + '] download échec → fallback streaming direct:', err.message);
+        resetSource();
+        audio.src = url;
+        audio.load();
+      });
+      // Dédup : on expose la promesse complète (download + branchement audio).
+      state.loadPromise = full;
+      return full;
+    }
+
     // ===== Gestion de l'expiration =====
     //
     // Quand audio.error est set (URL expirée, 403, réseau coupé, format non
@@ -217,8 +290,7 @@
         if (!newUrl) {
           throw new Error('Le mode DJ n\'a pas renvoyé d\'URL audio pour ' + id);
         }
-        audio.src = newUrl;
-        audio.load();
+        resetSource(); loadDeckArrayBuffer(newUrl);
         // Restaurer la position une fois le nouveau buffer prêt.
         audio.addEventListener('loadedmetadata', function once() {
           audio.removeEventListener('loadedmetadata', once);
@@ -359,8 +431,7 @@
             try { onError(err); } catch (e) { /* ignore */ }
             return;
           }
-          audio.src = newUrl;
-          audio.load();
+          resetSource(); loadDeckArrayBuffer(newUrl);
           // ⚠️ La spécification HTML media réinitialise `playbackRate` à 1
           // (et `defaultPlaybackRate`) quand on change `src` / on appelle
           // `load()`. Le pitch (réglé par l'UI PITCH via AudioEngine.setPitch)
@@ -412,8 +483,7 @@
             } catch (e) { /* ignore */ }
             return;
           }
-          audio.src = newUrl;
-          audio.load();
+          resetSource(); loadDeckArrayBuffer(newUrl);
         }).catch(function (err) {
           const classified = PipedStreams.classifyError(err);
           try {
@@ -504,6 +574,53 @@
       // Initialisé à UNSTARTED (-1). Le mapping est cohérent avec
       // YTWrapper.STATE — un seul mapping pour toute l'app.
       getPlayerState: function () { return lastReportedState; },
+
+      // loadLocalFile(file) : charge un fichier audio local (MP3, WAV, M4A, …).
+      // Pas de réseau : on lit directement le File → ArrayBuffer → Blob +
+      // décodage scratch, comme pour un flux YouTube. Même pipeline unifié.
+      // Accepte un objet File (input[type=file] ou showOpenFilePicker) ou un
+      // Blob déjà en mémoire. La piste est marquée currentVideoId='local' pour
+      // que le scratch sache qu'il n'y a pas de re-fetch Piped à faire.
+      loadLocalFile: function (file) {
+        if (!file) return Promise.reject(new Error('loadLocalFile: fichier manquant'));
+        // Si on reçoit une URL blob (string), on la branche directement.
+        if (typeof file === 'string') {
+          resetSource();
+          audio.src = file;
+          audio.load();
+          state.currentVideoId = 'local';
+          return Promise.resolve();
+        }
+        // File / Blob : lecture en mémoire (pas de fetch réseau).
+        var mime = file.type || 'audio/mpeg';
+        resetSource();
+        state.currentVideoId = 'local';
+        var _t0 = performance.now();
+        var mo = (file.size / 1024 / 1024).toFixed(2);
+        console.log('%c[audio:' + deckId + '] ▼ loadLocalFile START — ' + mo + ' Mo  (mime=' + mime + ')', 'color:#08e');
+        var full = file.arrayBuffer().then(function (buf) {
+          var dlMs = (performance.now() - _t0).toFixed(0);
+          console.log('%c[audio:' + deckId + '] ▼ loadLocalFile ← ' + (buf.byteLength / 1024 / 1024).toFixed(2)
+            + ' Mo en ' + dlMs + 'ms', 'color:#08e;font-weight:bold');
+          // 1) Blob same-origin avec le bon type MIME → audio.src.
+          var blob = new Blob([buf], { type: mime });
+          state.blobUrl = URL.createObjectURL(blob);
+          audio.src = state.blobUrl;
+          audio.load();
+          // 2) Copie pour le décodage scratch.
+          var AE = window.AudioEngine;
+          try {
+            if (AE && typeof AE.loadDeckBufferFromBlob === 'function') {
+              AE.loadDeckBufferFromBlob(deckId, buf.slice(0));
+            }
+          } catch (e) {
+            console.warn('[audio:' + deckId + '] loadLocalFile: loadDeckBufferFromBlob échec', e);
+          }
+          return buf;
+        });
+        state.loadPromise = full;
+        return full;
+      },
 
       // Accès techniques (debug / tests)
       _getAudioElement: function () { return audio; },

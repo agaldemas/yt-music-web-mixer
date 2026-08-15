@@ -199,6 +199,43 @@ function ensureBuffer(deck) {
       return p.loadPromise;
     }
 
+    // === Tee : réutilise le buffer déjà décodé par audio-player.js ===
+    // audio-player.js fetch() une seule fois le flux → partage les octets avec
+    // AudioEngine.loadDeckBufferFromBlob. Si le décodage tee est en vol (ou
+    // déjà fini), on l'attend SANS relancer de 2e fetch/XHR (le throttle CDN).
+    var teeBuffer = AE.getDeckBuffer(deck);
+    if (teeBuffer) {
+      p.bufferReady = true;
+      p.loading = false;
+      console.log('%c[scratch:' + deck + '] ensureBuffer: ✓ TEE buffer récupéré (pas de re-fetch)', 'color:#0a0;font-weight:bold');
+      return Promise.resolve();
+    }
+    var teePromise = (typeof AE.getDeckBufferLoadPromise === 'function') ? AE.getDeckBufferLoadPromise(deck) : null;
+    if (teePromise) {
+      p.loading = true;
+      if (p.active) setState(deck, STATE_LOADING, 'Décodage…');
+      console.log('%c[scratch:' + deck + '] ensureBuffer: ⟳ TEE décodage EN COURS → on attend le tee (pas de re-fetch)'
+        + '  (active=' + p.active + ')', 'color:#08e;font-weight:bold');
+      p.loadPromise = teePromise.then(function (decoded) {
+        p.bufferReady = true;
+        p.loading = false;
+        p.loadPromise = null;
+        console.log('%c[scratch:' + deck + '] ensureBuffer: ✓ TEE buffer PRÊT'
+          + '  (duration=' + decoded.duration.toFixed(1) + 's'
+          + '  active=' + p.active + ')',
+          'color:#0a0;font-weight:bold');
+        if (!p.active) setState(deck, STATE_IDLE, 'Prêt');
+        return decoded;
+      }, function (err) {
+        p.loading = false;
+        p.loadPromise = null;
+        console.warn('[scratch:' + deck + '] ensureBuffer: tee décodage échoué → fallback XHR:', err && err.message);
+        // On retombe sur le chemin XHR classique ci-dessous en relançant ensureBuffer.
+        return ensureBuffer(deck);
+      });
+      return p.loadPromise;
+    }
+
     var url = getStreamUrlForDeck(deck);
     if (!url) {
       console.error('[scratch:' + deck + '] ensureBuffer: ✗ URL vide → rejet immédiat');

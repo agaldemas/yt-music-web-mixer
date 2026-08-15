@@ -732,6 +732,31 @@ body.mode-piped #player-B {
   text-overflow: ellipsis;
 }
 
+/* ===== Import de fichier audio local ===== */
+.deck-local-row {
+  margin: 8px 14px 0;
+  display: flex;
+  justify-content: flex-end;
+}
+.deck-load-local-btn {
+  background: #1a1d25;
+  color: #d7d9de;
+  border: 1px solid #2a2e3a;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.deck-load-local-btn:hover {
+  background: #232733;
+  border-color: #3a3f4d;
+}
+.deck-load-local-btn:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
 /* ===== Barre de transport par voie (play/pause + seek + temps) ===== */
 .deck-transport {
   display: flex;

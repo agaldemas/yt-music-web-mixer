@@ -694,6 +694,51 @@
       try { disengageScratch(deckId, chain.scratchOffset, false); } catch (e) {}
     }
     chain.scratchBuffer = null;
+    chain.scratchLoadPromise = null; // tee: invalide aussi la promesse de décodage en cours
+  }
+
+  // ===== Tee: décodage du buffer scratch à partir d'un ArrayBuffer déjà téléchargé =====
+  //
+  // Évite la 2e requête XHR (throttle CDN YouTube). audio-player.js fetch() une
+  // seule fois le flux, partage les octets : un Blob pour la lecture (audio.src)
+  // et ce tableau pour le scratch via decodeAudioData. Dédupliqué via
+  // chain.scratchLoadPromise : si l'utilisateur clique la platine avant la fin
+  // du décodage, scratch.js récupère la même promesse (getDeckBufferLoadPromise).
+  function loadDeckBufferFromBlob(deckId, arrayBuffer) {
+    const chain = chains[deckId];
+    if (!ctx) init();
+    if (!chain) throw new Error('loadDeckBufferFromBlob: deck absent');
+    // Déduplication : promesse en vol → on la renvoit
+    if (chain.scratchLoadPromise) return chain.scratchLoadPromise;
+    // Djà décodé → résolution immédiate
+    if (chain.scratchBuffer) return Promise.resolve(chain.scratchBuffer);
+
+    // decodeAudioData peut neutered son entrée → on passe une copie
+    var copy = arrayBuffer.slice(0);
+    var _t0 = performance.now();
+    console.log('%c[scratch:' + deckId + '] loadDeckBufferFromBlob START — '
+      + (copy.byteLength / 1024 / 1024).toFixed(2) + ' Mo (tee, pas de re-fetch)', 'color:#e80');
+
+    chain.scratchLoadPromise = ctx.decodeAudioData(copy).then(function (decoded) {
+      chain.scratchBuffer = decoded;
+      chain.scratchLoadPromise = null;
+      console.log('%c[scratch:' + deckId + '] loadDeckBufferFromBlob ✓ PRÊT'
+        + '  duration=' + decoded.duration.toFixed(1) + 's'
+        + '  PCM=' + (decoded.length * decoded.numberOfChannels * 4 / 1024 / 1024).toFixed(1) + ' Mo'
+        + '  decode=' + (performance.now() - _t0).toFixed(0) + 'ms', 'color:#0a0;font-weight:bold');
+      return decoded;
+    }).catch(function (err) {
+      chain.scratchLoadPromise = null;
+      console.error('[scratch:' + deckId + '] loadDeckBufferFromBlob decodeAudioData ÉCHEC:', err);
+      throw err;
+    });
+    return chain.scratchLoadPromise;
+  }
+
+  // Renvoie la promesse de décodage tee en vol (ou null) → scratch.js attend
+  // le même décodage au lieu de relancer fetch/XHR.
+  function getDeckBufferLoadPromise(deckId) {
+    return chains[deckId] ? chains[deckId].scratchLoadPromise : null;
   }
 
   // ===== Accesseurs =====
@@ -742,6 +787,10 @@
     isScratchEngaged: isScratchEngaged,
     getDeckBuffer: getDeckBuffer,
     clearDeckBuffer: clearDeckBuffer,
+    loadDeckBufferFromBlob: loadDeckBufferFromBlob,
+    getDeckBufferLoadPromise: getDeckBufferLoadPromise,
+    loadDeckBufferFromBlob: loadDeckBufferFromBlob,
+    getDeckBufferLoadPromise: getDeckBufferLoadPromise,
     // Constantes exportées (debug / config UI)
     CONST: {
       EQ_FREQ_LOW: EQ_FREQ_LOW,
