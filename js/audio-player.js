@@ -217,6 +217,22 @@
       var _t0 = performance.now();
       console.log('%c[audio:' + deckId + '] ▼ download START — '
         + (url.length > 80 ? url.slice(0, 80) + '…' : url), 'color:#08e');
+      var AE = window.AudioEngine;
+
+      // --- Compose la promesse scratch et l'enregistre AVANT le download ---
+      // On crée un canal résolveur : scratchResolve sera appelé quand le
+      // download termine (avec les octets). Enregistre la promesse scratch
+      // dans AudioEngine DÈS MAINTENANT → ensureBuffer() (precache/engage)
+      // la voit pendant le fetch et attend le tee au lieu de relancer un XHR
+      // parallèle (le throttle CDN tue le 2e download).
+      var scratchResolve, scratchReject;
+      var scratchPromise = new Promise(function (res, rej) {
+        scratchResolve = res; scratchReject = rej;
+      });
+      if (AE && typeof AE.setDeckBufferLoadPromise === 'function') {
+        AE.setDeckBufferLoadPromise(deckId, scratchPromise);
+      }
+
       var full = fetch(url, { headers: { Range: 'bytes=0-' } }).then(function (res) {
         // 200 (full) ou 206 (partial/range) : les deux sont valides. Le Range
         // est crucial : le CDN YouTube throttle les downloads complets (200)
@@ -236,14 +252,18 @@
         state.blobUrl = URL.createObjectURL(blob);
         audio.src = state.blobUrl;
         audio.load();
-        // 2) Copie pour le décodage scratch (decodeAudioData peut neutered l'entrée).
-        var AE = window.AudioEngine;
+        // 2) Déclenche le décodage scratch : résout la promesse scratch enregistrée
+        //    ci-dessus. Les éventuels awaiters (ensureBuffer/engage) reçoivent
+        //    le buffer décodé via la même promesse — pas de re-fetch.
         try {
           if (AE && typeof AE.loadDeckBufferFromBlob === 'function') {
-            AE.loadDeckBufferFromBlob(deckId, r.buf.slice(0));
+            AE.loadDeckBufferFromBlob(deckId, r.buf.slice(0)).then(scratchResolve, scratchReject);
+          } else {
+            scratchResolve(null);
           }
         } catch (e) {
           console.warn('[audio:' + deckId + '] loadDeckBufferFromBlob échec', e);
+          scratchReject(e);
         }
         return r.buf;
       });
@@ -253,6 +273,8 @@
         resetSource();
         audio.src = url;
         audio.load();
+        // Libère les awaiters du tee (retomberont sur le XHR secours).
+        scratchReject(err);
       });
       // Dédup : on expose la promesse complète (download + branchement audio).
       state.loadPromise = full;
@@ -591,13 +613,26 @@
           state.currentVideoId = 'local';
           return Promise.resolve();
         }
-        // File / Blob : lecture en mémoire (pas de fetch réseau).
+        // File / Blob : lecture en mémoire (pas de fetch réseau). Même pipeline
+        // unifié : Blob pour la lecture + décodage scratch via tee.
         var mime = file.type || 'audio/mpeg';
         resetSource();
         state.currentVideoId = 'local';
         var _t0 = performance.now();
         var mo = (file.size / 1024 / 1024).toFixed(2);
         console.log('%c[audio:' + deckId + '] ▼ loadLocalFile START — ' + mo + ' Mo  (mime=' + mime + ')', 'color:#08e');
+        var AE = window.AudioEngine;
+
+        // Même mécanisme tee : enregistre la promesse scratch AVANT de lire le
+        // fichier → ensureBuffer() l'attend au lieu de relancer un fetch Piped.
+        var scratchResolve, scratchReject;
+        var scratchPromise = new Promise(function (res, rej) {
+          scratchResolve = res; scratchReject = rej;
+        });
+        if (AE && typeof AE.setDeckBufferLoadPromise === 'function') {
+          AE.setDeckBufferLoadPromise(deckId, scratchPromise);
+        }
+
         var full = file.arrayBuffer().then(function (buf) {
           var dlMs = (performance.now() - _t0).toFixed(0);
           console.log('%c[audio:' + deckId + '] ▼ loadLocalFile ← ' + (buf.byteLength / 1024 / 1024).toFixed(2)
@@ -607,16 +642,21 @@
           state.blobUrl = URL.createObjectURL(blob);
           audio.src = state.blobUrl;
           audio.load();
-          // 2) Copie pour le décodage scratch.
-          var AE = window.AudioEngine;
+          // 2) Déclenche le décodage scratch (même chemin tee).
           try {
             if (AE && typeof AE.loadDeckBufferFromBlob === 'function') {
-              AE.loadDeckBufferFromBlob(deckId, buf.slice(0));
+              AE.loadDeckBufferFromBlob(deckId, buf.slice(0)).then(scratchResolve, scratchReject);
+            } else {
+              scratchResolve(null);
             }
           } catch (e) {
             console.warn('[audio:' + deckId + '] loadLocalFile: loadDeckBufferFromBlob échec', e);
+            scratchReject(e);
           }
           return buf;
+        });
+        full.catch(function (err) {
+          scratchReject(err);
         });
         state.loadPromise = full;
         return full;

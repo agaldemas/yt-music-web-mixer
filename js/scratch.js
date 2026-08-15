@@ -217,6 +217,14 @@ function ensureBuffer(deck) {
       console.log('%c[scratch:' + deck + '] ensureBuffer: ⟳ TEE décodage EN COURS → on attend le tee (pas de re-fetch)'
         + '  (active=' + p.active + ')', 'color:#08e;font-weight:bold');
       p.loadPromise = teePromise.then(function (decoded) {
+        // decoded=null : AudioEngine indisponible au moment du fetch → le tee
+        // n'a pas décodé. On retombe sur le chemin XHR secours ci-dessous.
+        if (!decoded) {
+          p.loading = false;
+          p.loadPromise = null;
+          console.warn('[scratch:' + deck + '] ensureBuffer: tee résolu sans buffer → fallback XHR');
+          return ensureBuffer(deck);
+        }
         p.bufferReady = true;
         p.loading = false;
         p.loadPromise = null;

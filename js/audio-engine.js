@@ -451,6 +451,12 @@
 
       var xhr = new XMLHttpRequest();
       xhr.open('GET', url, true);
+      // Range: bytes=0- → force une réponse 206 (pleine vitesse). Sans ce header,
+      // le CDN YouTube throttle les downloads complets (200) à ~30 Ko/s — le
+      // scratch reste bloqué à ~14% (cf. fetch principal dans audio-player.js).
+      // Ce chemin XHR n'est qu'un SECOURS quand le tee échoue ; il doit rester
+      // aussi rapide que le fetch principal.
+      xhr.setRequestHeader('Range', 'bytes=0-');
       xhr.responseType = 'arraybuffer';
 
       xhr.onprogress = function (e) {
@@ -704,22 +710,23 @@
   // et ce tableau pour le scratch via decodeAudioData. Dédupliqué via
   // chain.scratchLoadPromise : si l'utilisateur clique la platine avant la fin
   // du décodage, scratch.js récupère la même promesse (getDeckBufferLoadPromise).
+  // Décode un ArrayBuffer déjà téléchargé en AudioBuffer scratch. Pure décodage
+  // (pas de dedup ici) : la promesse est enregistrée tôt par audio-player.js via
+  // setDeckBufferLoadPromise() DÈS LE DÉBUT du download → ensureBuffer() la trouve
+  // pendant le fetch et attend au lieu de relancer un 2e XHR (throttle CDN).
+  // decodeAudioData peut neutered son entrée → on passe une copie.
   function loadDeckBufferFromBlob(deckId, arrayBuffer) {
     const chain = chains[deckId];
     if (!ctx) init();
     if (!chain) throw new Error('loadDeckBufferFromBlob: deck absent');
-    // Déduplication : promesse en vol → on la renvoit
-    if (chain.scratchLoadPromise) return chain.scratchLoadPromise;
-    // Djà décodé → résolution immédiate
     if (chain.scratchBuffer) return Promise.resolve(chain.scratchBuffer);
 
-    // decodeAudioData peut neutered son entrée → on passe une copie
     var copy = arrayBuffer.slice(0);
     var _t0 = performance.now();
     console.log('%c[scratch:' + deckId + '] loadDeckBufferFromBlob START — '
       + (copy.byteLength / 1024 / 1024).toFixed(2) + ' Mo (tee, pas de re-fetch)', 'color:#e80');
 
-    chain.scratchLoadPromise = ctx.decodeAudioData(copy).then(function (decoded) {
+    return ctx.decodeAudioData(copy).then(function (decoded) {
       chain.scratchBuffer = decoded;
       chain.scratchLoadPromise = null;
       console.log('%c[scratch:' + deckId + '] loadDeckBufferFromBlob ✓ PRÊT'
@@ -732,7 +739,16 @@
       console.error('[scratch:' + deckId + '] loadDeckBufferFromBlob decodeAudioData ÉCHEC:', err);
       throw err;
     });
-    return chain.scratchLoadPromise;
+  }
+
+  // Enregistre la promesse de décodage scratch AVANT que le download ne termine.
+  // audio-player.js compose : scratchPromise = fetchDownload.then(decode), puis
+  // appelle setDeckBufferLoadPromise(deck, scratchPromise) dès le début du fetch.
+  // Ainsi getDeckBufferLoadPromise() retourne non-null pendant tout le download →
+  // ensureBuffer() attend le tee au lieu de relancer un XHR parallèle.
+  function setDeckBufferLoadPromise(deckId, promise) {
+    const chain = chains[deckId];
+    if (chain) chain.scratchLoadPromise = promise;
   }
 
   // Renvoie la promesse de décodage tee en vol (ou null) → scratch.js attend
@@ -788,8 +804,7 @@
     getDeckBuffer: getDeckBuffer,
     clearDeckBuffer: clearDeckBuffer,
     loadDeckBufferFromBlob: loadDeckBufferFromBlob,
-    getDeckBufferLoadPromise: getDeckBufferLoadPromise,
-    loadDeckBufferFromBlob: loadDeckBufferFromBlob,
+    setDeckBufferLoadPromise: setDeckBufferLoadPromise,
     getDeckBufferLoadPromise: getDeckBufferLoadPromise,
     // Constantes exportées (debug / config UI)
     CONST: {
