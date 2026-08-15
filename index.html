@@ -149,6 +149,18 @@
         <div id="player-A"><!-- iframe YouTube --></div>
         <!-- Visualiseur spectre/waveform (mode Piped uniquement) -->
         <canvas class="deck-visualizer" data-deck="A"></canvas>
+
+        <!-- Scratch / platine vinyle (phase 11) — à droite de l'analyser,
+             sur la moitié de la largeur du deck. Visible uniquement en mode Piped. -->
+        <div class="deck-scratch" data-deck="A">
+          <div class="platter" data-deck="A">
+            <div class="platter-marker" aria-hidden="true"></div>
+          </div>
+          <div class="platter-info">
+            <span class="platter-status" data-deck="A">—</span>
+            <span class="platter-label">SCRATCH</span>
+          </div>
+        </div>
       </div>
 
       <div class="deck-transport" data-deck="A">
@@ -251,6 +263,18 @@
         <div id="player-B"><!-- iframe YouTube --></div>
         <!-- Visualiseur spectre/waveform (mode Piped uniquement) -->
         <canvas class="deck-visualizer" data-deck="B"></canvas>
+
+        <!-- Scratch / platine vinyle (phase 11) — à droite de l'analyser,
+             sur la moitié de la largeur du deck. Visible uniquement en mode Piped. -->
+        <div class="deck-scratch" data-deck="B">
+          <div class="platter" data-deck="B">
+            <div class="platter-marker" aria-hidden="true"></div>
+          </div>
+          <div class="platter-info">
+            <span class="platter-status" data-deck="B">—</span>
+            <span class="platter-label">SCRATCH</span>
+          </div>
+        </div>
       </div>
 
       <div class="deck-transport" data-deck="B">
@@ -359,6 +383,7 @@
   <script src="js/deck-controls.js"></script>
   <script src="js/visualizer.js"></script>
   <script src="js/bpm-detector.js"></script>
+  <script src="js/scratch.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

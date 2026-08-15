@@ -657,6 +657,20 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   position: relative;
   aspect-ratio: 16 / 9;
 }
+/* Mode Piped : le lecteur devient une ligne analyser | platine,
+   chacun sur la moitié de la largeur du deck. La vidéo/iframe et le
+   placeholder sont masqués (DSP audio-only). */
+body.mode-piped .deck-player {
+  flex-direction: row;
+  align-items: stretch;
+  aspect-ratio: auto;
+  min-height: 180px;
+}
+body.mode-piped .player-placeholder,
+body.mode-piped #player-A,
+body.mode-piped #player-B {
+  display: none;
+}
 .player-placeholder {
   color: #6b7280;
   font-size: 0.9rem;
@@ -896,21 +910,23 @@ body.mode-piped .dt-seek::-moz-range-thumb { background: #6ee7b7; }
 /* ============================================================
  * Visualiseurs (spectre/waveform) — phase 8
  * ============================================================ */
-/* Canvas par voie : superposé en bas de la zone .deck-player. Visible
- * uniquement en mode Piped (sinon on montre la vidéo YouTube). */
+/* Canvas par voie : à gauche en mode Piped, sur la moitié de la largeur
+ * du deck (à côté de la platine de scratch). Masqué en mode IFrame. */
 .deck-visualizer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100%;
-  height: 42px;
   display: none;                 /* masqué sauf en mode Piped */
   pointer-events: none;
   background: rgba(0, 0, 0, 0.45);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
-body.mode-piped .deck-visualizer { display: block; }
+body.mode-piped .deck-visualizer {
+  display: block;
+  position: static;
+  width: 50%;
+  height: auto;
+  flex: 1 1 50%;
+  min-width: 0;
+  border-top: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
 
 /* Canvas master dans la barre de mixage (spectre global). Hauteur limitée à 40px. */
 .mixer-visualizer {
@@ -1275,3 +1291,134 @@ body.mode-piped .deck-cue-loop { display: flex; }
   40% { transform: scale(1.06); }
   100% { transform: scale(1); }
 }
+
+/* ============================================================
+ * Scratch / platine vinyle (phase 11) — mode Piped uniquement
+ *
+ * Bloc .deck-scratch placé sous .deck-cue-loop. Contient un disque
+ * circulaire .platter (saisie Pointer Events) + un repère angulaire +
+ * un badge d'état (idle/loading/engaged/error). Masqué en mode IFrame
+ * (scratch impossible sans accès au buffer audio — cf. contrainte #1).
+ * ============================================================ */
+.deck-scratch {
+  display: none;             /* masqué par défaut ; body.mode-piped l'affiche */
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  background: #15181f;
+  border: 1px solid #232733;
+}
+body.mode-piped .deck-scratch {
+  display: flex;
+  flex-direction: column;   /* platine au-dessus, infos en dessous */
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 50%;
+  width: 50%;
+  min-width: 0;
+  border-radius: 0;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 0;
+}
+
+/* Disque circulaire de la platine. Dimension responsive : s'adapte à la
+   moitié du deck tout en restant circulaire. */
+.platter {
+  position: relative;
+  flex: 0 0 auto;
+  width: min(260px, 86%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    repeating-conic-gradient(from 0deg,
+      #1a1f2b 0deg 4deg, #15181f 4deg 8deg),
+    radial-gradient(circle at center, #232a3a, #0f1115);
+  border: 2px solid #2e3444;
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+  touch-action: none;        /* pas de scroll pendant le scratch */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.platter:active { cursor: grabbing; }
+
+/* Centre de la platine (axe) */
+.platter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: #0f1115;
+  border: 2px solid #3a4254;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+}
+
+/* Repère angulaire : ligne partant du centre vers le bord (le stroboscope). */
+.platter-marker {
+  position: absolute;
+  left: 50%;
+  top: 8%;
+  width: 3px;
+  height: 38%;
+  margin-left: -1.5px;
+  background: linear-gradient(to bottom, #f59e0b, rgba(245, 158, 11, 0.2));
+  border-radius: 2px;
+  transform-origin: 50% calc(100% + 6px);
+  pointer-events: none;
+}
+
+/* Infos (statut + label) en dessous de la platine */
+.platter-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  min-width: 0;
+  text-align: center;
+}
+.platter-status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #9aa0ac;
+  font-variant-numeric: tabular-nums;
+}
+.platter-label {
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+  font-weight: 600;
+}
+
+/* États de la platine (data-scratch-state) :
+ * - idle    : prêt (gris)
+ * - loading : décoding (orange, pulsation)
+ * - engaged : scratch actif (bleu, léger glow)
+ * - error   : erreur (rouge) */
+.platter[data-scratch-state="idle"]    { border-color: #2e3444; }
+.platter[data-scratch-state="loading"] { border-color: #b45309; animation: scratch-pulse 1s ease-in-out infinite; }
+.platter[data-scratch-state="engaged"] {
+  border-color: #3b82f6;
+  box-shadow: inset 0 0 12px rgba(59, 130, 246, 0.25), 0 0 12px rgba(59, 130, 246, 0.3);
+}
+.platter[data-scratch-state="error"]  { border-color: #7f1d1d; }
+.platter[data-scratch-state="loading"] ~ .platter-info .platter-status,
+.platter[data-scratch-state="error"] ~ .platter-info .platter-status { color: #f87171; }
+.platter[data-scratch-state="engaged"] ~ .platter-info .platter-status { color: #93c5fd; }
+.platter[data-scratch-state="loading"] ~ .platter-info .platter-status { color: #fbbf24; }
+
+@keyframes scratch-pulse {
+  0%, 100% { border-color: #7f1d1d; }
+  50% { border-color: #f59e0b; }
+}
+
+/* En mode IFrame, on masque le scratch (déjà masqué par défaut ci-dessus,
+ * on le rappelle pour la clarté : le scratch est impossible sans accès au
+ * buffer audio — cf. contrainte #1 du CLAUDE.md). */
+body.mode-iframe .deck-scratch { display: none; }

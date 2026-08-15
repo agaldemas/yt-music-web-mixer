@@ -24,6 +24,7 @@
   const DeckTransport = window.DeckTransport;
   const Visualizer = window.Visualizer;
   const BPMDetector = window.BPMDetector;
+  const Scratch = window.Scratch;
 
   // État global
   const state = {
@@ -201,6 +202,31 @@
       cancelAnimationFrame(state.bpmRafId);
       state.bpmRafId = null;
     }
+  }
+
+  // ===== Scratch / platine vinyle (phase 11) — mode Piped uniquement =====
+  //
+  // La platine est câblée par Scratch.enable(deck) qui construit le DOM de
+  // la platine + attache les Pointer Events. On l'active en mode Piped
+  // (besoin de l'AudioBufferSourceNode, absent en IFrame). Au changement
+  // de morceau, le buffer scratch est invalidé (re-décodé paresseusement au
+  // prochain engage).
+  function initScratch() {
+    if (!Scratch) return;
+    ['A', 'B'].forEach(function (deck) { Scratch.enable(deck); });
+  }
+
+  function teardownScratch() {
+    if (!Scratch) return;
+    ['A', 'B'].forEach(function (deck) { Scratch.disable(deck); });
+  }
+
+  // Invalide le buffer scratch d'une voie (changement de morceau). Le buffer
+  // est re-décodé paresseusement au prochain engage (1er scratch sur le
+  // nouveau morceau).
+  function invalidateScratchBuffer(deck) {
+    if (!Scratch) return;
+    Scratch.invalidateBuffer(deck);
   }
 
   // Bouton SYNC BPM (beatmatch B→A) dans la barre de mixage.
@@ -651,6 +677,15 @@
         // On force toujours la mise à jour (même si l'état n'a pas changé)
         // pour resynchroniser l'icône après un échec de play() optimiste.
         if (DeckTransport) DeckTransport.onStateChange(deck, evt && evt.data);
+        // Scratch (phase 11) : on précharge SYSTÉMATIQUEMENT le buffer PCM en
+        // mémoire dès que le morceau est exploitable (CUED = chargé/ready) ou
+        // lancé (PLAYING). Plus on déclenche tôt, plus le buffer est prêt au
+        // moment du clic platine → engage instantané, plus de "Chargement…".
+        // precache() est idempotent : ne fait rien si déjà prêt ou en cours.
+        if (state.resolvedMode === 'piped' && Scratch
+          && evt && (evt.data === STATE.CUED || evt.data === STATE.PLAYING)) {
+          try { Scratch.precache(deck); } catch (e) { /* silencieux */ }
+        }
       },
       onError: function (err) {
         // En mode Piped, une erreur de lecture non récupérable (URL expirée,
@@ -729,8 +764,8 @@
     syncSettingsModeSelect();
     Mixer.applyVolumes();
     // Visualiseurs : démarrés uniquement en mode Piped (besoin d'AnalyserNode).
-    if (target === 'piped') { startVisualizers(); startBpmDetection(); }
-    else { stopVisualizers(); stopBpmDetection(); }
+    if (target === 'piped') { startVisualizers(); startBpmDetection(); initScratch(); }
+    else { stopVisualizers(); stopBpmDetection(); teardownScratch(); }
     // Cue/loop (phase 10) : ne fonctionne qu'en mode Piped (loop précis sur
     // <audio>). En IFrame, on désactive toute boucle active et on arrête la
     // surveillance. Les marqueurs restent en mémoire (et localStorage) pour
@@ -812,6 +847,10 @@
       BPMDetector.reset(deck);
       BPMDetector.start(deck);
     }
+
+    // Scratch (phase 11) : le buffer décodé correspond à l'ancien morceau →
+    // on l'invalide. Il sera re-décodé paresseusement au prochain engage.
+    if (state.resolvedMode === 'piped') invalidateScratchBuffer(deck);
 
     // Cue/loop (phase 10) : les marqueurs de boucle et le cue point sont
     // liés à l'ancien morceau (positions en secondes dans ce morceau) → on
@@ -1618,6 +1657,12 @@
     wireFallbackAlert();
     wireSyncBpmButton();
     wireSyncBpmButton();
+    // Scratch : la platine est activée au boot si on démarre en Piped (géré
+    // plus bas après résolution du mode). En IFrame, on n'active pas (le
+    // buffer audio est inaccessible).
+    // Scratch : la platine est activée au boot si on démarre en Piped (géré
+    // plus bas après résolution du mode). En IFrame, on n'active pas (le
+    // buffer audio est inaccessible).
 
     // L'API IFrame est chargée en arrière-plan (utile si l'utilisateur
     // bascule en IFrame, ou si le mode résolu est IFrame).
@@ -1673,7 +1718,7 @@
     if (DeckTransport) DeckTransport.start();
 
     // Visualiseurs : démarrés en mode Piped (les canvas sont masqués en IFrame).
-    if (state.resolvedMode === 'piped') { startVisualizers(); startBpmDetection(); }
+    if (state.resolvedMode === 'piped') { startVisualizers(); startBpmDetection(); initScratch(); }
 
     // Recalcule les backing stores des canvas au redimensionnement de fenêtre.
     window.addEventListener('resize', function () {

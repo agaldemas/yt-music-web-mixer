@@ -14,11 +14,27 @@
  *   - resetPitch(deck)                  : remet le tempo à 0 % (playbackRate = 1)
  *   - getAnalyser(deck)                 : AnalyserNode par voie (visualizer)
  *   - getMasterAnalyser()               : AnalyserNode global (master spectrum)
+ *   - decodeDeckBuffer(deckId, url)     : fetch + decodeAudioData → AudioBuffer
+ *                                         en mémoire (scratch, Approche C hybride)
+ *   - engageScratch(deckId)             : bascule la source vers AudioBufferSourceNode
+ *   - disengageScratch(deckId, posSec)  : rebascule vers MediaElementSource,
+ *                                         remet audio.currentTime à posSec
+ *   - setScratchRate(deckId, rate)      : playbackRate du scratch (peut être < 0)
+ *   - seekScratch(deckId, sec)          : recrée l'AudioBufferSourceNode à sec
+ *   - isScratchEngaged(deckId)          : true si le scratch est actif
+ *   - getDeckBuffer(deckId)             : AudioBuffer du deck (ou null)
+ *   - clearDeckBuffer(deckId)           : libère le buffer (changement de morceau)
  *
  * Graphe par voie :
- *   source → lowShelf → midPeak → highShelf → djFilter ─┬→ deckGain → masterGain
- *                                                        │            → masterAnalyser → ctx.destination
- *                                                        └→ analyser (tap pre-fader, visualiseur de voie)
+ *   source → scratchGain → lowShelf → midPeak → highShelf → djFilter ─┬→ deckGain → masterGain
+ *                                                                     │            → masterAnalyser → ctx.destination
+ *                                                                     └→ analyser (tap pre-fader, visualiseur de voie)
+ *
+ * `scratchGain` est un GainNode intermédiaire (gain=1 en mode normal) servant
+ * de point d'entrée commun à la chaîne EQ. En mode scratch, on y branche un
+ * AudioBufferSourceNode à la place du MediaElementSource : on déconnecte ce
+ * dernier de scratchGain et on connecte le buffer source. Au relâchement, on
+ * fait l'inverse. Le ducking (~10-30 ms) au point de bascule évite le clic.
  *
  * Le visualiseur de voie tapote AVANT le deckGain : il reste actif même si
  * le crossfader coupe la voie (deckGain ≈ 0). Le masterAnalyser, lui, est
@@ -48,6 +64,18 @@
   // Ramping : timeConstant pour setTargetAtTime. 15ms = compromis naturel/
   // réactivité, comparable à un fader physique qui amortit légèrement.
   const RAMP_TC = 0.015;
+
+  // Scratch (phase 11) — constantes. Le scratch hybride bascule la source
+  // entre le MediaElementAudioSourceNode (streaming normal) et un
+  // AudioBufferSourceNode (vrai scratch bidirectionnel, pitch variable).
+  //   - DUCK_TC : timeConstant du ducking au moment du swap de source
+  //     (~15 ms). On ramp le scratchGain à ~0, on swap, puis on remonte.
+  //     Évite le clic audible lié à la reconnexion d'un nœud source.
+  //   - DUCK_HOLD_MS : durée où le gain reste proche de 0 pendant le swap.
+  //   - SCRATCH_MAX_RATE : borne du playbackRate du scratch (avant/arrière).
+  const DUCK_TC = 0.012;
+  const DUCK_HOLD_MS = 16;
+  const SCRATCH_MAX_RATE = 3;
 
   // ===== État interne =====
 
@@ -124,6 +152,13 @@
     // Source (entrée du graphe depuis l'<audio>)
     const source = ctx.createMediaElementSource(audioEl);
 
+    // Scratch gain : point d'entrée commun de la chaîne EQ. En mode normal
+    // (streaming), le MediaElementSource s'y connecte. En mode scratch, on
+    // le déconnecte et on y branche un AudioBufferSourceNode. gain=1 par
+    // défaut ; ducking temporaire au moment du swap (cf. engage/disengage).
+    const scratchGain = ctx.createGain();
+    scratchGain.gain.value = 1.0;
+
     // EQ 3 bandes
     const lowShelf = ctx.createBiquadFilter();
     lowShelf.type = 'lowshelf';
@@ -158,12 +193,15 @@
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0.8;
 
-    // Connexion : source → EQ → djFilter, puis split pre-fader.
+    // Connexion : source → scratchGain → EQ → djFilter, puis split pre-fader.
     //   - Une branche → deckGain → masterGain (chemin audio, niveau crossfade).
     //   - Une branche → analyser (tap PRE-fader : visualise le flux en lecture,
     //     indépendamment du deckGain/crossfader). Ainsi le visualiseur d'une voie
     //     reste actif même si son crossfade est à 0.
-    source.connect(lowShelf);
+    // scratchGain sert de pivot : en mode scratch, on y branche un
+    // AudioBufferSourceNode à la place du MediaElementSource.
+    source.connect(scratchGain);
+    scratchGain.connect(lowShelf);
     lowShelf.connect(midPeak);
     midPeak.connect(highShelf);
     highShelf.connect(djFilter);
@@ -179,6 +217,12 @@
     chains[deckId] = {
       audioEl: audioEl,
       source: source,
+      scratchGain: scratchGain,
+      scratchEngaged: false,
+      scratchBuffer: null,
+      scratchNode: null,
+      scratchOffset: 0,
+      scratchStartTime: 0,
       lowShelf: lowShelf,
       midPeak: midPeak,
       highShelf: highShelf,
@@ -202,8 +246,17 @@
   function destroyDeckChain(deckId) {
     const chain = chains[deckId];
     if (!chain) return false;
+    // Si un scratch est en cours, on libère d'abord le nœud scratch.
+    try {
+      if (chain.scratchNode) {
+        chain.scratchNode.onended = null;
+        chain.scratchNode.stop();
+        chain.scratchNode.disconnect();
+      }
+    } catch (e) { /* already stopped */ }
     try {
       chain.source.disconnect();
+      chain.scratchGain.disconnect();
       chain.lowShelf.disconnect();
       chain.midPeak.disconnect();
       chain.highShelf.disconnect();
@@ -213,6 +266,10 @@
     } catch (e) {
       // disconnect() throw si déjà déconnecté — pas grave, on continue.
     }
+    // Libère la mémoire du buffer scratch (important : ~10 Mo/min).
+    chain.scratchBuffer = null;
+    chain.scratchNode = null;
+    chain.scratchEngaged = false;
     delete chains[deckId];
     return true;
   }
@@ -341,6 +398,304 @@
     }
   }
 
+  // ===== Scratch / platine vinyle (phase 11) — Approche C hybride =====
+  //
+  // Mode normal : MediaElementAudioSourceNode (streaming, économique).
+  // Mode scratch : AudioBufferSourceNode (PCM en mémoire, lecture avant/
+  // arrière, pitch variable — le vrai son de scratch). On bascule l'un par
+  // l'autre au moment de l'engage, avec ducking pour éviter le clic.
+  //
+  // ⚠️ AudioBufferSourceNode est one-shot : un seul start()/stop() par
+  // instance. seekScratch() doit donc recréer le nœud (stop → nouveau →
+  // connecter → start(0, offset)).
+  //
+  // ⚠️ Conflit preservesPitch : le beatmatch (setPitch) veut preservesPitch
+  // =true, le scratch veut le pitch variable. AudioBufferSourceNode ne
+  // préserve JAMAIS le pitch → c'est ce qu'on veut pour le scratch. Les
+  // deux modes sont mutuellement exclusifs sur une voix à un instant t.
+
+  // Ducking : ramp scratchGain → ~0, hold, swap de source, remontée → 1.
+  // On renvoie une promesse résolue quand le gain est effectivement ~0
+  // (safe pour déconnecter/reconnecter sans clic).
+  function duckDown(chain) {
+    const t = ctx.currentTime;
+    chain.scratchGain.gain.setTargetAtTime(0.0001, t, DUCK_TC);
+    return new Promise(function (resolve) {
+      setTimeout(resolve, DUCK_HOLD_MS + 6);
+    });
+  }
+
+  function duckUp(chain, target) {
+    const t = ctx.currentTime;
+    chain.scratchGain.gain.setTargetAtTime(target == null ? 1 : target, t, DUCK_TC);
+  }
+
+  // Pré-charge un AudioBuffer pour le scratch. XMLHttpRequest + progress +
+  // decodeAudioData. Stocké dans chains[deck].scratchBuffer.
+  //
+  // ⚠️ On utilise XHR (et pas fetch+arrayBuffer) car res.arrayBuffer() met
+  // ~100 s sur 3 Mo via le relais /api/audio — le CDN YouTube throttle la
+  // 2e connexion (l'<audio> streame déjà la 1re). XHR avec responseType=
+  // 'arraybuffer' + onprogress permet aussi d'afficher la progression.
+  //
+  // onProgress(fraction 0..1) est appelé pendant le téléchargement.
+  function decodeDeckBuffer(deckId, url, onProgress) {
+    const chain = chains[deckId];
+    if (!ctx) init();
+    if (!chain || !url) throw new Error('decodeDeckBuffer: deck ou url manquant');
+
+    return new Promise(function (resolve, reject) {
+      var _t0 = performance.now();
+      console.log('%c[scratch:' + deckId + '] decodeDeckBuffer START (XHR) — url='
+        + (url.length > 80 ? url.slice(0, 80) + '…' : url), 'color:#e80');
+
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'arraybuffer';
+
+      xhr.onprogress = function (e) {
+        if (e.lengthComputable) {
+          var pct = (e.loaded / e.total * 100).toFixed(0);
+          var mo = (e.loaded / 1024 / 1024).toFixed(1);
+          var totalMo = (e.total / 1024 / 1024).toFixed(1);
+          console.log('[scratch:' + deckId + '] download ' + pct + '%  (' + mo + '/' + totalMo + ' Mo)');
+          if (typeof onProgress === 'function') onProgress(e.loaded / e.total);
+        }
+      };
+
+      xhr.onload = function () {
+        if (xhr.status !== 200 && xhr.status !== 206) {
+          console.error('[scratch:' + deckId + '] XHR HTTP ' + xhr.status);
+          reject(new Error('decodeDeckBuffer: HTTP ' + xhr.status));
+          return;
+        }
+        var arr = xhr.response;
+        var dlMs = (performance.now() - _t0).toFixed(0);
+        console.log('%c[scratch:' + deckId + '] ← XHR ' + (arr.byteLength / 1024 / 1024).toFixed(2)
+          + ' Mo en ' + dlMs + 'ms', 'color:#08e;font-weight:bold');
+
+        console.log('[scratch:' + deckId + '] → ctx.decodeAudioData('
+          + (arr.byteLength / 1024 / 1024).toFixed(2) + ' Mo)…');
+        var _tdec = performance.now();
+        ctx.decodeAudioData(arr).then(function (decoded) {
+          var decMs = (performance.now() - _tdec).toFixed(0);
+          console.log('%c[scratch:' + deckId + '] ← decodeAudioData en ' + decMs + 'ms'
+            + '  → duration=' + decoded.duration.toFixed(1) + 's'
+            + '  channels=' + decoded.numberOfChannels
+            + '  sampleRate=' + decoded.sampleRate
+            + '  PCM=' + (decoded.length * decoded.numberOfChannels * 4 / 1024 / 1024).toFixed(1) + ' Mo',
+            'color:#0a0;font-weight:bold');
+          chain.scratchBuffer = decoded;
+          console.log('%c[scratch:' + deckId + '] decodeDeckBuffer TOTAL '
+            + (performance.now() - _t0).toFixed(0) + 'ms', 'color:#e80;font-weight:bold');
+          resolve(decoded);
+        }).catch(function (err) {
+          console.error('[scratch:' + deckId + '] decodeAudioData ÉCHEC:', err);
+          reject(err);
+        });
+      };
+
+      xhr.onerror = function () {
+        console.error('[scratch:' + deckId + '] XHR réseau erreur');
+        reject(new Error('decodeDeckBuffer: erreur réseau (XHR)'));
+      };
+      xhr.ontimeout = function () {
+        console.error('[scratch:' + deckId + '] XHR timeout');
+        reject(new Error('decodeDeckBuffer: timeout réseau (XHR)'));
+      };
+
+      xhr.send();
+    });
+  }
+
+  // Bascule vers le scratch. Déconnecte le MediaElementSource de scratchGain,
+  // crée un AudioBufferSourceNode branché sur scratchGain, démarre à
+  // scratchOffset (position courante du <audio>).
+  async function engageScratch(deckId) {
+    const chain = chains[deckId];
+    if (!ctx || !chain) throw new Error('engageScratch: deck "' + deckId + '" absent');
+    if (chain.scratchEngaged) return;
+    if (!chain.scratchBuffer) {
+      throw new Error('engageScratch: buffer non décodé (appeler decodeDeckBuffer)');
+    }
+    console.log('%c[scratch:' + deckId + '] engageScratch: swap source → AudioBufferSourceNode'
+      + '  buffer.duration=' + chain.scratchBuffer.duration.toFixed(1) + 's',
+      'color:#e80');
+    // Mémorise la position de lecture courante pour démarrer le scratch
+    // au même endroit (et pouvoir y revenir au disengage).
+    const offset = isFinite(chain.audioEl.currentTime)
+      ? chain.audioEl.currentTime : 0;
+    chain.scratchOffset = Math.max(0, Math.min(offset,
+      chain.scratchBuffer.duration));
+
+    // Ducking avant le swap (évite le clic de reconnexion).
+    await duckDown(chain);
+    // On met en pause le <audio> pour ne pas avancer en arrière-plan
+    // (son signal est de toute façon déconnecté du graphe).
+    const wasPlaying = !chain.audioEl.paused;
+    try { chain.audioEl.pause(); } catch (e) { /* ignore */ }
+
+    // Crée le nœud scratch. onended remonte quand le buffer atteint la fin
+    // (scratch en lecture avant prolongé) — on le neutralise pendant le
+    // scratch actif (recréation au prochain geste).
+    const node = ctx.createBufferSource();
+    node.buffer = chain.scratchBuffer;
+    node.playbackRate.value = 0; // figé au départ (l'utilisateur tient la platine)
+    node.connect(chain.scratchGain);
+    try {
+      node.start(0, chain.scratchOffset);
+    } catch (e) {
+      // start() peut throw si offset > duration (fin de morceau).
+      node.disconnect();
+      duckUp(chain, 1);
+      throw e;
+    }
+    chain.scratchNode = node;
+    chain.scratchEngaged = true;
+    chain.scratchStartTime = ctx.currentTime;
+
+    // On déconnecte le MediaElementSource du scratchGain (il n'alimente
+    // plus la chaîne EQ). On garde la référence pour la rebrancher au
+    // disengage. ⚠️ On ne déconnecte pas TOUT (sinon on coupe aussi le
+    // tap analyser qui part de djFilter — on veut juste remplacer la
+    // source). disconnect() sans args coupe toutes les sorties du nœud,
+    // ce qui est ce qu'on veut pour le source.
+    try { chain.source.disconnect(); } catch (e) { /* déjà déconnecté */ }
+
+    // Remonte le gain (le swap est fait, on peut réentendre).
+    duckUp(chain, 1);
+
+    return {
+      offset: chain.scratchOffset,
+      wasPlaying: wasPlaying,
+    };
+  }
+
+  // Rebascule vers le streaming. Stoppe le nœud scratch, rebranche le
+  // MediaElementSource sur scratchGain, remet audio.currentTime à posSec,
+  // reprend la lecture si wasPlaying (renvoyé par engageScratch).
+  function disengageScratch(deckId, posSec, wasPlaying) {
+    const chain = chains[deckId];
+    if (!ctx || !chain || !chain.scratchEngaged) return;
+    const target = Math.max(0, Number(posSec) || 0);
+
+    // Ducking, swap, remontée.
+    duckDown(chain).then(function () {
+      // Stoppe et libère le nœud scratch (one-shot → irréutilisable).
+      try {
+        if (chain.scratchNode) {
+          chain.scratchNode.onended = null;
+          chain.scratchNode.stop();
+          chain.scratchNode.disconnect();
+        }
+      } catch (e) { /* déjà stoppé */ }
+      chain.scratchNode = null;
+      chain.scratchEngaged = false;
+      chain.scratchOffset = target;
+
+      // Rebranche le MediaElementSource sur scratchGain.
+      try { chain.source.connect(chain.scratchGain); } catch (e) { /* ignore */ }
+
+      // Repositionne le <audio> à la position finale du scratch pour que
+      // la lecture normale reprenne au bon endroit.
+      try {
+        chain.audioEl.currentTime = Math.min(target,
+          isFinite(chain.audioEl.duration) ? chain.audioEl.duration : target);
+      } catch (e) { /* seek impossible (pas encore loaded) */ }
+
+      duckUp(chain, 1);
+
+      // Reprend la lecture si elle était active avant l'engage.
+      if (wasPlaying && chain.audioEl.paused) {
+        // resume() est géré par l'appelant (geste utilisateur) ; on lance
+        // juste play(). Le play() retourné est ignoré (gestion autoplay
+        // déjà traitée par audio-player.js).
+        var pr = chain.audioEl.play();
+        if (pr && typeof pr.catch === 'function') pr.catch(function () {});
+      }
+    });
+  }
+
+  // Ajuste le playbackRate du scratch (vitesse + direction). rate=0 fige,
+  // rate<0 = lecture arrière (vrai scratch), rate>0 = avant. Lissage via
+  // setTargetAtTime pour éviter les craquements d'inversion de sens.
+  function setScratchRate(deckId, rate) {
+    const chain = chains[deckId];
+    if (!ctx || !chain || !chain.scratchNode) return;
+    const r = Math.max(-SCRATCH_MAX_RATE, Math.min(SCRATCH_MAX_RATE, Number(rate) || 0));
+    chain.scratchNode.playbackRate.setTargetAtTime(r, ctx.currentTime, 0.008);
+  }
+
+  // Recrée le nœud scratch à un offset précis (seek scratch). Comme
+  // AudioBufferSourceNode est one-shot, on stoppe l'ancien et on en crée
+  // un nouveau démarré à `sec`. Utilisé quand l'utilisateur déplace
+  // violemment la platine (saut de position).
+  function seekScratch(deckId, sec) {
+    const chain = chains[deckId];
+    if (!ctx || !chain || !chain.scratchEngaged || !chain.scratchBuffer) return;
+    const offset = Math.max(0, Math.min(Number(sec) || 0,
+      chain.scratchBuffer.duration));
+    // Ducking court, swap, remontée — pour éviter le clic du stop/start.
+    duckDown(chain).then(function () {
+      try {
+        if (chain.scratchNode) {
+          chain.scratchNode.onended = null;
+          chain.scratchNode.stop();
+          chain.scratchNode.disconnect();
+        }
+      } catch (e) { /* déjà stoppé */ }
+      const node = ctx.createBufferSource();
+      node.buffer = chain.scratchBuffer;
+      node.playbackRate.value = 0;
+      node.connect(chain.scratchGain);
+      try {
+        node.start(0, offset);
+      } catch (e) {
+        node.disconnect();
+        duckUp(chain, 1);
+        return;
+      }
+      chain.scratchNode = node;
+      chain.scratchOffset = offset;
+      chain.scratchStartTime = ctx.currentTime;
+      duckUp(chain, 1);
+    });
+  }
+
+  // Position de lecture courante du scratch (pour affichage). Calculée à
+  // partir de l'offset de départ + avance du nœud (playbackRate intégré
+  // par le navigateur). Approximative (±quelques ms) mais suffisante.
+  function getScratchPosition(deckId) {
+    const chain = chains[deckId];
+    if (!chain || !chain.scratchEngaged || !chain.scratchBuffer) {
+      return chain ? chain.scratchOffset : 0;
+    }
+    const rate = chain.scratchNode ? chain.scratchNode.playbackRate.value : 0;
+    const elapsed = (ctx.currentTime - chain.scratchStartTime) * rate;
+    let pos = chain.scratchOffset + elapsed;
+    pos = Math.max(0, Math.min(pos, chain.scratchBuffer.duration));
+    return pos;
+  }
+
+  function isScratchEngaged(deckId) {
+    return !!(chains[deckId] && chains[deckId].scratchEngaged);
+  }
+
+  function getDeckBuffer(deckId) {
+    return chains[deckId] ? chains[deckId].scratchBuffer : null;
+  }
+
+  // Libère le buffer scratch d'une voie (changement de morceau / mode).
+  function clearDeckBuffer(deckId) {
+    const chain = chains[deckId];
+    if (!chain) return;
+    if (chain.scratchEngaged) {
+      // Si le scratch est actif, on le désengage proprement avant.
+      try { disengageScratch(deckId, chain.scratchOffset, false); } catch (e) {}
+    }
+    chain.scratchBuffer = null;
+  }
+
   // ===== Accesseurs =====
 
   function getAnalyser(deckId) {
@@ -377,6 +732,16 @@
     getMasterAnalyser: getMasterAnalyser,
     hasDeck: hasDeck,
     getDeckAudioElement: getDeckAudioElement,
+    // Scratch / platine (phase 11)
+    decodeDeckBuffer: decodeDeckBuffer,
+    engageScratch: engageScratch,
+    disengageScratch: disengageScratch,
+    setScratchRate: setScratchRate,
+    seekScratch: seekScratch,
+    getScratchPosition: getScratchPosition,
+    isScratchEngaged: isScratchEngaged,
+    getDeckBuffer: getDeckBuffer,
+    clearDeckBuffer: clearDeckBuffer,
     // Constantes exportées (debug / config UI)
     CONST: {
       EQ_FREQ_LOW: EQ_FREQ_LOW,
