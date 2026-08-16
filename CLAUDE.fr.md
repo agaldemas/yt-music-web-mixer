@@ -9,6 +9,14 @@ L'application fonctionne en **dual mode** :
 
 Voir `piped-enhancement-tasks-list.md` pour le plan de migration, et `tasks-list.md` pour l'état actuel du projet.
 
+## 📋 Principes de codage (KISS, YAGNI, DRY, SRP, ISP)
+
+- **KISS (Keep It Simple, Stupid)** : Privilégier des solutions simples plutôt que complexes. Une application fonctionnelle > une architecture parfaite.
+- **YAGNI (You Aren't Gonna Need It)** : Ne pas implémenter les fonctionnalités dont les utilisateurs n'ont pas besoin pour le moment. Les ajouter seulement à demande ou lorsqu'elles sont nécessaires.
+- **DRY (Don't Repeat Yourself)** : Extraire la logique partagée en fonctions réutilisables, mais éviter l'abstraction prématurée.
+- **SRP (Single Responsibility Principle)** : Chaque module fait une seule chose bien faite. Un lecteur gère le chargement ; un autre gère le graphe audio ; le mixer gère le blendage de volume.
+- **ISP (Interface Segregation)** : Les clients dépendent d'interfaces minimales. `audio-player.js` a la même API pour YouTube et les fichiers locaux — c'est ISP en action.
+
 ## Objectif produit
 
 - 2 fenêtres côte à côte : **A** (gauche) et **B** (droite). Chacune contient un lecteur (audio Piped ou IFrame YouTube) + une barre de recherche.
