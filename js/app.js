@@ -351,8 +351,20 @@
     return 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/mqdefault.jpg';
   }
 
-  function updateNowPlaying(deck) {
+  function thumbnailForVideoId(id) {
+    if (!id) return '';
+    return 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/mqdefault.jpg';
+  }
+
+  // Fallback : image placeholder (fichier dans le projet - à côté d'index.html)
+  var FALLBACK_THUMB = 'audio-file.png';
+
+  function updateNowPlaying(deck, overrideInfo) {
     if (!DeckTransport) return;
+    if (overrideInfo) {
+      DeckTransport.setNowPlaying(deck, overrideInfo);
+      return;
+    }
     var videoId = state.videoIds[deck];
     var modeLabel = (state.resolvedMode === 'piped') ? 'DJ · DSP' : 'YT IFrame';
     var info = { title: '', uploader: '', thumbnailUrl: '', modeLabel: modeLabel };
@@ -368,14 +380,15 @@
         info.thumbnailUrl = thumbnailForVideoId(videoId);
       }
     } else if (state.playerType[deck] === 'local') {
-      // Fichier local : afficher le titre stocké dans state.players
       var player = state.players[deck];
       if (player) {
         info.title = player.lastLocalTitle || videoId || '—';
-        info.thumbnailUrl = player.lastLocalCover || '';
-        info.modeLabel = 'Fichier local';
+        info.uploader = player.lastLocalArtist || '';
+        info.thumbnailUrl = player.lastLocalCover || FALLBACK_THUMB;
+        info.modeLabel = 'Fichier local' + (player.lastLocalFileName ? ' (' + player.lastLocalFileName + ')' : '');
       } else {
         info.title = videoId || '—';
+        info.thumbnailUrl = FALLBACK_THUMB;
       }
     } else {
       var player = state.players[deck];
@@ -394,6 +407,8 @@
 
     DeckTransport.setNowPlaying(deck, info);
   }
+
+  window.updateNowPlaying = updateNowPlaying;
 
   // Met à jour le bouton mute/unmute selon state.muted[deck]
   function updateMuteButtonUI(deck) {

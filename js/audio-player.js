@@ -667,23 +667,21 @@
           }
           // 3) Extraire les métadonnées du fichier (fonctions depuis local.js)
           var fileName = file.name;
-          var title = window.extractAudioMetadata(buf, mime, fileName);
-          var coverUrl = window.extractCoverImage(buf, mime);
+          var meta = (window.extractAudioMetadata) ? window.extractAudioMetadata(buf, mime, fileName) : { title: fileName, artist: '' };
+          var title = (meta && meta.title) ? meta.title : fileName;
+          var artist = (meta && meta.artist) ? meta.artist : '';
+          var coverUrl = (window.extractCoverImage) ? window.extractCoverImage(buf, mime) : null;
           // Stocker les métadonnées dans l'objet player pour accès par app.js
           var playerObj = (typeof window !== 'undefined') ? window.state.players[deckId] : null;
           if (playerObj) {
             playerObj.lastLocalTitle = title;
+            playerObj.lastLocalArtist = artist;
+            playerObj.lastLocalFileName = fileName;
             playerObj.lastLocalCover = coverUrl;
           }
           // 4) Notifier app.js pour mettre à jour l'UI
-          if (appJsExposed && typeof appJsExposed.updateNowPlaying === 'function') {
-            appJsExposed.updateNowPlaying(deck, {
-              title: title,
-              uploader: '',
-              thumbnailUrl: coverUrl || null,
-              modeLabel: 'Fichier local',
-              deckId: deckId
-            });
+          if (typeof window.updateNowPlaying === 'function') {
+            window.updateNowPlaying(deck);
           }
           return buf;
         }, function (err) {

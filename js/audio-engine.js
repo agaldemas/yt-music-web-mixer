@@ -537,10 +537,14 @@
 
     // Ducking avant le swap (évite le clic de reconnexion).
     await duckDown(chain);
-    // On met en pause le <audio> pour ne pas avancer en arrière-plan
-    // (son signal est de toute façon déconnecté du graphe).
+    // ⚠️ On NE met PAS l'<audio> en pause. Son signal est déconnecté du graphe
+    // (source.disconnect ci-dessous) → il est silencieux, mais il reste en
+    // lecture. C'est voulu : au disengage, le seek sur un élément EN LECTURE
+    // est fiable, alors qu'un seek sur un élément paused-puis-rejoué est avalé
+    // par le navigateur (le moteur rejouait à l'ancienne position → "retour à
+    // la case départ"). L'audio avance en silence pendant le scratch ; on le
+    // re-seek à la position finale au relâchement.
     const wasPlaying = !chain.audioEl.paused;
-    try { chain.audioEl.pause(); } catch (e) { /* ignore */ }
 
     // Crée le nœud scratch. onended remonte quand le buffer atteint la fin
     // (scratch en lecture avant prolongé) — on le neutralise pendant le
@@ -584,7 +588,8 @@
   function disengageScratch(deckId, posSec, wasPlaying) {
     const chain = chains[deckId];
     if (!ctx || !chain || !chain.scratchEngaged) return;
-    const target = Math.max(0, Number(posSec) || 0);
+    const dur = isFinite(chain.audioEl.duration) ? chain.audioEl.duration : 0;
+    const target = Math.max(0, Math.min(Number(posSec) || 0, dur > 0 ? dur : Infinity));
 
     // Ducking, swap, remontée.
     duckDown(chain).then(function () {
@@ -603,22 +608,47 @@
       // Rebranche le MediaElementSource sur scratchGain.
       try { chain.source.connect(chain.scratchGain); } catch (e) { /* ignore */ }
 
-      // Repositionne le <audio> à la position finale du scratch pour que
-      // la lecture normale reprenne au bon endroit.
-      try {
-        chain.audioEl.currentTime = Math.min(target,
-          isFinite(chain.audioEl.duration) ? chain.audioEl.duration : target);
-      } catch (e) { /* seek impossible (pas encore loaded) */ }
+      var audio = chain.audioEl;
 
-      duckUp(chain, 1);
+      // ⚠️ Cause réelle du "retour à la case départ" : sur un <audio> Blob EN
+      // PAUSE, un seek (currentTime=X) n'est pas honoré par le moteur de
+      // décodage (la propriété lit X mais le moteur garde l'ancienne position).
+      // À la reprise de lecture, le moteur rejoue à l'ancienne position.
+      // Fix : on engage le moteur AVANT le seek (play() silencieux à gain 0),
+      // on seek sur un élément en lecture active → seek honoré. On attend
+      // 'seeked' pour confirmer, puis on remonte le gain et on repause si
+      // l'utilisateur ne voulait pas reprendre.
+      var applySeek = function () {
+        try { audio.currentTime = target; } catch (e) { /* seek impossible */ }
+      };
 
-      // Reprend la lecture si elle était active avant l'engage.
-      if (wasPlaying && chain.audioEl.paused) {
-        // resume() est géré par l'appelant (geste utilisateur) ; on lance
-        // juste play(). Le play() retourné est ignoré (gestion autoplay
-        // déjà traitée par audio-player.js).
-        var pr = chain.audioEl.play();
-        if (pr && typeof pr.catch === 'function') pr.catch(function () {});
+      var done = false;
+      var finalize = function () {
+        if (done) return;
+        done = true;
+        duckUp(chain, 1);
+        if (!wasPlaying && !audio.paused) {
+          try { audio.pause(); } catch (e) { /* ignore */ }
+        }
+        console.log('[scratch:' + deckId + '] disengageScratch FINAL currentTime='
+          + (isFinite(audio.currentTime) ? audio.currentTime.toFixed(2) : '?')
+          + 's (target=' + target.toFixed(2) + '  paused=' + audio.paused + ')');
+      };
+
+      var afterSeek = function () {
+        audio.addEventListener('seeked', finalize, { once: true });
+        setTimeout(finalize, 150);
+      };
+
+      if (audio.paused) {
+        var pr = audio.play();
+        var onEngaged = function () { applySeek(); afterSeek(); };
+        if (pr && typeof pr.then === 'function') {
+          pr.then(onEngaged, function () { applySeek(); afterSeek(); });
+        } else { onEngaged(); }
+      } else {
+        applySeek();
+        afterSeek();
       }
     });
   }

@@ -201,7 +201,7 @@
       }
     }
     if (c.els.npTitle) c.els.npTitle.textContent = info.title || '—';
-    if (c.els.npMeta) c.els.npMeta.textContent = [info.uploader, info.modeLabel].filter(Boolean).join(' · ');
+    if (c.els.npMeta) c.els.npMeta.innerHTML = [info.uploader, info.modeLabel].filter(Boolean).join('<br>');
   }
 
   // Met à jour la seek bar + les temps d'un deck (appelé par la loop).

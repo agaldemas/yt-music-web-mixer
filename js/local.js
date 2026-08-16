@@ -114,119 +114,78 @@
 // ===== API publique d'extraction de métadonnées ID3 =====
 
 /**
- * Extraire le titre d'un fichier audio depuis les tags ID3
- * @param {ArrayBuffer} buf - Buffer du fichier audio
- * @param {string} mime - Type MIME du fichier
- * @param {string} fileName - Nom du fichier (fallback)
- * @returns {string} Titre extrait ou fallback
+ * Extraire les métadonnées d'un fichier audio depuis les tags ID3
+ * @returns {Object} { title, artist }
  */
 function extractAudioMetadata(buf, mime, fileName) {
-  if (buf.byteLength < 100) return fileName;
+  if (!buf) return { title: fileName, artist: '' };
+  var data = (buf instanceof Uint8Array) ? buf : new Uint8Array(buf);
+  if (data.byteLength < 10) return { title: fileName, artist: '' };
 
-  // Recherche du tag ID3v2 en début de fichier
-  var id3v2Signature = [0x49, 0x44, 0x33]; // "ID3"
-  var positions = [];
-  for (var i = 0; i < buf.byteLength - 3; i++) {
-    if (buf[i] === 0x49 && buf[i+1] === 0x44 && buf[i+2] === 0x33) {
-      // Version major (octet suivant), vérifier ID3v2.3 ou 2.4
-      if (i + 4 < buf.byteLength && buf[i+3] >= 0x04 && buf[i+3] <= 0x06) {
-        positions.push(i);
+  try {
+    if (data[0] !== 0x49 || data[1] !== 0x44 || data[2] !== 0x33) return { title: fileName, artist: '' };
+
+    var pos = 10;
+    var result = { title: null, artist: null };
+
+    while (pos + 10 < data.byteLength) {
+      var id = String.fromCharCode(data[pos], data[pos+1], data[pos+2], data[pos+3]);
+      var size = (data[pos+4] << 24) | (data[pos+5] << 16) | (data[pos+6] << 8) | data[pos+7];
+
+      if (id === 'TIT2') {
+        var titleData = data.slice(pos + 10, pos + 10 + size);
+        result.title = new TextDecoder('utf-8').decode(titleData).trim();
+      } else if (id === 'TPE1') {
+        var artistData = data.slice(pos + 10, pos + 10 + size);
+        result.artist = new TextDecoder('utf-8').decode(artistData).trim();
       }
+      pos += 10 + size;
+      if (result.title && result.artist) break;
     }
+    return {
+      title: result.title || fileName,
+      artist: result.artist || ''
+    };
+  } catch (e) {
+    return { title: fileName, artist: '' };
   }
-
-  var title = fileName;
-  // Si trouvé, tente de lire le titre (frame TIT1 ou TIT2)
-  if (positions.length > 0) {
-    try {
-      var pos = positions[0];
-      if (pos + 6 < buf.byteLength) {
-        var sizeBuf = buf.subarray(pos + 4, pos + 6);
-        var size = (sizeBuf[0] & 0x7F) | ((sizeBuf[1] & 0x7F) << 8);
-        if (pos + 6 + size < buf.byteLength && size > 0 && size < 65536) {
-          var frameData = buf.subarray(pos + 6, pos + 6 + size);
-          // Premier octet = type de frame
-          var frameType = frameData[0];
-          var frameBytes = frameData.subarray(1);
-
-          if (frameType === 0x54) { // TITX (titre)
-            // UTF-16BE ou ISO-8859-1 selon l'octet de langue/encodage (pos 3)
-            var encOct = frameBytes[3];
-            var isUtf16 = (encOct & 0x80) !== 0;
-            // Longueur de la chaîne (pos 4), ignorée, on utilise la taille du frame
-            try {
-              title = new TextDecoder(isUtf16 ? 'utf-16be' : 'iso-8859-1').decode(frameBytes);
-              title = title.trim();
-            } catch (e) {
-              title = fileName;
-            }
-          }
-        }
-      }
-    } catch (e) { /* ignore */ }
-  }
-
-  // Fallback simple : utiliser le nom du fichier sans extension
-  var nameWithoutExt = fileName.replace(/\.[^\.]+$/, '');
-  return title || nameWithoutExt;
 }
 
 /**
- * Extraire l'image de cover (ID3 picture frame)
- * @param {ArrayBuffer} buf - Buffer du fichier audio
- * @param {string} mime - Type MIME du fichier
- * @returns {string|null} Blob URL de l'image ou null
+ * Extraire l'image de cover (ID3 picture frame 'APIC')
  */
 function extractCoverImage(buf, mime) {
-  if (buf.byteLength < 50) return null;
-
-  var id3v2Signature = [0x49, 0x44, 0x33];
-  var positions = [];
-  for (var i = 0; i <= buf.byteLength - 3; i++) {
-    if (buf[i] === 0x49 && buf[i+1] === 0x44 && buf[i+2] === 0x33) {
-      if (i + 4 < buf.byteLength && buf[i+3] >= 0x04 && buf[i+3] <= 0x06) {
-        positions.push(i);
-      }
-    }
-  }
-
-  if (positions.length === 0) return null;
+  if (!buf) return null;
+  var data = (buf instanceof Uint8Array) ? buf : new Uint8Array(buf);
+  if (data.byteLength < 10) return null;
 
   try {
-    var pos = positions[0];
-    if (pos + 10 < buf.byteLength) {
-      // Lecture du nombre de frames suivant l'en-tête ID3
-      var numFrames = (buf[pos+6] & 0x7F) | ((buf[pos+7] & 0x7F) << 8);
-      if (numFrames > 10) return null; // trop de frames, éviter le dépassement
+    if (data[0] !== 0x49 || data[1] !== 0x44 || data[2] !== 0x33) return null;
 
-      var frameIdx = 0;
-      var offset = pos + 10;
-      while (frameIdx < numFrames && offset + 10 <= buf.byteLength) {
-        if (buf[offset] === 0x54) { // Frame TITX (titre)
-          frameIdx++;
-        } else if (buf[offset] === 0xF0) { // Picture frame
-          var pictSize = (buf[offset+1] & 0x7F) | ((buf[offset+2] & 0x7F) << 8) |
-                         ((buf[offset+3] & 0x7F) << 16) |
-                         ((buf[offset+4] & 0x7F) << 24);
-          if (pictSize > 0 && pictSize < 1024*1024) {
-            var pictureData = buf.subarray(offset + 5, offset + 5 + pictSize);
-            // Premier octet = type d'image (1=PNG, 2=JPEG, etc.)
-            var imgType = pictureData[0];
-            if (imgType === 1 || imgType === 2) { // PNG ou JPEG
-              var mimeImg = (imgType === 1) ? 'image/png' : 'image/jpeg';
-              var blob = new Blob([pictureData], { type: mimeImg });
-              return URL.createObjectURL(blob);
-            }
-          }
-          frameIdx++;
-        } else {
-          // Skip la taille + type + encodage + langue + copyright + description
-          offset += 5 + ((buf[offset+1] & 0x7F) | ((buf[offset+2] & 0x7F) << 8));
+    var pos = 10;
+    while (pos + 10 < data.byteLength) {
+      var id = String.fromCharCode(data[pos], data[pos+1], data[pos+2], data[pos+3]);
+      var size = (data[pos+4] << 24) | (data[pos+5] << 16) | (data[pos+6] << 8) | data[pos+7];
+      
+      if (id === 'APIC') {
+        var offset = pos + 10;
+        // Format APIC: encoding(1), mime(0-30), type(1), description(0-254), data
+        var mimePos = offset + 1;
+        while (mimePos < data.byteLength && data[mimePos] !== 0) mimePos++;
+        var typePos = mimePos + 1;
+        var descPos = typePos + 1;
+        while (descPos < data.byteLength && data[descPos] !== 0) descPos++;
+        var imageDataPos = descPos + 1;
+        var imageDataLen = (pos + 10 + size) - imageDataPos;
+        
+        if (imageDataLen > 0) {
+          var imageData = data.slice(imageDataPos, pos + 10 + size);
+          return URL.createObjectURL(new Blob([imageData], { type: 'image/jpeg' }));
         }
       }
+      pos += 10 + size;
     }
-  } catch (e) { /* ignore */ }
-
+  } catch (e) {}
   return null;
 }
 
