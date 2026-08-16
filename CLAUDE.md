@@ -1,6 +1,6 @@
 # YT Music Web Mixer — Agent Guide
 
-## 📋 Principles (KISS, YAGNI, DRY, SRP, ISP)
+## 📋 Coding Principles (KISS, YAGNI, DRY, SRP, ISP)
 
 - **KISS (Keep It Simple, Stupid)**: Prefer simple solutions over clever ones. A working app > perfect architecture.
 - **YAGNI (You Aren't Gonna Need It)**: Don't implement features users don't need yet. Add them only when explicitly requested or proven necessary.
