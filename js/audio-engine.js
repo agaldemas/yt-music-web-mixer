@@ -229,6 +229,7 @@
       djFilter: djFilter,
       deckGain: deckGain,
       analyser: analyser,
+      scratchRate: 0,        // dernier rate POSÉ (pour accumulateOffset en arrière)
     };
 
     // Si crossfadeP a déjà été réglé avant la création de la chaîne,
@@ -623,14 +624,42 @@
   }
 
   // Ajuste le playbackRate du scratch (vitesse + direction). rate=0 fige,
-  // rate<0 = lecture arrière (vrai scratch), rate>0 = avant. Lissage court via
-  // setTargetAtTime (3ms) : évite les craquements d'inversion de sens tout en
-  // restant très réactif au doigt (sensation vinyle collé).
+  // rate<0 = lecture arrière (vrai scratch), rate>0 = avant.
+  //
+  // ⚠️ Avant chaque changement de rate, on ACCUMULE la position réelle
+  // avancée depuis le dernier ancrage (scratchOffset += dt × oldRate), puis
+  // on re-ancre scratchStartTime = maintenant. On lit oldRate sur la valeur
+  // POSÉE (setValueAtTime, instantané) — pas sur un ramp — pour que
+  // l'accumulation soit EXACTE sur plusieurs tours (1 tour = SEC_PER_TURN s).
+  // Sans accumulation, getScratchPosition ferait totalElapsed × currentRate
+  // (faux : le rate change tout le temps) → la position retombait à l'initial.
   function setScratchRate(deckId, rate) {
     const chain = chains[deckId];
     if (!ctx || !chain || !chain.scratchNode) return;
+    const t = ctx.currentTime;
+    // Accumule la position réelle depuis le dernier ancrage. On utilise le
+    // dernier rate POSÉ (chain.scratchRate) — pas .value qui peut être en
+    // plein ramp et donnerait une accumulation inexacte (problème multi-tours).
+    if (chain.scratchStartTime && chain.scratchBuffer) {
+      const oldRate = chain.scratchRate || 0;
+      const dt = t - chain.scratchStartTime;
+      chain.scratchOffset = chain.scratchOffset + dt * oldRate;
+      // Boucle multi-tours : quand on dépasse la fin (plusieurs tours en
+      // avant) ou le début (plusieurs tours en arrière), on reboucle
+      // modulo la durée du morceau — vraie platine qui n'a pas de "bord".
+      const dur = chain.scratchBuffer.duration;
+      if (dur > 0) {
+        chain.scratchOffset = ((chain.scratchOffset % dur) + dur) % dur;
+      } else {
+        chain.scratchOffset = 0;
+      }
+    }
+    chain.scratchStartTime = t;
     const r = Math.max(-SCRATCH_MAX_RATE, Math.min(SCRATCH_MAX_RATE, Number(rate) || 0));
-    chain.scratchNode.playbackRate.setTargetAtTime(r, ctx.currentTime, 0.003);
+    chain.scratchRate = r;
+    // setValueAtTime (instantané) : l'accumulation reste exacte. Le lissage
+    // est déjà fait côté scratch.js (low-pass SMOOTH) → pas de ramp AudioParam.
+    chain.scratchNode.playbackRate.setValueAtTime(r, t);
   }
 
   // Recrée le nœud scratch à un offset précis (seek scratch). Comme
@@ -669,18 +698,20 @@
     });
   }
 
-  // Position de lecture courante du scratch (pour affichage). Calculée à
-  // partir de l'offset de départ + avance du nœud (playbackRate intégré
-  // par le navigateur). Approximative (±quelques ms) mais suffisante.
+  // Position de lecture courante du scratch (pour affichage et reprise au
+  // disengage). scratchOffset est ACCUMULÉ à chaque setScratchRate (vrai
+  // delta intégré) ; on ajoute seulement l'avance depuis le dernier ancrage.
+  // Au relâchement → disengageScratch reçoit la position réelle, pas l'initiale.
   function getScratchPosition(deckId) {
     const chain = chains[deckId];
-    if (!chain || !chain.scratchEngaged || !chain.scratchBuffer) {
-      return chain ? chain.scratchOffset : 0;
-    }
-    const rate = chain.scratchNode ? chain.scratchNode.playbackRate.value : 0;
-    const elapsed = (ctx.currentTime - chain.scratchStartTime) * rate;
-    let pos = chain.scratchOffset + elapsed;
-    pos = Math.max(0, Math.min(pos, chain.scratchBuffer.duration));
+    if (!chain || !chain.scratchBuffer) return chain ? chain.scratchOffset : 0;
+    if (!chain.scratchEngaged) return chain.scratchOffset;
+    // Rate POSÉ (pas .value en plein ramp) pour une position exacte multi-tours.
+    const rate = chain.scratchRate || 0;
+    const dt = ctx.currentTime - chain.scratchStartTime;
+    let pos = chain.scratchOffset + dt * rate;
+    const dur = chain.scratchBuffer.duration;
+    if (dur > 0) pos = ((pos % dur) + dur) % dur;  // boucle (vraie platine)
     return pos;
   }
 

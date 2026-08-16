@@ -38,7 +38,14 @@
   // des Pointer Events (~60-120 Hz vs audio 44.1 kHz). Bas = réactif.
   // GEAR : rapport rotation platter / angle du curseur pendant un scratch.
   // 1.0 = la platine suit 1:1 le doigt (vraie sensation vinyle attrapé).
-  var SENS = 0.020;
+  //
+  // Vrai vinyle 33⅓ rpm : 1 tour physique = 1,8 s de audio (SEC_PER_TURN).
+  // Le rate naturel = vitesseAngulaire / vitesseAngulaireNominale, donc
+  // SENS = SEC_PER_RAD. Sur plusieurs tours, l'avance/recul est proportionnel
+  // au nombre de tours (1 tour ≈ 1,8 s), comme une vraie platine.
+  var SEC_PER_TURN = 1.8;    // 1 tour de platine = 1,8 s audio (vinyle 33⅓ rpm)
+  var SEC_PER_RAD = SEC_PER_TURN / (2 * Math.PI); // ~0,286 s/rad
+  var SENS = SEC_PER_RAD;    // rate = angularVelocity(rad/s) × SENS
   var MAX_RATE = 3;
   var SMOOTH = 0.15;          // 0 = pas de lissage, 1 = figé
   var GEAR = 1.0;             // rotation visuelle par radian de mouvement curseur
@@ -504,10 +511,11 @@ function disengage(deck) {
         var dy = e.clientY - p._startY;
         if (Math.sqrt(dx * dx + dy * dy) < MOVE_THRESHOLD_PX) return;
       }
-      // Tente d'abord un re-seek (saut), sinon mise à jour du rate continu.
-      if (!maybeSeek(deck, e.clientX, e.clientY)) {
-        updateRate(deck, e.clientX, e.clientY);
-      }
+      // Scratch continu purement basé sur le rate (accumulation de position
+      // dans AudioEngine.setScratchRate). Pas de saut de position : les
+      // multi-tours avancent/reculent proportionnellement au nombre de tours,
+      // comme une vraie platine (1 tour ≈ SEC_PER_TURN s de audio).
+      updateRate(deck, e.clientX, e.clientY);
     }
 
     function onUp(e) {

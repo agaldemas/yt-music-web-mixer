@@ -34,6 +34,10 @@
  */
 
 (function () {
+  // ===== Accès à app.js pour mettre à jour l'UI now-playing =====
+  var appJsExposed = (typeof app !== 'undefined') ? app : null;
+
+  // ===== Accès à app.js pour mettre à jour l'UI now-playing =====
   // ===== États unifiés (mêmes valeurs que YTWrapper.STATE) =====
   // On réutilise YTWrapper.STATE s'il est déjà chargé pour éviter une
   // divergence entre les deux backends. Sinon, on définit un fallback local.
@@ -142,7 +146,7 @@
     const state = {
       deckId: deckId,
       currentVideoId: '',
-      // Position de lecture mémorisée pour reprise après refresh d'URL
+      // playerType sera mis à jour par app.js et loadLocalFile
       lastKnownTime: 0,
       // Vrai si playVideo() a été demandé pendant loading (à appliquer au ready)
       pendingPlay: false,
@@ -611,6 +615,12 @@
           audio.src = file;
           audio.load();
           state.currentVideoId = 'local';
+          // Pas de métadonnées disponibles depuis une URL distante sans fetch
+          var playerObj = (typeof window !== 'undefined') ? window.state.players[deckId] : null;
+          if (playerObj) {
+            playerObj.lastLocalTitle = file.replace(/^[^:]+:\/\//, '').replace(/\/.*$/, '');
+            playerObj.lastLocalCover = null;
+          }
           return Promise.resolve();
         }
         // File / Blob : lecture en mémoire (pas de fetch réseau). Même pipeline
@@ -618,6 +628,8 @@
         var mime = file.type || 'audio/mpeg';
         resetSource();
         state.currentVideoId = 'local';
+        // Mettre à jour l'état global pour que app.js sache qu'on est en mode local
+        if (window.state) window.state.playerType[deckId] = 'local';
         var _t0 = performance.now();
         var mo = (file.size / 1024 / 1024).toFixed(2);
         console.log('%c[audio:' + deckId + '] ▼ loadLocalFile START — ' + mo + ' Mo  (mime=' + mime + ')', 'color:#08e');
@@ -653,9 +665,28 @@
             console.warn('[audio:' + deckId + '] loadLocalFile: loadDeckBufferFromBlob échec', e);
             scratchReject(e);
           }
+          // 3) Extraire les métadonnées du fichier (fonctions depuis local.js)
+          var fileName = file.name;
+          var title = window.extractAudioMetadata(buf, mime, fileName);
+          var coverUrl = window.extractCoverImage(buf, mime);
+          // Stocker les métadonnées dans l'objet player pour accès par app.js
+          var playerObj = (typeof window !== 'undefined') ? window.state.players[deckId] : null;
+          if (playerObj) {
+            playerObj.lastLocalTitle = title;
+            playerObj.lastLocalCover = coverUrl;
+          }
+          // 4) Notifier app.js pour mettre à jour l'UI
+          if (appJsExposed && typeof appJsExposed.updateNowPlaying === 'function') {
+            appJsExposed.updateNowPlaying(deck, {
+              title: title,
+              uploader: '',
+              thumbnailUrl: coverUrl || null,
+              modeLabel: 'Fichier local',
+              deckId: deckId
+            });
+          }
           return buf;
-        });
-        full.catch(function (err) {
+        }, function (err) {
           scratchReject(err);
         });
         state.loadPromise = full;

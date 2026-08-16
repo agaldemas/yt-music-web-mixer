@@ -29,7 +29,7 @@
   // État global
   const state = {
     players: { A: null, B: null },       // wrappers lecteur (Piped ou IFrame)
-    playerType: { A: 'iframe', B: 'iframe' }, // 'piped' | 'iframe' (type du wrapper courant)
+    playerType: { A: 'piped', B: 'piped' }, // 'piped' | 'local' | 'iframe' (type du wrapper courant)
     ready: { A: false, B: false },
     muted: { A: false, B: false },
     videoIds: { A: '', B: '' },
@@ -366,6 +366,16 @@
       } else {
         info.title = videoId ? ('Chargement… ' + videoId) : '—';
         info.thumbnailUrl = thumbnailForVideoId(videoId);
+      }
+    } else if (state.playerType[deck] === 'local') {
+      // Fichier local : afficher le titre stocké dans state.players
+      var player = state.players[deck];
+      if (player) {
+        info.title = player.lastLocalTitle || videoId || '—';
+        info.thumbnailUrl = player.lastLocalCover || '';
+        info.modeLabel = 'Fichier local';
+      } else {
+        info.title = videoId || '—';
       }
     } else {
       var player = state.players[deck];
