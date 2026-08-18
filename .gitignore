@@ -23,6 +23,9 @@ node_modules/
 dist/
 build/
 
+# Cache audio extrait par le serveur local (yt-dlp -x)
+cache/
+
 # Sauvegardes
 *.bak
 *.tmp

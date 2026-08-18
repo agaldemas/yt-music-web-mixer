@@ -53,7 +53,9 @@ npm start
 
 Open <http://localhost:5400> in your browser. Without `yt-dlp`, the frontend still starts, but DJ mode falls back to Piped/IFrame.
 
-> ⚠️ **`yt-dlp` version matters** — the **stable** Homebrew release (`2026.07.04`) is known to be **broken for DJ mode**: it extracts URLs (`c=ANDROID_VR`) that YouTube's CDN rejects with HTTP 403, so `/api/audio/:id` returns 502 and no audio plays. A `brew upgrade yt-dlp` can silently break the app this way. The fix is to install the **nightly** build of `yt-dlp`, which uses the `visionos` client and produces replayable URLs.
+> 🎛️ **How DJ mode works now (file-cache extraction)** — instead of relaying YouTube's fragile CDN URLs (which get blocked by 403 on open Range requests and throttled to ~30 KB/s), the server **downloads the full audio once** via `yt-dlp -x` (which handles YouTube's throttling/signatures internally), extracts it to an MP3 with **ffmpeg**, and caches it on disk (`cache/audio/<videoId>.mp3`). The client then streams this local file with native HTTP Range support (`206` on `bytes=0-` → the Web Audio tee and scratch work flawlessly). Track metadata (title, thumbnail, uploader) comes from YouTube's fast **oEmbed** endpoint (`/api/streams/:id` answers in ~0.15 s, no `yt-dlp` involved), and `yt-dlp` is **only** invoked on the first `/api/audio/:id` of a track — the server boot no longer waits on it.
+>
+> ⚠️ **`yt-dlp` version matters** — the **stable** Homebrew release (`2026.07.04`) is known to be **broken for DJ mode**: with `-x` it fails to download (`HTTP Error 403`, the `c=ANDROID_VR` client it selects is non-replayable). A `brew upgrade yt-dlp` can silently break the app this way. The fix is to install the **nightly** build of `yt-dlp` (≥ `2026.08.18`), which uses the `visionos` client and downloads fine.
 >
 > Install the nightly on macOS (place it before the brew binary in your PATH):
 > ```bash
@@ -63,7 +65,9 @@ Open <http://localhost:5400> in your browser. Without `yt-dlp`, the frontend sti
 > hash -r
 > yt-dlp --version   # should show 2026.08.x (not 2026.07.04)
 > ```
-> **Note on load time**: the nightly is slower to extract (~8–10 s per video on first load, vs ~2 s for the broken stable) because it downloads the YouTube webpage + player JS and resolves throttling signatures to get a replayable URL. This cost is paid **once per video** — the server caches the extracted URL (often valid for ~6 months), so subsequent loads of the same track are instant.
+> `ffmpeg` is also required for the audio extraction (`yt-dlp -x`). It is checked at server boot.
+>
+> **Note on load time**: the first time a track is loaded, extraction (`yt-dlp -x` + ffmpeg) takes ~10–15 s while the full file is downloaded and converted. This cost is paid **once per track** — the resulting MP3 is cached on disk and served instantly on every subsequent load (and survives server restarts). The HTML and metadata are fast to load: the server no longer runs the slow `yt-dlp --version` check at startup, and `/api/streams/:id` uses oEmbed (~0.15 s) instead of a full `yt-dlp -J` extraction.
 
 For search only, a static server is also possible. The `fetch()` call to the YouTube Data API can be blocked under `file://` (notably on Chrome):
 

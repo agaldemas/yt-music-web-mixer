@@ -53,7 +53,9 @@ npm start
 
 Ouvrez ensuite <http://localhost:5400> dans votre navigateur. Sans `yt-dlp`, le frontend reste accessible, mais le mode DJ retombe sur Piped/IFrame.
 
-> ⚠️ **La version de `yt-dlp` est critique** — la version **stable** Homebrew (`2026.07.04`) est **cassée pour le mode DJ** : elle extrait des URLs (`c=ANDROID_VR`) que le CDN de YouTube rejette en HTTP 403, donc `/api/audio/:id` renvoie 502 et aucun son ne sort. Un simple `brew upgrade yt-dlp` peut silencieusement casser l'appli de cette façon. La solution est d'installer la version **nightly** de `yt-dlp`, qui utilise le client `visionos` et produit des URLs replayables.
+> 🎛️ **Fonctionnement du mode DJ (extraction + cache disque)** — au lieu de retransmettre les URLs fragiles du CDN YouTube (bloquées en 403 sur les Range ouverts et bridées à ~30 Ko/s), le serveur **télécharge l'audio une seule fois** via `yt-dlp -x` (qui gère le throttling/les signatures YouTube en interne), l'extrait en MP3 avec **ffmpeg**, et le met en cache sur disque (`cache/audio/<videoId>.mp3`). Le client streame alors ce fichier local avec support natif du Range HTTP (`206` sur `bytes=0-` → le tee Web Audio et le scratch fonctionnent parfaitement). Les métadonnées du morceau (titre, vignette, auteur) viennent de l'endpoint **oEmbed** de YouTube (`/api/streams/:id` répond en ~0,15 s, sans `yt-dlp`), et `yt-dlp` n'est invoqué **qu'au 1er** `/api/audio/:id` d'un morceau — le démarrage du serveur ne l'attend plus.
+>
+> ⚠️ **La version de `yt-dlp` est critique** — la version **stable** Homebrew (`2026.07.04`) est **cassée pour le mode DJ** : avec `-x` le téléchargement échoue (`HTTP Error 403`, le client `c=ANDROID_VR` qu'elle sélectionne n'est pas replayable). Un simple `brew upgrade yt-dlp` peut silencieusement casser l'appli de cette façon. La solution est d'installer la version **nightly** de `yt-dlp` (≥ `2026.08.18`), qui utilise le client `visionos` et télécharge correctement.
 >
 > Installation de la nightly sur macOS (à placer avant le binaire brew dans le PATH) :
 > ```bash
@@ -63,7 +65,9 @@ Ouvrez ensuite <http://localhost:5400> dans votre navigateur. Sans `yt-dlp`, le 
 > hash -r
 > yt-dlp --version   # doit afficher 2026.08.x (pas 2026.07.04)
 > ```
-> **Note sur le temps de chargement** : la nightly est plus lente à extraire (~8–10 s par vidéo au 1er chargement, contre ~2 s pour la stable cassée) car elle doit télécharger la webpage YouTube + le player JS et résoudre les signatures de throttling pour obtenir une URL replayable. Ce coût n'est payé qu'**une seule fois par vidéo** — le serveur met en cache l'URL extraite (souvent valide ~6 mois), donc les chargements suivants du même morceau sont instantanés.
+> `ffmpeg` est également requis pour l'extraction audio (`yt-dlp -x`). Il est vérifié au démarrage du serveur.
+>
+> **Note sur le temps de chargement** : au 1er chargement d'un morceau, l'extraction (`yt-dlp -x` + ffmpeg) prend ~10–15 s (téléchargement complet + conversion). Ce coût n'est payé qu'**une seule fois par morceau** — le MP3 résultant est mis en cache sur disque et servi instantanément à chaque chargement suivant (et survit aux redémarrages du serveur). L'affichage du HTML et des métadonnées est rapide : le serveur ne lance plus le lent `yt-dlp --version` au démarrage, et `/api/streams/:id` utilise oEmbed (~0,15 s) au lieu d'une extraction `yt-dlp -J` complète.
 
 Pour la recherche uniquement, un serveur statique reste possible. L'appel `fetch()` vers l'API YouTube Data peut être bloqué en `file://` (notamment sur Chrome) :
 

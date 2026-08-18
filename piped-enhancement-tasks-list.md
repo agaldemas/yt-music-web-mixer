@@ -171,6 +171,47 @@ Nouveau module dédié à la récupération et gestion des URLs de flux audio Pi
 - Le serveur pourrait à terme faire un **self-test au démarrage** : extraire une vidéo-test et fetcher son URL avec Range → si 403, marquer yt-dlp comme inutilisable et logger un warning explicite ("version yt-dlp produit des URLs non-replayables, installez la nightly"). Non implémenté (YAGNI pour l'instant).
 - Pour une robustesse maximale : plugin PO-Token (bgutil-ytdlp-pot-provider) côté serveur, qui permet au client `web` de produire des URLs replayables. Plus lourd à déployer, pas nécessaire tant que la nightly marche.
 
+### 1.2 — Relais CDN → extraction fichier + cache disque (FIXÉ [x])
+
+> 📌 **Refonte 2026-08-18 (suite)** — le relais CDN googlevideo (`relayOnce` qui fetchait l'URL amont en streaming) a été **abandonné** au profit d'une extraction fichier via `yt-dlp -x` + ffmpeg. Le relais CDN était trop fragile (verrouillage 403 sur Range ouvert, blocage à ~960 Ko, signatures à résoudre côté serveur). L'ancienne version est sauvegardée dans `server/server-yt-dlp.js`.
+
+**Principe de la nouvelle approche (FICHIER-CACHÉ) :**
+- Au 1er `GET /api/audio/:id` pour une vidéo, le serveur lance `yt-dlp -x --audio-format mp3 --audio-quality 5 -o cache/audio/<id>.%(ext)s <watchUrl>`.
+- yt-dlp **télécharge le flux complet** puis **extrait l'audio** via ffmpeg → `cache/audio/<id>.mp3` (~5 Mo pour 4 min à qualité 5).
+- Le fichier est servi via `res.sendFile()` (support **HTTP Range natif** pour le seek, `206` sur `bytes=N-M`).
+- Les appels suivants resservent le fichier depuis le disque → **instantané** (0.038 s mesuré).
+- yt-dlp gère lui-même ses propres requêtes Range, signatures `nsig`, PO-Tokens internes lors du téléchargement complet → il sait passer les verrous que notre relais HTTP ne savait pas passer. **Zéro 403, zéro blocage à 960 Ko** (testé : 12 Mo/s de débit, fichier complet de 5.4 Mo téléchargé).
+
+**Pourquoi c'est plus robuste que le relais CDN :**
+- Le relais CDN devait résoudre les signatures `nsig` côté serveur (impossible sans interpréter le player JS `base.js`) → 403 systématique sur le client ANDROID_VR.
+- L'extraction fichier délègue TOUT ce travail à yt-dlp (qui le sait faire) → on ne réinvente pas la logique anti-throttling côté serveur.
+- Le fichier .mp3 est **local et stable** : le tee client (`fetch Range: bytes=0-` dans `loadDeckArrayBuffer`) marche à 100 % sur un fichier local, plus de CDN fragile, plus de taint cross-origin.
+- **Bonus scratch** : le buffer PCM est décodé instantanément depuis le Blob local (plus de tee à moitié chargé).
+
+- [x] **`extractAudio(videoId)`** : `yt-dlp -x --audio-format mp3` → fichier `cache/audio/<id>.mp3`. Déduplication via `extracting` Map (évite 2 `-x` pour le même videoId). Gestion du cas où yt-dlp sort `m4a`/`opus` (on garde le fichier tel quel, le `<audio>` le lit).
+- [x] **`fetchMeta(videoId)` réécrite avec oEmbed** : `https://www.youtube.com/oembed?url=…` (RAPIDE ~0.15 s, sans clé, sans yt-dlp) au lieu de `yt-dlp -J` (~9 s). Renvoie `title`, `thumbnailUrl` (construite depuis `i.ytimg.com/vi/<id>/hqdefault.jpg`), `uploader`. `duration` = 0 (oEmbed ne la fournit pas — le client la récupère via `onDurationChange` de l'`<audio>` une fois le fichier chargé). **`/api/streams/:id` passé de ~9 s à ~0.15 s (60x plus rapide).**
+- [x] **`checkYtDlp()` supprimé du démarrage** : le `--version` de la nightly met ~8 s (binaire Python, ~1744 extractors au boot) et bloquait l'écoute du serveur → retardait l'affichage du HTML. yt-dlp est désormais testé **paresseusement** au 1er `/api/audio/:id` (si absent → 502, l'app le saura). Seul `ffmpeg` est vérifié au boot (rapide, requis pour `-x`).
+- [x] **Cache disque persistant** : `cache/audio/` (ajouté au `.gitignore`). Survit aux redémarrages. Bien plus long que l'ancien cache URL en mémoire (qui expirait en ~6 mois selon `expire=`) — c'est jusqu'à purge manuelle (une LRU est possible mais YAGNI pour l'instant).
+- [x] **API identique** (`/api/streams/:id`, `/api/audio/:id`, `/api/health`) → **client non touché**, le tee `loadDeckArrayBuffer` marche tel quel sur le fichier local.
+
+**Conséquence — temps de chargement (état final) :**
+- **Démarrage serveur** : instantané (juste check ffmpeg, ~0.5 s). Plus de blocage yt-dlp.
+- **Affichage HTML** : instantané (le serveur écoute tout de suite).
+- **`/api/streams/:id` (méta)** : ~0.15 s (oEmbed).
+- **`/api/audio/:id` (1er d'un morceau)** : ~10–15 s (extraction yt-dlp -x + ffmpeg). C'est le coût incompressible pour contourner les verrous YouTube.
+- **`/api/audio/:id` (suivants)** : ~0.04 s (cache disque, Range natif via sendFile).
+- **`Range: bytes=0-` (tee client)** : `206` ✓ (testé), le seek marche.
+
+**Dépendances restantes :**
+- `yt-dlp` (binaire système, nightly ≥ 2026.08.18) — utilisé UNIQUEMENT dans `extractAudio` (lazy). Plus dans la voie de démarrage ni les méta.
+- `ffmpeg` (binaire système) — requis par `yt-dlp -x` pour l'extraction audio. Vérifié au boot.
+- `express` (npm) — inchangé.
+
+**Ce qui reste à faire (plus tard, YAGNI) :**
+- [ ] **Purger le cache LRU** quand le disque se remplit (taille max configurable). Pour l'instant, purge manuelle de `cache/audio/`.
+- [ ] **Self-test yt-dlp au démarrage** (extraire une vidéo-test, vérifier que le fichier est produit) pour prévenir l'utilisateur si la version est cassée. Non implémenté.
+- [ ] **`youtubei.js` ou Invidious Docker** comme alternative à yt-dlp binaire (pour supprimer la dépendance système). Testé 2026-08-18 : `youtubei.js` 18.0.0 ne peut pas déchiffrer les URLs (même problème que yt-dlp stable). À retester quand la lib évolue.
+
 ---
 
 ## 2. Moteur audio Web Audio API — `js/audio-engine.js` [x]
