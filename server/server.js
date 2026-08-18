@@ -206,6 +206,14 @@ function extract(videoId, force) {
         e.code = 'extract';
         throw e;
       }
+      // LOG diagnostic (additif) : client c=, itag, abr du format sélectionné.
+      (function logExtract() {
+        try {
+          const c = new URL(fmt.url).searchParams.get('c') || '(no c)';
+          console.log('API extract ' + videoId + ' — itag=' + fmt.format_id
+            + ' abr=' + fmt.abr + ' ext=' + fmt.ext + ' c=' + c + ' host=' + host);
+        } catch (_) {}
+      })();
       const entry = {
         videoId: videoId,
         title: String(info.title || '').trim(),
@@ -321,25 +329,56 @@ app.get('/api/audio/:id', async (req, res) => {
   async function relayOnce(url, isRetry) {
     const headers = {};
     if (req.get('Range')) headers['Range'] = req.get('Range');
+
+    // LOG diagnostic (additif, ne change pas la logique) : on affiche le
+    // client c=, la marge d'expiration et l'hôte de l'URL amont AVANT le fetch,
+    // pour comprendre pourquoi le CDN renvoie 502 depuis ce matin.
+    (function logUpstream(label, u) {
+      try {
+        const p = new URL(u);
+        const c = p.searchParams.get('c') || '(no c)';
+        const exp = p.searchParams.get('expire');
+        const msLeft = exp ? (Number(exp) * 1000 - Date.now()) : null;
+        console.log('API RELAY /api/audio/' + id + (isRetry ? ' (retry)' : '')
+          + ' — ' + label + '  c=' + c
+          + '  expire=' + (msLeft === null ? '(none)' : msLeft + 'ms')
+          + '  host=' + p.hostname
+          + (headers.Range ? '  Range=' + headers.Range : ''));
+      } catch (_) { console.log('API RELAY /api/audio/' + id + ' — URL illisible'); }
+    })('→ amont', url);
+
     let upstream;
     try {
       upstream = await fetch(url, { headers });
     } catch (netErr) {
+      console.error('API 502 /api/audio/' + id + ' — fetch amont réseau KO : '
+        + (netErr && netErr.message ? netErr.message : netErr));
       res.status(502).json({ error: 'Relais audio : échec réseau vers le CDN.' });
       return;
     }
+    console.log('API RELAY /api/audio/' + id + ' ← amont HTTP ' + upstream.status
+      + (isRetry ? ' (retry)' : ''));
 
     // URL expirée → on re-extrait puis on réessaie une seule fois.
     if ((upstream.status === 403 || upstream.status === 410) && !isRetry) {
+      console.warn('API /api/audio/' + id + ' — amont ' + upstream.status + ' → re-extraction…');
       try {
         const fresh = await extract(id, true);
         return relayOnce(fresh.upstreamUrl, true);
-      } catch (_) {
+      } catch (retryErr) {
+        console.error('API 502 /api/audio/' + id + ' — re-extraction échouée : '
+          + (retryErr && retryErr.message ? retryErr.message : retryErr));
         res.status(502).json({ error: 'Relais audio : URL expirée, ré-extraction échouée.' });
         return;
       }
     }
     if (!upstream.ok && upstream.status !== 206) {
+      // Best-effort : lire un court extrait du corps d'erreur du CDN (message
+      // anti-bot, rate limit, etc.) pour aider au diagnostic.
+      let body = '';
+      try { body = (await upstream.text()).slice(0, 300).replace(/\s+/g, ' ').trim(); } catch (_) {}
+      console.error('API 502 /api/audio/' + id + ' — CDN HTTP ' + upstream.status
+        + (body ? '  corps="' + body + '"' : ''));
       res.status(502).json({ error: 'Relais audio : le CDN a renvoyé HTTP ' + upstream.status + '.' });
       return;
     }
@@ -377,7 +416,7 @@ app.use(express.static(ROOT, { extensions: ['html'] }));
 // Démarrage : on vérifie yt-dlp une fois pour toutes (cache dans ytdlpAvailable).
 function checkYtDlp() {
   return new Promise((resolve) => {
-    execFile(YTDLP_BIN, ['--version'], { timeout: 5000 }, (err, stdout) => {
+    execFile(YTDLP_BIN, ['--version'], { timeout: 20000 }, (err, stdout) => {
       if (err) return resolve(false);
       resolve(String(stdout).trim().split(/\s+/)[0] || true);
     });

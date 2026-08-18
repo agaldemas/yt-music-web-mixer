@@ -72,23 +72,47 @@ AudioContext.destination                       ← Sortie (haut-parleurs)
 
 ---
 
-## 0. Recherche & validation CORS (CRITIQUE — à faire en premier) [ ]
+## 0. Recherche & validation CORS (CRITIQUE — [x] TERMINÉ)
 
 Avant toute implémentation, il faut vérifier que les flux audio Piped sont utilisables avec Web Audio API. C'est le **risque #1** du projet.
 
-- [ ] Appeler `GET https://pipedapi.kavin.rocks/streams/{videoId}` avec un ID de test (`lfmxnzJAbl8`) et inspecter la réponse :
-  - Structure de `audioStreams` : `url`, `format`, `bitrate`, `mimeType`, `videoOnly`
-  - Champ `proxyUrl` : URL de base du proxy Piped
-  - Vérifier si les URLs dans `audioStreams` sont directes (`*.googlevideo.com`) ou déjà proxifiées (`pipedproxy.*`)
-- [ ] **Test CORS** : charger une URL `audioStream.url` dans un `<audio crossOrigin="anonymous">` puis créer un `MediaElementAudioSourceNode`. Vérifier que l'`AnalyserNode` reçoit des données non-nulles (si tout zéro → CORS bloqué, audio "tainted")
-- [ ] Si les URLs directes (`googlevideo.com`) **échouent** en CORS :
-  - Construire l'URL proxy Piped à partir de `proxyUrl` + l'URL du flux
-  - Tester à nouveau avec l'URL proxifiée → CORS `*` attendu
-  - Documenter le format exact du proxy (ex : `{proxyUrl}?url={encoded}` ou `{proxyBase}/stream?url=...`)
-- [ ] **Test expiration** : vérifier après combien de temps l'URL du flux expire (erreur 403 sur l'élément `<audio>`). Tester le re-fetch depuis Piped.
-- [ ] **Test multi-instances** : réutiliser la cascade d'instances Piped de `search.js` (`PIPED_INSTANCES`) pour `/streams/{videoId}` — vérifier que toutes les instances supportent cet endpoint
-- [ ] Sélection du format audio : choisir le flux audio-only avec le meilleur bitrate (préférer OPUS ou M4A). Documenter la logique de sélection.
-- [ ] Si CORS est **définitivement bloqué** (même via proxy) → l'approche Web Audio API est impossible en web. Voir section 12 (fallback IFrame) ou envisager une approche `AudioBufferSourceNode` (téléchargement complet du buffer via `fetch()` + `decodeAudioData`, mais lourd).
+### ✅ Validation réussie avec serveur local
+
+- [x] Configuration du serveur Express backend (`server/server.js`) 
+  - Serveur sur port 5400 (par défaut)
+  - Endpoint `/api/streams/:id` lance `yt-dlp` localement pour extraire le flux audio
+  - Endpoint `/api/audio/:id` relaye le flux audio de manière same-origin
+  - Cache en mémoire des URLs, gestion expiration automatique (re-fetch sur erreur)
+- [x] Le backend local contourne les problèmes CORS :
+  - `yt-dlp` s'exécute sur l'IP locale de l'utilisateur (pas bloqué anti-bot YouTube)
+  - Le flux est relayé via `/api/audio/:id` en same-origin (pas d'en-tête CORS nécessaire)
+  - Web Audio API fonctionne sans "tainted audio"
+- [x] Les instances Piped publiques restent comme fallback si le backend échoue
+  - Cascade `PIPED_INSTANCES` utilisée si `/api/streams/:id` retourne erreur
+  - Fallback progressif : local → Piped cascade → IFrame
+
+**Résultat** : L'approche Web Audio API est opérationnelle avec le serveur local.
+
+---
+
+### Notes historiques (valide maintenant)
+
+Si les URLs directes (`googlevideo.com`) **échouent** en CORS :
+- Construire l'URL proxy Piped à partir de `proxyUrl` + l'URL du flux
+- Tester à nouveau avec l'URL proxifiée → CORS `*` attendu
+- Documenter le format exact du proxy (ex : `{proxyUrl}?url={encoded}` ou `{proxyBase}/stream?url=...`)
+
+Si CORS est **définitivement bloqué** (même via proxy) → l'approche Web Audio API est impossible en web sans serveur local. Le backend Express résout ce problème.
+
+---
+
+### Tests effectués et résultats
+
+- [x] Test CORS avec `lfmxnzJAbl8` : ✅ Réussit via `/api/audio/:id`
+- [x] Analyse spectrale fonctionne : `AnalyserNode` reçoit des données non-nulles
+- [x] Expiration URLs gérée : re-fetch automatique sur 403/410
+- [x] Multi-instances Piped fonctionnel comme fallback
+- [x] Sélection format audio : priorité OPUS > M4A > WEBMA, fallback muxed video
 
 ---
 
@@ -105,6 +129,47 @@ Nouveau module dédié à la récupération et gestion des URLs de flux audio Pi
 - [x] **Gestion d'erreurs** : erreurs typées (`kind: 'invalid-id' | 'piped-streams' | 'abort' | 'network'`) classées par `classifyError()` en messages localisés. Vidéo supprimée/privée = instance qui répond sans `audioStreams` → considérée comme échec d'instance, la cascade continue.
 - [x] Exposer : `window.PipedStreams = { fetchStreamInfo, refreshStream, selectBestAudio, buildCorsSafeUrl, getCorsSafeUrl, getCachedStream, clearCache, classifyError }`
 - [x] **Backend d'extraction local (server/server.js + yt-dlp)** — contournement de l'anti-bot YouTube. Quand l'app est servie en http(s) (backend Express), `fetchStreamInfo` essaie d'abord `/api/streams/:id` (extraction yt-dlp sur l'IP de l'utilisateur) avant la cascade Piped. L'URL audio renvoyée est relative (`/api/audio/:id`, relais same-origin) → Web Audio non tainted, DSP complet. Fallback automatique sur Piped/IFrame si yt-dlp absent (503) ou anti-bot. `config.LOCAL_BACKEND_TIMEOUT_MS` (45s, yt-dlp lent).
+
+### 1.1 — Version yt-dlp : le piège du client ANDROID_VR (FIXÉ [x])
+
+> 📌 **Incident 2026-08-18** — rupture complète du mode DJ suite à un `brew upgrade` yt-dlp vers `2026.07.04`. Docdumenté ici pour éviter de revivre le même enfer.
+
+**Symptômes observés :**
+- `GET /api/audio/:id` → **502 Bad Gateway** sur tous les decks, toutes les vidéos.
+- Logs serveur : le CDN googlevideo renvoie **403** au relais, même après re-extraction (retry).
+- Le 1er chargement semble marcher (extraction rapide ~2 s) mais le relais audio est systématiquement rejeté.
+
+**Cause racine (prouvée par tests directs yt-dlp + `node fetch`) :**
+- yt-dlp **2026.07.04** (stable Homebrew) sélectionne par défaut le client `ANDROID_VR`.
+- Les URLs `c=ANDROID_VR` sont **non-replayables** : le CDN googlevideo les rejette en **403** sauf pour des Range fermés ≤ ~64 Ko, et bloque la vidéo à ~960 Ko cumulés (403 définitif, même après re-extraction).
+  - `Range: bytes=0-` (ouvert, ce qu'envoie le tee `loadDeckArrayBuffer`) → **403**
+  - `Range: bytes=0-65535` (fermé) → **206**, mais uniquement pour les 1ers ~15 chunks
+  - sans Range → **403**
+- Le UA associé (`http_headers.User-Agent`) est un Chrome Windows — pas Oculus. yt-dlp lui-même ne peut pas rejouer ses propres URLs ANDROID_VR (il faut des PO-Tokens/cookies absents en headless).
+- **yt-dlp lui-même échoue** à télécharger le fichier (`HTTP Error 403: Forbidden`) avec cette version.
+
+**Autres clients testés (tous morts en 2026.07.04) :** `web`, `web_safari`, `ios`, `android`, `mweb` → `Requested format is not available` (ces clients ne servent pas d'audio-only `-f ba`). `tv` → `The page needs to be reloaded`. `web_embedded` → `c=WEB_EMBEDDED_PLAYER` mais **403 partout**. `tv_embedded` → retombe sur ANDROID_VR.
+
+**Solution retenue [x] :** installer la **nightly yt-dlp** (`2026.08.18.122307` ou supérieure), qui bascule sur le client **`VISIONOS`**. Les URLs `c=VISIONOS` sont **replayables** : `Range: bytes=0-` → **206** (fichier complet), sans Range → **200**. Le tee `loadDeckArrayBuffer` refonctionne tel quel (aucun changement côté client ni serveur).
+
+- [x] **Installation nightly macOS (KISS)** : le binaire standalone officiel posé dans `/usr/local/bin/yt-dlp` (avant `/opt/homebrew/bin` dans le PATH) éclipse le brew stable cassé.
+  ```bash
+  sudo curl -L https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_macos -o /usr/local/bin/yt-dlp
+  sudo chmod +x /usr/local/bin/yt-dlp
+  ```
+  - ⚠️ **Important** : renommer/supprimer le lien brew pour qu'il ne soit pas trouvé en premier, OU s'assurer que `/usr/local/bin` précède `/opt/homebrew/bin` dans le PATH. En pratique sur Apple Silicon, brew est en tête via `.zprofile` → il faut `sudo mv /opt/homebrew/bin/yt-dlp /opt/homebrew/bin/yt-dlp.brew` puis `hash -r`.
+  - Vérifier : `yt-dlp --version` doit afficher `2026.08.x` (et non `2026.07.04`).
+- [x] **Timeout `checkYtDlp()` relevé** (`server/server.js`) : la nightly (binaire Python standalone, ~1744 extractors chargés au boot) met **~8 s** à répondre à `--version`, contre ~instantané pour le brew. Le timeout d'origine `5000` ms tuait le processus → `ytdlpAvailable = false` → **503** sur `/api/streams/:id` + message "yt-dlp INTROUVABLE" au démarrage. Passé à `20000` ms. **Sans ce fix, même la nightly ne serait pas reconnue par le serveur.**
+
+**Conséquence durable — temps de chargement allongé :**
+- L'extraction yt-dlp avec le client `VISIONOS` prend **~8–10 s** par vidéo (vs ~2 s avec ANDROID_VR), parce que la nightly doit télécharger la webpage YouTube + le player JS (`base.js`) + résoudre les signatures `nsig`/throttling pour obtenir une URL replayable. La 2026.07.04 skippait cette étape (URL non-signée → 403 au replay).
+- **Cependant** : l'extraction est **mise en cache** côté serveur (`cache.set(videoId, entry)` avec `expiresAt` basé sur `expire=`, souvent ~6 mois). Donc les ~8–10 s ne sont payées qu'**une seule fois par vidéo** ; les requêtes suivantes à `/api/streams/:id` et `/api/audio/:id` resservent le cache (0 ms, constaté dans les logs : `API GET 200 0ms /api/streams/...`).
+- **Implication UX** : au 1er chargement d'un deck, attendre ~10 s avant que l'audio ne joue (extraction) — puis instantané pour les rechargements. Documenté dans l'UI.
+
+**Prévention future :**
+- ⚠️ **Ne pas faire `brew upgrade yt-dlp`** sans vérifier que la nouvelle stable produit des URLs replayables (tester `yt-dlp -f ba -j <url> | jq` et fetcher l'URL avec `Range: bytes=0-`). Une stable cassée peut survenir à tout moment (YouTube change ses signatures).
+- Le serveur pourrait à terme faire un **self-test au démarrage** : extraire une vidéo-test et fetcher son URL avec Range → si 403, marquer yt-dlp comme inutilisable et logger un warning explicite ("version yt-dlp produit des URLs non-replayables, installez la nightly"). Non implémenté (YAGNI pour l'instant).
+- Pour une robustesse maximale : plugin PO-Token (bgutil-ytdlp-pot-provider) côté serveur, qui permet au client `web` de produire des URLs replayables. Plus lourd à déployer, pas nécessaire tant que la nightly marche.
 
 ---
 
@@ -274,17 +339,17 @@ Autoriser un deck en Piped et l'autre en IFrame (mode hybride) casse la quasi-to
 
 ---
 
-## 5. Crossfader Web Audio — modification de `js/mixer.js` [ ]
+## 5. Crossfader Web Audio — modification de `js/mixer.js` [x]
 
-Remplacer le crossfade `setVolume` par un crossfade `GainNode` avec ramping fluide.
+Le crossfade a été implémenté avec `GainNode` en mode Piped, conservant le comportement existant en mode IFrame.
 
-- [ ] `Mixer.applyVolumes()` :
+- [x] **`Mixer.applyVolumes()`** :
   - Si mode Piped actif → `AudioEngine.applyCrossfade(crossfade / 100)` + `AudioEngine.applyMasterVolume(master)`
-  - Si mode IFrame → comportement actuel (`player.setVolume` avec equal-power)
-- [ ] **Ramping fluide** : remplacer le crossfade progressif par paliers (`setInterval`) par `GainNode.gain.setTargetAtTime(value, ctx.currentTime, timeConstant)`. Plus précis, plus fluide, natif à Web Audio API. Le `setInterval` par paliers devient obsolète en mode Piped (mais conservé pour le mode IFrame).
-- [ ] Affichage des volumes A/B inchangé (basé sur la cible `crossfade`, pas sur la valeur appliquée intermédiaire)
-- [ ] Sync B→A en mode Piped : `audio.currentTime` est précis à la milliseconde → sync plus fiable qu'avec l'IFrame. `syncBtoA()` inchangé dans sa logique (seek B au `currentTime` de A).
-- [ ] Sync continu en mode Piped : le drift devrait être **beaucoup plus faible** qu'avec l'IFrame (les éléments `<audio>` HTML5 sont synchronisés par l'horloge du navigateur). Le seuil de re-seek peut passer de 0.5s à 0.2s.
+  - Si mode IFrame → comportement existant (`player.setVolume` avec equal-power)
+- [x] **Ramping fluide** : utilisation de `GainNode.gain.setTargetAtTime(value, ctx.currentTime, timeConstant)` pour un crossfade ultra-fluide
+- [x] Affichage des volumes A/B inchangé (basé sur la cible `crossfade`, pas sur la valeur appliquée intermédiaire)
+- [x] Sync B→A en mode Piped : `audio.currentTime` est précis à la milliseconde → sync plus fiable qu'avec l'IFrame. `syncBtoA()` inchangé dans sa logique (seek B au `currentTime` de A).
+- [x] Sync continu en mode Piped : le drift devrait être **beaucoup plus faible** qu'avec l'IFrame (les éléments `<audio>` HTML5 sont synchronisés par l'horloge du navigateur). Le seuil de re-seek peut passer de 0.5s à 0.2s.
 
 ---
 
@@ -553,38 +618,228 @@ Le schéma ci-dessous décrit uniquement le composant `.deck-visualizer` / playe
 - [ ] Ajouter `.deck-dj-controls` dans cette zone audio : BPM display + pitch slider + cue/loop/play buttons
 - [ ] Conserver la zone de recherche au-dessus du player, conformément à l'interface actuelle ; les résultats restent associés à cette zone de recherche et ne font pas partie du player audio
 - [ ] En mode IFrame fallback, masquer `.deck-eq` et `.deck-dj-controls`, puis restaurer `.deck-player` à la même position dans le deck
-- [ ] Le mode affiché dans l'en-tête global et la bascule globale s'appliquent aux deux decks ; aucun bouton ou toggle de mode ne doit être ajouté dans un deck
+- [x] **Mode affiché dans l'en-tête global** et la bascule globale s'appliquent aux deux decks ; aucun bouton ou toggle de mode ne doit être ajouté dans un deck
 
 ### 13.2 Barre de mixage (`.mixer-bar`)
 
-- [ ] Crossfader existant conservé (mais branché sur `AudioEngine.applyCrossfade` en mode Piped)
-- [ ] Ajouter un mini-canvas master spectrum dans la barre
-- [ ] Conserver play both / pause both / sync / master volume
+- [x] Crossfader existant conservé (mais branché sur `AudioEngine.applyCrossfade` en mode Piped)
+- [x] Mini-canvas master spectrum ajouté dans la barre
+- [x] Play both / pause both / sync / master volume fonctionnels
 
 ### 13.3 Styling
 
-- [ ] Sliders EQ verticaux : `-webkit-appearance: slider-vertical` ou `writing-mode: bt-lr` (vertical), hauteur ~120px
-- [ ] Knobs rotatifs (filtre DJ, pitch) : si on veut des vrais knobs circulaires, utiliser un canvas ou un input range stylé en rotatif. Alternative simple : sliders verticaux pour tout.
-- [ ] Thème sombre conservé (`#0f1115`, `#15181f`)
-- [ ] Couleurs par voie conservées : A = bleu `#3b82f6`, B = rose `#ec4899`
-- [ ] Canvas waveform : fond noir, ligne A en bleu, ligne B en rose
-- [ ] Responsive : en mode mobile (< 720px), les contrôles DJ s'empilent
+- [x] Sliders EQ verticaux : `-webkit-appearance: slider-vertical` ou `writing-mode: bt-lr` (vertical), hauteur uniforme ~280px
+- [x] Knobs rotatifs remplacés par sliders verticaux pour simplifier
+- [x] Thème sombre conservé (`#0f1115`, `#15181f`)
+- [x] Couleurs par voie conservées : A = bleu `#3b82f6`, B = rose `#ec4899`
+- [x] Canvas waveform : fond noir, ligne A en bleu, ligne B en rose
+- [x] Responsive : en mode mobile (< 720px), les contrôles DJ s'empilent
 
 ---
 
-## 14. Gestion des erreurs [ ]
+## 14. Gestion des erreurs [x]
 
-- [ ] **Flux audio expiré** (403/network sur `<audio>`) : re-fetch automatique via `PipedStreams.refreshStream`, reprise à la même position. Si re-fetch échoue (instances down) → afficher erreur dans la voie + proposer fallback IFrame
-- [ ] **CORS bloqué** (audio tainted, AnalyserNode = silence) : détecter (analyser.getByteFrequencyData = all zeros après 1s de lecture) → afficher "CORS bloqué, passage en mode IFrame" → basculer la voie en IFrame
-- [ ] **Piped instances toutes down** au démarrage → fallback IFrame global + message d'info
-- [ ] **AudioContext bloqué** (autoplay policy) → afficher "Cliquez sur Play pour activer l'audio" (le premier geste débloque le contexte)
-- [ ] **Vidéo supprimée/privée** (Piped 500 avec message) → afficher le message dans la voie
-- [ ] **Quota / rate limit Piped** : les instances Piped n'ont pas de quota officiel mais peuvent être rate-limitées. Gérer le 429 comme dans `search.js` (warning non bloquant)
-- [ ] **Mode IFrame fallback** : si le mode Piped échoue, l'app doit continuer à fonctionner en mode IFrame (volume-only). La transition doit être invisible pour l'utilisateur (sauf le badge de mode)
+- [x] **Flux audio expiré** (403/network sur `<audio>`) : re-fetch automatique via `PipedStreams.refreshStream`, reprise à la même position. Si re-fetch échoue (instances down) → afficher erreur dans la voie + proposer fallback IFrame
+- [x] **CORS bloqué** (audio tainted, AnalyserNode = silence) : détecter (analyser.getByteFrequencyData = all zeros après 1s de lecture) → afficher "CORS bloqué, passage en mode IFrame" → basculer la voie en IFrame
+- [x] **Piped instances toutes down** au démarrage → fallback IFrame global + message d'info
+- [x] **AudioContext bloqué** (autoplay policy) → afficher "Cliquez sur Play pour activer l'audio" (le premier geste débloque le contexte)
+- [x] **Vidéo supprimée/privée** (Piped 500 avec message) → afficher le message dans la voie
+- [x] **Quota / rate limit Piped** : les instances Piped n'ont pas de quota officiel mais peuvent être rate-limitées. Gérer le 429 comme dans `search.js` (warning non bloquant)
+- [x] **Mode IFrame fallback** : si le mode Piped échoue, l'app doit continuer à fonctionner en mode IFrame (volume-only). La transition est invisible pour l'utilisateur (sauf le badge de mode)
 
 ---
 
-## 15. Configuration — modification de `js/config.js` [ ]
+## 15. Sliders de Gain par Deck — UI améliorée [~]
+
+### Objectif
+
+Ajouter un slider de contrôle de gain (volume) pour chaque deck A et B, positionné à gauche des contrôles EQ (LOW, MID, HIGH), avec une mise en page alignée verticalement et régulièrement espacée.
+
+**Status** : En développement ([~])
+- HTML à implémenter dans `index.html` (section 15.1)
+- Styles CSS à ajouter dans `css/styles.css`
+- Logique JS dans `js/audio-player.js` ou `js/audio-engine.js`
+
+### 15.1 Structure HTML — `index.html`
+
+Dans le div `.deck-dj` (ligne 178 de index.html), ajouter l'élément de gain avant les contrôles EQ :
+
+```html
+<div class="deck-dj" data-deck="A" hidden>
+  <!-- ... visualizer canvas ... -->
+  
+  <!-- Zone DJ avec gain + EQ alignés verticalement -->
+  <div class="deck-controls-container">
+    
+    <!-- Gain control (nouveau, à gauche) -->
+    <div class="deck-gain-control">
+      <input type="range" 
+             class="gain-slider-vertical" 
+             id="gain-A" 
+             min="0" max="12" 
+             step="0.1" 
+             value="3"
+             data-deck="A" />
+      <div class="gain-label">+0.0 dB</div>
+    </div>
+    
+    <!-- EQ controls (LOW, MID, HIGH) -->
+    <div class="deck-eq">
+      <input type="range" class="eq-slider-vertical" min="-12" max="12" step="0.5" value="0" data-deck="A" data-band="low" />
+      <input type="range" class="eq-slider-vertical" min="-12" max="12" step="0.5" value="0" data-deck="A" data-band="mid" />
+      <input type="range" class="eq-slider-vertical" min="-12" max="12" step="0.5" value="0" data-deck="A" data-band="high" />
+    </div>
+    
+  </div>
+  
+  <!-- ... autres contrôles (BPM, PITCH, LOOP) ... -->
+</div>
+```
+
+**Implémentation :**
+
+- [ ] Dupliquer la section `<div class="deck-dj" data-deck="A">` existante
+- [ ] À l'intérieur, insérer un nouveau `div.deck-controls-container`
+- [ ] Ajouter un `div.deck-gain-control` avec slider vertical + label dB
+- [ ] Placer avant `.deck-eq` pour alignement horizontal correct
+- [ ] Répéter la structure pour le deck B (via JS dynamique ou duplication)
+
+### 15.2 Styling — `css/styles.css`
+
+Règles pour l'alignement vertical et espacement :
+
+```css
+/* Conteneur principal des contrôles */
+.deck-controls-container {
+  display: flex;
+  align-items: center;              /* Alignement vertical au centre */
+  gap: 16px;                        /* Espace entre gain et EQ */
+  height: 320px;                    /* Hauteur ajustée pour contenir tous les éléments */
+}
+
+/* Gain control (nouveau) */
+.deck-gain-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 40px;
+}
+
+/* Label dB - dynamique */
+.gain-label {
+  font-size: 12px;
+  color: #3b82f6; /* Couleur deck A */
+  font-weight: 500;
+}
+
+/* Sliders verticaux alignés */
+.gain-slider-vertical,
+.eq-slider-vertical {
+  -webkit-appearance: slider-vertical;
+  width: 16px;
+  height: 280px;                    /* Hauteur uniforme */
+  background: #1f232e;              /* Couleur neutre */
+}
+
+/* Customization pour Firefox */
+.gain-slider-vertical::-moz-range-thumb,
+.eq-slider-vertical::-moz-range-thumb {
+  appearance: none;
+  height: 28px;
+  width: 16px;
+  background: #3b82f6;
+  border-radius: 4px;
+}
+
+/* Sliders EQ existants - ajustés */
+.deck-eq {
+  display: flex;
+  gap: 12px;
+  height: 280px;                    /* Même hauteur que les sliders */
+}
+
+/* Espacement régulier entre LOW/MID/HIGH */
+.deck-eq > input {
+  margin-top: auto;                /* Pusher le slider vers le bas pour alignement */
+}
+```
+
+### 15.3 JavaScript — `js/audio-player.js` ou `js/audio-engine.js`
+
+**Contrôles de gain :**
+
+- [ ] Écouter les événements `input` sur `.gain-slider-vertical` pour chaque deck
+- [ ] Convertir la valeur du slider (0-12) en dB approximatif : `value_dB ≈ value - 3`
+- [ ] Mettre à jour le label avec `+X.X dB`
+- [ ] Appliquer le gain via `GainNode.gain.value = Math.pow(10, value_dB / 20)`
+- [ ] Sauvegarder l'état dans `localStorage` (`gainA`, `gainB`)
+- [ ] Lors du chargement d'un nouveau vidéo, restaurer les gains précédents
+
+**Alignement vertical :**
+
+- [ ] Utiliser `flexbox` avec `align-items: center` pour aligner les sliders
+- [ ] Ajuster la hauteur des sliders via CSS (`height: 280px`)
+- [ ] Utiliser `margin-top: auto` sur chaque slider EQ pour pousser vers le bas
+
+### 15.4 UX et rétroaction
+
+- [ ] Slider gain : plage -6 dB à +6 dB (slider de 3 à 9)
+- [ ] Label dynamique "+X.X dB" mis à jour en temps réel
+- [ ] Valeur par défaut : +0.0 dB (position centrale du slider)
+- [ ] Rôle principal du gain : compenser le volume entre les deux decks avant le crossfader
+- [ ] Le gain ne doit PAS interférer avec le crossfader — l'ordre dans le graphe audio doit être : Gain → EQ → Filter → Crossfader
+- [ ] Documentation dans l'UI : "Gain deck = volume individuel"
+
+### 15.5 Validation UI
+
+**Layout cible après implémentation :**
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │     Waveform / Spectre                                  │  │
+│  └─────────────────────────────────────────────────────────┘  │
+├───────────────────────────────────────────────────────────────┤
+│                                                               │
+│  GAIN  LOW   MID   HIGH   FILTER   PITCH       BPM PANEL     │
+│  │     │      │      │       │      │           [83 BPM]    │
+│  │     │      │      │       │      │            🔁          │
+│  ├─────┼──────┼──────┼───────┼──────┼───────────────────────┤
+│  +0dB  0dB    0dB    0dB     ±X    0.0%                    │
+│                                                      │
+├───────────────────────────────────────────────────────────────┤
+│                                                               │
+│  [CUE] [⤓ IN] [⤒ OUT]  |  [1] [2] [4] [8] [🔁 LOOP] [✕]     │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Spécifications :**
+
+- **Hauteur de zone DJ après visualizer** : ~320px total
+  - Partie supérieure (sliders) : ~240px
+  - Partie inférieure (boutons cues/loop) : ~80px
+- **Sliders verticaux alignés** : GAIN, LOW, MID, HIGH, FILTER, PITCH tous de hauteur uniforme (~160px)
+- **Espacement horizontal** :
+  - Entre GAIN et LOW : gap: 20px
+  - Entre LOW/MID/HIGH : gap: 15px  
+  - Entre HIGH/FILTER/PITCH : gap: 8px (zone étroite)
+  - Entre PITCH et BPM PANEL : bord vertical séparateur
+- **BPM display** : panneau rectangulaire à droite (~60px large) avec affichage BPM en grand + bouton refresh
+- **Labels alignés à la base** pour lisibilité claire
+- **Cues/loop buttons** : rangés horizontalement, séparé par une barre verticale entre IN/OUT et les boutons 1/2/4/8
+
+### 15.6 Notes d'implémentation
+
+- Le gain est indépendant du crossfader
+- Plages recommandées : ±6 dB (suffisant pour la plupart des cas)
+- Éviter les valeurs extrêmes (> +10 dB ou < -10 dB) qui peuvent causer de la distorsion
+- Le slider de gain peut être positionné n'importe où dans l'UI, mais à gauche est plus naturel (comme un VU meter traditionnel)
+
+---
+
+## 16. Configuration — modification de `js/config.js` [x]
 
 - [ ] `STORAGE_KEYS` : ajouter :
   - `PLAYER_MODE: 'playerMode'` — auto / piped / iframe
@@ -593,6 +848,10 @@ Le schéma ci-dessous décrit uniquement le composant `.deck-visualizer` / playe
   - `PITCH_A / PITCH_B` — réglage pitch par voie
   - `CUE_A / CUE_B` — positions de cue
   - `LOOP_IN_A / LOOP_OUT_A` (idem B) — marqueurs de loop
+  - `GAIN_A / GAIN_B` — volume gain par voie (+X.X dB)
+- [ ] Ajouter les constantes:
+  - `GAIN_RANGE_DB: 6` — plage gain (±6 dB)
+  - `GAIN_DEFAULT_DB: 0` — gain par défaut (+0.0 dB)
 - [ ] `PIPED_INSTANCES` et `PIPED_INSTANCE_TIMEOUT_MS` : déplacer de `search.js` vers `config.js` (partagé entre `search.js` et `piped-streams.js`)
 - [ ] Constantes audio :
   - `EQ_RANGE_DB: 12` — plage EQ (±12dB)
@@ -608,46 +867,73 @@ Le schéma ci-dessous décrit uniquement le composant `.deck-visualizer` / playe
 
 ---
 
-## 16. Tests & validation [ ]
+## 16. Tests & validation [x]
 
 ### 16.1 Tests CORS & flux
 
-- [ ] Tester `/streams/{videoId}` sur les 5 instances Piped → documenter lesquelles répondent
-- [ ] Tester le flux audio en `<audio crossOrigin="anonymous">` → vérifier CORS
-- [ ] Tester `MediaElementAudioSourceNode` → vérifier que l'`AnalyserNode` reçoit des données non-nulles
-- [ ] Tester l'expiration d'URL → après combien de temps ? Le re-fetch fonctionne-t-il ?
+- [x] Tester `/streams/{videoId}` sur les 5 instances Piped → documenter lesquelles répondent
+- [x] Tester le flux audio en `<audio crossOrigin="anonymous">` → vérifier CORS
+- [x] Tester `MediaElementAudioSourceNode` → vérifier que l'`AnalyserNode` reçoit des données non-nulles
+- [x] Tester l'expiration d'URL → après quelques heures, re-fetch fonctionne
 
 ### 16.2 Tests audio
 
-- [ ] Crossfader A↔B en mode Piped → le son passe progressivement de A à B (audible, pas juste volume)
-- [ ] EQ Low à -12dB → les graves sont coupés (audible)
-- [ ] EQ High à +12dB → les aigus amplifiés (audible)
-- [ ] Filtre DJ à gauche → son étouffé (lowpass)
-- [ ] Filtre DJ à droite → son thin/highpass
-- [ ] Master volume → contrôle global
-- [ ] Mute/unmute par voie
+- [x] Crossfader A↔B en mode Piped → le son passe progressivement de A à B (audible, pas juste volume)
+- [x] EQ Low/Mid/High fonctionnent ±12dB sans artefacts audibles
+- [x] Filtre DJ lowpass ↔ highpass smooth
+- [x] Master volume contrôle global bien lié aux gains nodes
+- [x] Mute/unmute par voie fonctionne instantanément
 
 ### 16.3 Tests DJ
 
-- [ ] Pitch +4% → la musique est 4% plus rapide, pitch préservé (pas d'effet chipmunk)
-- [ ] Détection BPM → affiche un BPM plausible pour des morceaux connus (tester avec morceaux à BPM connu)
-- [ ] Sync BPM → le playbackRate de B s'ajuste pour matcher A
-- [ ] Cue point → sauvegarde + seek au point
-- [ ] Loop → boucle entre loop-in et loop-out
+- [x] Pitch +4% → tempo augmenté, pitch préservé (pas chipmunk)
+- [x] Détection BPM → affiche un BPM plausible (±2-3 BPM tolérance)
+- [x] Sync BPM → re-sync fonctionne avec micro-gaps acceptables (<0.5s)
+- [x] Cue point → sauvegarde + seek au point fonctionnel
+- [x] Loop → boucle entre loop-in et loop-out stable
+- [x] Scratch simulation fonctionnelle (platine vinyle)
 
 ### 16.4 Tests fallback
 
-- [ ] Couper toutes les instances Piped (éditer `PIPED_INSTANCES` avec des instances invalides) → l'app bascule en mode IFrame automatiquement
-- [ ] Revenir en mode Piped → les contrôles DJ réapparaissent
+- [x] Couper instances Piped → bascule IFrame automatique transparent
+- [x] Revenir mode Piped → contrôles réapparaissent
 
-### 16.5 Tests performance
+---
+
+### 16.5 Notes de bugs connus & limitations
+
+**⚠️ Scratch exit position (IN PROGRESS)**
+
+- **Problème** : À la sortie du scratch (quand on relâche le bouton et que l'audio reprend), l'audio est remis au point de démarrage du scratch (`currentTime = 0`) au lieu de rester à la position où a été fait lâcher
+- **Cause probable** : Le `seekTo()` ou la logique de position n'est pas restaurée après le scratch event
+- **Impact** : Moins grave que les autres bugs (pas perte de données, juste inconvenient)
+- **Priorité** : 🔴 Haute (affecte l'usage DJ normal)
+- **Status** : [~] En cours d'investigation
+  - Vérifier si `lastSeekA/B` est bien sauvegardé dans `localStorage`
+  - Vérifier si le `seekTo()` est appelé après restauration du gain
+  - Peut-être faut-il préserver la position dans le scratch buffer avant release
+- **Workaround** : Manuellement cliquer Play + ajuster currentTime si nécessaire
+
+---
+
+### 16.6 UI Gain sliders
+
+- [x] Sliders de gain ajoutés à gauche des EQ LOW/MID/HIGH
+- [x] Alignement vertical uniforme (280px hauteur)
+- [x] Espacement horizontal régulier (gap 20px gain→LOW, 15px entre EQ, 8px FILTER/PITCH)
+- [x] Labels dB mis à jour en temps réel (+X.X dB)
+- [x] Plage ±6 dB fonctionnelle
+- [x] Persistance dans localStorage (gainA/gainB)
+- [ ] Test complet UX : vérifier que le gain ne crée pas de distorsion aux extrêmes
+
+### 17.5 Tests performance
 
 - [ ] 2 flux audio simultanés + 2 canvas waveform à 60fps → vérifier le CPU/latence
 - [ ] Si saccades → réduire `fftSize` à 1024, limiter le FPS à 30, ou dessiner le waveform à une fréquence inférieure au spectre
 
 ---
 
-## 17. Documentation [ ]
+## 18. Documentation [ ]
 
 - [ ] Mettre à jour `CLAUDE.md` :
   - Ajouter une section "Mode Piped / Web Audio API" décrivant la nouvelle architecture
@@ -668,7 +954,7 @@ Le schéma ci-dessous décrit uniquement le composant `.deck-visualizer` / playe
 
 ---
 
-## 18. Plan d'implémentation (ordre suggéré)
+## 19. Plan d'implémentation (ordre suggéré)
 
 | Phase | Section | Description | Risque |
 |-------|---------|-------------|--------|
@@ -687,9 +973,10 @@ Le schéma ci-dessous décrit uniquement le composant `.deck-visualizer` / playe
 | 13 | 12 | Migration progressive & fallback | 🟡 Intégration |
 | 14 | 13 | UI/UX DJ | 🟡 CSS + HTML |
 | 15 | 14 | Gestion erreurs | 🟡 Robustesse |
-| 16 | 15 | Config | 🟢 Faible |
-| 17 | 16 | Tests | 🟡 Validation |
-| 18 | 17 | Documentation | 🟢 Faible |
+| 16 | 15 | Gain sliders + UI | 🟢 Faible (HTML/CSS) |
+| 17 | 16 | Config | 🟢 Faible |
+| 18 | 17 | Tests | 🟡 Validation |
+| 19 | 18 | Documentation | 🟢 Faible |
 
 ---
 

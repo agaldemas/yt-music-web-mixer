@@ -53,6 +53,18 @@ npm start
 
 Ouvrez ensuite <http://localhost:5400> dans votre navigateur. Sans `yt-dlp`, le frontend reste accessible, mais le mode DJ retombe sur Piped/IFrame.
 
+> ⚠️ **La version de `yt-dlp` est critique** — la version **stable** Homebrew (`2026.07.04`) est **cassée pour le mode DJ** : elle extrait des URLs (`c=ANDROID_VR`) que le CDN de YouTube rejette en HTTP 403, donc `/api/audio/:id` renvoie 502 et aucun son ne sort. Un simple `brew upgrade yt-dlp` peut silencieusement casser l'appli de cette façon. La solution est d'installer la version **nightly** de `yt-dlp`, qui utilise le client `visionos` et produit des URLs replayables.
+>
+> Installation de la nightly sur macOS (à placer avant le binaire brew dans le PATH) :
+> ```bash
+> sudo curl -L https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_macos -o /usr/local/bin/yt-dlp
+> sudo chmod +x /usr/local/bin/yt-dlp
+> sudo mv /opt/homebrew/bin/yt-dlp /opt/homebrew/bin/yt-dlp.brew   # pour que la nightly soit trouvée en premier
+> hash -r
+> yt-dlp --version   # doit afficher 2026.08.x (pas 2026.07.04)
+> ```
+> **Note sur le temps de chargement** : la nightly est plus lente à extraire (~8–10 s par vidéo au 1er chargement, contre ~2 s pour la stable cassée) car elle doit télécharger la webpage YouTube + le player JS et résoudre les signatures de throttling pour obtenir une URL replayable. Ce coût n'est payé qu'**une seule fois par vidéo** — le serveur met en cache l'URL extraite (souvent valide ~6 mois), donc les chargements suivants du même morceau sont instantanés.
+
 Pour la recherche uniquement, un serveur statique reste possible. L'appel `fetch()` vers l'API YouTube Data peut être bloqué en `file://` (notamment sur Chrome) :
 
 **Option A — Python (intégré)**

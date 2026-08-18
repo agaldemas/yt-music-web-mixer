@@ -203,15 +203,17 @@ async function main() {
   assert('deckGain.gain.value initial = 0.5', chainA.deckGain.gain.value === 0.5);
 
   console.log('\n=== Test 5 : connexions en série correctes ===');
-  // source → lowShelf → midPeak → highShelf → djFilter → deckGain → analyser
+  // source → sourceMuteGain → scratchGain → lowShelf → midPeak → highShelf → djFilter → deckGain → analyser
   // deckGain → masterGain (en plus)
-  assert('source → lowShelf', chainA.source._connections.includes(chainA.lowShelf));
+  assert('source → sourceMuteGain', chainA.source._connections.includes(chainA.sourceMuteGain));
+  assert('sourceMuteGain → scratchGain', chainA.sourceMuteGain._connections.includes(chainA.scratchGain));
+  assert('scratchGain → lowShelf', chainA.scratchGain._connections.includes(chainA.lowShelf));
   assert('lowShelf → midPeak', chainA.lowShelf._connections.includes(chainA.midPeak));
   assert('midPeak → highShelf', chainA.midPeak._connections.includes(chainA.highShelf));
   assert('highShelf → djFilter', chainA.highShelf._connections.includes(chainA.djFilter));
   assert('djFilter → deckGain', chainA.djFilter._connections.includes(chainA.deckGain));
-  assert('deckGain → analyser', chainA.deckGain._connections.includes(chainA.analyser));
-  assert('deckGain → masterGain (2e connexion)', chainA.deckGain._connections.includes(masterGain));
+  assert('djFilter → analyser (tap pre-fader)', chainA.djFilter._connections.includes(chainA.analyser));
+  assert('deckGain → masterGain', chainA.deckGain._connections.includes(masterGain));
 
   console.log('\n=== Test 6 : EQ init ===');
   assert('lowShelf.type = lowshelf', chainA.lowShelf._type === 'lowshelf');

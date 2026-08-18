@@ -53,6 +53,18 @@ npm start
 
 Open <http://localhost:5400> in your browser. Without `yt-dlp`, the frontend still starts, but DJ mode falls back to Piped/IFrame.
 
+> ⚠️ **`yt-dlp` version matters** — the **stable** Homebrew release (`2026.07.04`) is known to be **broken for DJ mode**: it extracts URLs (`c=ANDROID_VR`) that YouTube's CDN rejects with HTTP 403, so `/api/audio/:id` returns 502 and no audio plays. A `brew upgrade yt-dlp` can silently break the app this way. The fix is to install the **nightly** build of `yt-dlp`, which uses the `visionos` client and produces replayable URLs.
+>
+> Install the nightly on macOS (place it before the brew binary in your PATH):
+> ```bash
+> sudo curl -L https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_macos -o /usr/local/bin/yt-dlp
+> sudo chmod +x /usr/local/bin/yt-dlp
+> sudo mv /opt/homebrew/bin/yt-dlp /opt/homebrew/bin/yt-dlp.brew   # so the nightly wins
+> hash -r
+> yt-dlp --version   # should show 2026.08.x (not 2026.07.04)
+> ```
+> **Note on load time**: the nightly is slower to extract (~8–10 s per video on first load, vs ~2 s for the broken stable) because it downloads the YouTube webpage + player JS and resolves throttling signatures to get a replayable URL. This cost is paid **once per video** — the server caches the extracted URL (often valid for ~6 months), so subsequent loads of the same track are instant.
+
 For search only, a static server is also possible. The `fetch()` call to the YouTube Data API can be blocked under `file://` (notably on Chrome):
 
 **Option A — Python (built-in)**
