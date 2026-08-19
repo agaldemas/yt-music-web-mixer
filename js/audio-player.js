@@ -160,6 +160,9 @@
       // Dédup : si l'utilisateur relance loadVideoById pendant qu'un download
       // est en cours, on attend la même promesse au lieu de relancer un fetch.
       loadPromise: null,
+      // Numéro de chargement : ignore les réponses réseau d'une ancienne
+      // sélection qui arriveraient après un nouveau morceau.
+      loadGeneration: 0,
     };
 
     // Crée la chaîne Web Audio pour cette voie. ⚠️ À faire ICI (au moment
@@ -219,7 +222,7 @@
     function loadDeckArrayBuffer(url) {
       if (state.loadPromise) return state.loadPromise;
       var _t0 = performance.now();
-      console.log('%c[audio:' + deckId + '] ▼ download START — '
+      console.debug('%c[audio:' + deckId + '] ▼ download START — '
         + (url.length > 80 ? url.slice(0, 80) + '…' : url), 'color:#08e');
       var AE = window.AudioEngine;
 
@@ -247,7 +250,7 @@
         return res.arrayBuffer().then(function (buf) {
           var dlMs = (performance.now() - _t0).toFixed(0);
           var mo = (buf.byteLength / 1024 / 1024).toFixed(2);
-          console.log('%c[audio:' + deckId + '] ▼ download ← ' + mo + ' Mo en ' + dlMs + 'ms  (mime=' + mime + ')', 'color:#08e;font-weight:bold');
+          console.debug('%c[audio:' + deckId + '] ▼ download ← ' + mo + ' Mo en ' + dlMs + 'ms  (mime=' + mime + ')', 'color:#08e;font-weight:bold');
           return { buf: buf, mime: mime };
         });
       }).then(function (r) {
@@ -433,59 +436,45 @@
       // Si autoplay/lecture en cours avant ce load, on la reprend après ready.
       loadVideoById: function (id) {
         if (!id) return;
+        const generation = ++state.loadGeneration;
         state.currentVideoId = id;
         state.lastKnownTime = 0;
         state.refreshCount = 0;
-        // On capture l'intention d'autoplay MAINTENANT (avant le fetch réseau)
-        // pour éviter une race : si le caller a posé _pendingPlayRequested=true
-        // juste avant cet appel, on le gèle dans pendingPlay. Sinon, si l'audio
-        // joue déjà, on veut reprendre après le changement de src.
         state.pendingPlay = (p._pendingPlayRequested === true) || (!audio.paused);
         p._pendingPlayRequested = false;
-        // Si l'audio joue actuellement, on mémorise pour reprendre après load.
         state.wasPlayingBeforeError = !audio.paused;
 
         PipedStreams.fetchStreamInfo(id).then(function (entry) {
+          if (generation !== state.loadGeneration || state.currentVideoId !== id) return;
           const best = entry.bestAudio && entry.bestAudio.stream;
           const newUrl = PipedStreams.getCorsSafeUrl(entry, best);
           if (!newUrl) {
-            const err = {
-              code: 0,
-              message: 'Aucun flux audio disponible pour cette vidéo.',
-              originalEvent: null,
-            };
-            try { onError(err); } catch (e) { /* ignore */ }
+            try {
+              onError({ code: 0, message: 'Aucun flux audio disponible pour cette vidéo.', originalEvent: null });
+            } catch (e) { /* ignore */ }
             return;
           }
           resetSource(); loadDeckArrayBuffer(newUrl);
-          // ⚠️ La spécification HTML media réinitialise `playbackRate` à 1
-          // (et `defaultPlaybackRate`) quand on change `src` / on appelle
-          // `load()`. Le pitch (réglé par l'UI PITCH via AudioEngine.setPitch)
-          // est donc perdu à chaque changement de morceau. On le restaure
-          // ici dès que les nouvelles métadonnées sont prêtes, en lisant la
-          // valeur persistée via AudioEngine (seule source de vérité du
-          // playbackRate). Sans ça, le pitch paraissait "ne plus marcher"
-          // après l'ajout du BPM (en fait il marchait mais était écrasé à
-          // chaque loadVideoById, et l'UI ne le restaurait qu'au prochain
-          // onReady — or onReady arrive APRÈS canplay, trop tard pour le
-          // badge BPM effectif qui s'était déjà affiché avec rate=1).
           audio.addEventListener('loadedmetadata', function restoreRate() {
             audio.removeEventListener('loadedmetadata', restoreRate);
+            if (generation !== state.loadGeneration || state.currentVideoId !== id) return;
             var AE = window.AudioEngine;
             if (!AE || typeof AE.getPitch !== 'function') return;
             try {
-              var saved = AE.getPitch(deckId); // pitch persisté en %, 0 si neutre
+              var saved = AE.getPitch(deckId);
               if (saved) AE.setPitch(deckId, saved);
             } catch (e) { /* ignore */ }
           }, { once: true });
         }).catch(function (err) {
+          if (generation !== state.loadGeneration || state.currentVideoId !== id) return;
           const classified = PipedStreams.classifyError(err);
-          const uiErr = {
-            code: 0,
-            message: classified.message || 'Erreur du mode DJ.',
-            originalEvent: err,
-          };
-          try { onError(uiErr); } catch (e) { /* ignore */ }
+          try {
+            onError({
+              code: 0,
+              message: classified.message || 'Erreur du mode DJ.',
+              originalEvent: err,
+            });
+          } catch (e) { /* ignore */ }
         });
       },
 
@@ -632,7 +621,7 @@
         if (window.state) window.state.playerType[deckId] = 'local';
         var _t0 = performance.now();
         var mo = (file.size / 1024 / 1024).toFixed(2);
-        console.log('%c[audio:' + deckId + '] ▼ loadLocalFile START — ' + mo + ' Mo  (mime=' + mime + ')', 'color:#08e');
+        console.debug('%c[audio:' + deckId + '] ▼ loadLocalFile START — ' + mo + ' Mo  (mime=' + mime + ')', 'color:#08e');
         var AE = window.AudioEngine;
 
         // Même mécanisme tee : enregistre la promesse scratch AVANT de lire le
@@ -647,7 +636,7 @@
 
         var full = file.arrayBuffer().then(function (buf) {
           var dlMs = (performance.now() - _t0).toFixed(0);
-          console.log('%c[audio:' + deckId + '] ▼ loadLocalFile ← ' + (buf.byteLength / 1024 / 1024).toFixed(2)
+          console.debug('%c[audio:' + deckId + '] ▼ loadLocalFile ← ' + (buf.byteLength / 1024 / 1024).toFixed(2)
             + ' Mo en ' + dlMs + 'ms', 'color:#08e;font-weight:bold');
           // 1) Blob same-origin avec le bon type MIME → audio.src.
           var blob = new Blob([buf], { type: mime });

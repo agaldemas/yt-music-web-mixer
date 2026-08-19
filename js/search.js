@@ -69,23 +69,25 @@
     return min + ':' + String(s).padStart(2, '0');
   }
 
-  // Extrait un videoId depuis une URL YouTube ou un ID brut (11 caractères typiquement)
+  // Extrait un videoId depuis une URL YouTube ou un ID brut.
+  // Un ID YouTube brut fait exactement 11 caractères ; une chaîne plus courte
+  // (ex. « africando ») reste donc une requête de recherche.
   function extractVideoId(input) {
     if (!input) return null;
     const s = String(input).trim();
     if (!s) return null;
 
-    // ID brut (6 à 15 caractères alphanumériques, tirets, underscores)
-    if (/^[a-zA-Z0-9_-]{6,15}$/.test(s)) return s;
+    // ID brut YouTube (11 caractères alphanumériques, tirets, underscores).
+    if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
 
     // youtu.be/<id>
-    let m = /youtu\.be\/([a-zA-Z0-9_-]{6,15})/.exec(s);
+    let m = /youtu\.be\/([a-zA-Z0-9_-]{11})(?:[?&#/]|$)/.exec(s);
     if (m) return m[1];
 
     // youtube.com/watch?v=<id> (ou /shorts/<id>, /embed/<id>)
-    m = /[?&]v=([a-zA-Z0-9_-]{6,15})/.exec(s)
-      || /\/embed\/([a-zA-Z0-9_-]{6,15})/.exec(s)
-      || /\/shorts\/([a-zA-Z0-9_-]{6,15})/.exec(s);
+    m = /[?&]v=([a-zA-Z0-9_-]{11})(?:[?&#/]|$)/.exec(s)
+      || /\/embed\/([a-zA-Z0-9_-]{11})(?:[?&#/]|$)/.exec(s)
+      || /\/shorts\/([a-zA-Z0-9_-]{11})(?:[?&#/]|$)/.exec(s);
     if (m) return m[1];
 
     return null;
@@ -407,11 +409,13 @@
     callbacks = callbacks || {};
     const onSelect = callbacks.onSelect || function () {};
     const onError = callbacks.onError || function () {};
+    const onSearchStart = callbacks.onSearchStart || function () {};
 
     const panelEl = document.querySelector('.deck-results[data-deck="' + deck + '"]');
     const inputEl = document.querySelector('.search-input[data-deck="' + deck + '"]');
     const btnEl = document.querySelector('.search-btn[data-deck="' + deck + '"]');
     const modeBtnEl = document.querySelector('.search-mode-btn[data-deck="' + deck + '"]');
+    const clearResultsBtnEl = document.querySelector('.deck-results-clear[data-deck="' + deck + '"]');
 
     if (!panelEl || !inputEl || !btnEl) {
       // Pas d'éléments DOM = on ne peut rien faire. Retourne une instance no-op.
@@ -441,10 +445,17 @@
     var pipedCacheQuery = ''; // requête associée au cache
     var lastWasPiped = false; // les résultats affichés viennent de Piped
     var lastActiveId = null; // dernier videoId sélectionné (badge "En cours")
+    var resultsCollapsed = false; // panneau replié sans vider son contenu
 
     function setState(state, payload) {
       renderPanel(panelEl, state, payload);
       syncToolbar(state);
+      if (clearResultsBtnEl) {
+        clearResultsBtnEl.hidden = state !== UI_STATE.RESULTS
+          && state !== UI_STATE.WARNING
+          && state !== UI_STATE.ERROR
+          && state !== UI_STATE.NO_RESULTS;
+      }
     }
 
     // Marque un résultat comme "en cours de lecture" (badge ▶).
@@ -497,18 +508,27 @@
       nextBtn.innerHTML = SVG_NEXT;
       nextBtn.addEventListener('click', function () { loadPage('next'); });
 
-      var clearBtn = document.createElement('button');
-      clearBtn.type = 'button';
-      clearBtn.className = 'deck-results-clear';
-      clearBtn.setAttribute('aria-label', 'Effacer les résultats de la voie ' + deck);
-      clearBtn.title = 'Effacer les résultats';
-      clearBtn.textContent = '✕';
-      clearBtn.addEventListener('click', function () { clear(); });
+      var toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'deck-results-toggle';
+      toggleBtn.setAttribute('aria-label', 'Masquer les résultats');
+      toggleBtn.title = 'Masquer les résultats';
+      toggleBtn.textContent = '▲';
+      toggleBtn.setAttribute('aria-expanded', 'true');
+      toggleBtn.addEventListener('click', function () {
+        resultsCollapsed = !resultsCollapsed;
+        panelEl.classList.toggle('is-collapsed', resultsCollapsed);
+        toggleBtn.textContent = resultsCollapsed ? '▼' : '▲';
+        toggleBtn.setAttribute('aria-expanded', resultsCollapsed ? 'false' : 'true');
+        toggleBtn.setAttribute('aria-label', resultsCollapsed ? 'Afficher les résultats' : 'Masquer les résultats');
+        toggleBtn.title = resultsCollapsed ? 'Afficher les résultats' : 'Masquer les résultats';
+      });
 
       toolbar.appendChild(prevBtn);
       toolbar.appendChild(nextBtn);
-      toolbar.appendChild(clearBtn);
+      toolbar.appendChild(toggleBtn);
       panelEl.insertAdjacentElement('beforebegin', toolbar);
+      if (clearResultsBtnEl) clearResultsBtnEl.addEventListener('click', function () { clear(); });
       return toolbar;
     }
 
@@ -561,6 +581,10 @@
         setState(UI_STATE.IDLE);
         return;
       }
+
+      // Toute nouvelle recherche invalide l'erreur de lecture précédente :
+      // l'erreur du deck concerne le morceau chargé, pas la recherche.
+      onSearchStart(query);
 
       // 1) Fallback URL / ID brut : pas besoin de clé API (pas de pagination)
       const directId = extractVideoId(query);
@@ -716,6 +740,14 @@
         if (info.kind === 'piped-nextpage' && panelEl.querySelectorAll('.search-result').length) {
           panelEl.insertAdjacentElement('afterbegin', buildInlineWarning(info.message));
           syncToolbar(UI_STATE.RESULTS); // toolbar reste visible, ‹ › reflètent l'état courant
+          onError(info);
+          return;
+        }
+        // Échec Piped sur la première page : ce n'est pas une erreur de
+        // lecture du deck. Le panneau de recherche doit rester le seul endroit
+        // qui informe l'utilisateur, sous forme d'avertissement non bloquant.
+        if (info.kind === 'piped') {
+          setState(UI_STATE.WARNING, info.message);
           onError(info);
           return;
         }

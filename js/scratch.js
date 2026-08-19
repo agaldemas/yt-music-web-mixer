@@ -159,7 +159,7 @@
         if (audio && audio.duration && isFinite(audio.duration) && audio.duration > 0) {
           var newRot = rotationForPosition(audio.currentTime);
           if (Math.abs(newRot - p.rotation) > 0.05) {
-            console.log('[platter:' + deck + '] rotation streaming: '
+            console.debug('[platter:' + deck + '] rotation streaming: '
               + p.rotation.toFixed(2) + 'rad → ' + newRot.toFixed(2)
               + 'rad (audio.currentTime=' + audio.currentTime.toFixed(2) + 's)');
           }
@@ -202,7 +202,7 @@
       return '';
     }
     var url = PipedStreams.getCorsSafeUrl(entry, entry.bestAudio.stream);
-    console.log('%c[scratch:' + deck + '] getStreamUrlForDeck: videoId="' + videoId + '"'
+    console.debug('%c[scratch:' + deck + '] getStreamUrlForDeck: videoId="' + videoId + '"'
       + '  instance="' + (entry.instance || '?') + '"'
       + '  url=' + (url.length > 80 ? url.slice(0, 80) + '…' : url),
       'color:#08e');
@@ -220,11 +220,11 @@ function ensureBuffer(deck) {
 
     // === Chemins de réutilisation (instantanés) ===
     if (p.bufferReady && AE.getDeckBuffer(deck)) {
-      console.log('%c[scratch:' + deck + '] ensureBuffer: ✓ DÉJÀ PRÊT (instantané)', 'color:#0a0;font-weight:bold');
+      console.debug('%c[scratch:' + deck + '] ensureBuffer: ✓ DÉJÀ PRÊT (instantané)', 'color:#0a0;font-weight:bold');
       return Promise.resolve();
     }
     if (p.loadPromise) {
-      console.log('%c[scratch:' + deck + '] ensureBuffer: ⟳ réutilise le décodage EN COURS'
+      console.debug('%c[scratch:' + deck + '] ensureBuffer: ⟳ réutilise le décodage EN COURS'
         + '  (loading=' + p.loading + '  active=' + p.active + ')', 'color:#e80');
       return p.loadPromise;
     }
@@ -237,14 +237,14 @@ function ensureBuffer(deck) {
     if (teeBuffer) {
       p.bufferReady = true;
       p.loading = false;
-      console.log('%c[scratch:' + deck + '] ensureBuffer: ✓ TEE buffer récupéré (pas de re-fetch)', 'color:#0a0;font-weight:bold');
+      console.debug('%c[scratch:' + deck + '] ensureBuffer: ✓ TEE buffer récupéré (pas de re-fetch)', 'color:#0a0;font-weight:bold');
       return Promise.resolve();
     }
     var teePromise = (typeof AE.getDeckBufferLoadPromise === 'function') ? AE.getDeckBufferLoadPromise(deck) : null;
     if (teePromise) {
       p.loading = true;
       if (p.active) setState(deck, STATE_LOADING, 'Décodage…');
-      console.log('%c[scratch:' + deck + '] ensureBuffer: ⟳ TEE décodage EN COURS → on attend le tee (pas de re-fetch)'
+      console.debug('%c[scratch:' + deck + '] ensureBuffer: ⟳ TEE décodage EN COURS → on attend le tee (pas de re-fetch)'
         + '  (active=' + p.active + ')', 'color:#08e;font-weight:bold');
       p.loadPromise = teePromise.then(function (decoded) {
         // decoded=null : AudioEngine indisponible au moment du fetch → le tee
@@ -258,7 +258,7 @@ function ensureBuffer(deck) {
         p.bufferReady = true;
         p.loading = false;
         p.loadPromise = null;
-        console.log('%c[scratch:' + deck + '] ensureBuffer: ✓ TEE buffer PRÊT'
+        console.debug('%c[scratch:' + deck + '] ensureBuffer: ✓ TEE buffer PRÊT'
           + '  (duration=' + decoded.duration.toFixed(1) + 's'
           + '  active=' + p.active + ')',
           'color:#0a0;font-weight:bold');
@@ -280,12 +280,12 @@ function ensureBuffer(deck) {
       return Promise.reject(new Error('Aucun flux audio disponible pour le scratch.'));
     }
     if (p.bufferReady && p.lastUrl === url && AE.getDeckBuffer(deck)) {
-      console.log('%c[scratch:' + deck + '] ensureBuffer: ✓ même URL déjà décodée (instantané)', 'color:#0a0');
+      console.debug('%c[scratch:' + deck + '] ensureBuffer: ✓ même URL déjà décodée (instantané)', 'color:#0a0');
       return Promise.resolve();
     }
 
     // === NOUVEAU décodage (XHR + decodeAudioData) ===
-    console.log('%c[scratch:' + deck + '] ensureBuffer: ⏳ NOUVEAU décodage démarré'
+    console.debug('%c[scratch:' + deck + '] ensureBuffer: ⏳ NOUVEAU décodage démarré'
       + '  active=' + p.active
       + '  url=' + (url.length > 70 ? url.slice(0, 70) + '…' : url),
       'color:#e80;font-weight:bold');
@@ -308,7 +308,7 @@ function ensureBuffer(deck) {
       p.loading = false;
       p.loadPromise = null;
       var totalMs = (now() - t0).toFixed(0);
-      console.log('%c[scratch:' + deck + '] ensureBuffer: ✓ buffer PRÊT en ' + totalMs + 'ms'
+      console.debug('%c[scratch:' + deck + '] ensureBuffer: ✓ buffer PRÊT en ' + totalMs + 'ms'
         + '  (duration=' + decoded.duration.toFixed(1) + 's'
         + '  active=' + p.active + ')',
         'color:#0a0;font-weight:bold');
@@ -346,7 +346,7 @@ function precache(deck) {
     //   + '  hasLoadPromise=' + !!p.loadPromise);
     // Si le morceau a changé sans invalidation explicite, on réinvalide.
     if (p.loadVideoId && p.loadVideoId !== videoId) {
-      console.log('[scratch:' + deck + '] precache: morceau changé → invalidateBuffer');
+      console.debug('[scratch:' + deck + '] precache: morceau changé → invalidateBuffer');
       invalidateBuffer(deck);
     }
     p.loadVideoId = videoId;
@@ -357,7 +357,7 @@ function precache(deck) {
       console.warn('[scratch:' + deck + '] precache: pas de videoId → skip');
       return;
     }
-    console.log('%c[scratch:' + deck + '] precache: lance le décodage en arrière-plan…', 'color:#08e');
+    console.debug('%c[scratch:' + deck + '] precache: lance le décodage en arrière-plan…', 'color:#08e');
     // Lance le décodage en arrière-plan (silencieux : showLoading=false).
     ensureBuffer(deck).catch(function (err) {
       // Erreur de préchargement — silencieuse. L'engage la remontera si besoin.
@@ -387,7 +387,7 @@ function engage(deck) {
       // que le buffer soit prêt, on n'engage PAS le scratch — sinon le scratch
       // s'active tout seul sans que l'utilisateur tienne la platine.
       if (!p.active) {
-        console.log('%c[scratch:' + deck + '] engage: user déjà relâché → ABORT (pas de engageScratch)', 'color:#e80');
+        console.debug('%c[scratch:' + deck + '] engage: user déjà relâché → ABORT (pas de engageScratch)', 'color:#e80');
         return null;
       }
       console.log('%c[scratch:' + deck + '] engage: buffer prêt → AE.engageScratch()', 'color:#0a0');
@@ -429,14 +429,14 @@ function disengage(deck) {
       // .currentTime) au release. Aucun gel nécessaire : le streaming rAF
       // reprend le calcul sur la MÊME position (audio.currentTime = pos) et
       // trouve la même valeur → pas de saut visuel.
-      console.log('[platter:' + deck + '] release rotation='
+      console.debug('[platter:' + deck + '] release rotation='
         + p.rotation.toFixed(2) + 'rad  rotationFromPos='
         + rotationForPosition(pos).toFixed(2)
         + 'rad  pos=' + pos.toFixed(2) + 's  audio.currentTime='
         + (audio ? audio.currentTime.toFixed(2) : '?') + 's');
       AE.disengageScratch(deck, pos, p.wasPlaying);
     } else {
-      console.log('[scratch:' + deck + '] disengage: scratch pas engagé (buffer pas prêt) → juste UI reset');
+      console.debug('[scratch:' + deck + '] disengage: scratch pas engagé (buffer pas prêt) → juste UI reset');
     }
     p.smoothRate = 0;
     setState(deck, STATE_IDLE, 'Prêt');
@@ -472,7 +472,7 @@ function disengage(deck) {
     var pos = AE.getScratchPosition(deck);
     var newRot = rotationForPosition(pos);
     if (Math.abs(newRot - p.rotation) > 0.05) {
-      console.log('[platter:' + deck + '] rotation scratch: '
+      console.debug('[platter:' + deck + '] rotation scratch: '
         + p.rotation.toFixed(2) + 'rad → ' + newRot.toFixed(2)
         + 'rad (pos=' + pos.toFixed(2) + 's  dAngle=' + dAngle.toFixed(3) + 'rad)');
     }

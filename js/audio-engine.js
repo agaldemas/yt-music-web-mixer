@@ -499,7 +499,7 @@
 
     return new Promise(function (resolve, reject) {
       var _t0 = performance.now();
-      console.log('%c[scratch:' + deckId + '] decodeDeckBuffer START (XHR) — url='
+      console.debug('%c[scratch:' + deckId + '] decodeDeckBuffer START (XHR) — url='
         + (url.length > 80 ? url.slice(0, 80) + '…' : url), 'color:#e80');
 
       var xhr = new XMLHttpRequest();
@@ -517,7 +517,7 @@
           var pct = (e.loaded / e.total * 100).toFixed(0);
           var mo = (e.loaded / 1024 / 1024).toFixed(1);
           var totalMo = (e.total / 1024 / 1024).toFixed(1);
-          console.log('[scratch:' + deckId + '] download ' + pct + '%  (' + mo + '/' + totalMo + ' Mo)');
+          console.debug('[scratch:' + deckId + '] download ' + pct + '%  (' + mo + '/' + totalMo + ' Mo)');
           if (typeof onProgress === 'function') onProgress(e.loaded / e.total);
         }
       };
@@ -530,22 +530,22 @@
         }
         var arr = xhr.response;
         var dlMs = (performance.now() - _t0).toFixed(0);
-        console.log('%c[scratch:' + deckId + '] ← XHR ' + (arr.byteLength / 1024 / 1024).toFixed(2)
+        console.debug('%c[scratch:' + deckId + '] ← XHR ' + (arr.byteLength / 1024 / 1024).toFixed(2)
           + ' Mo en ' + dlMs + 'ms', 'color:#08e;font-weight:bold');
 
-        console.log('[scratch:' + deckId + '] → ctx.decodeAudioData('
+        console.debug('[scratch:' + deckId + '] → ctx.decodeAudioData('
           + (arr.byteLength / 1024 / 1024).toFixed(2) + ' Mo)…');
         var _tdec = performance.now();
         ctx.decodeAudioData(arr).then(function (decoded) {
           var decMs = (performance.now() - _tdec).toFixed(0);
-          console.log('%c[scratch:' + deckId + '] ← decodeAudioData en ' + decMs + 'ms'
+          console.debug('%c[scratch:' + deckId + '] ← decodeAudioData en ' + decMs + 'ms'
             + '  → duration=' + decoded.duration.toFixed(1) + 's'
             + '  channels=' + decoded.numberOfChannels
             + '  sampleRate=' + decoded.sampleRate
             + '  PCM=' + (decoded.length * decoded.numberOfChannels * 4 / 1024 / 1024).toFixed(1) + ' Mo',
             'color:#0a0;font-weight:bold');
           chain.scratchBuffer = decoded;
-          console.log('%c[scratch:' + deckId + '] decodeDeckBuffer TOTAL '
+          console.debug('%c[scratch:' + deckId + '] decodeDeckBuffer TOTAL '
             + (performance.now() - _t0).toFixed(0) + 'ms', 'color:#e80;font-weight:bold');
           resolve(decoded);
         }).catch(function (err) {
@@ -912,13 +912,13 @@
 
     var copy = arrayBuffer.slice(0);
     var _t0 = performance.now();
-    console.log('%c[scratch:' + deckId + '] loadDeckBufferFromBlob START — '
+    console.debug('%c[scratch:' + deckId + '] loadDeckBufferFromBlob START — '
       + (copy.byteLength / 1024 / 1024).toFixed(2) + ' Mo (tee, pas de re-fetch)', 'color:#e80');
 
     return ctx.decodeAudioData(copy).then(function (decoded) {
       chain.scratchBuffer = decoded;
       chain.scratchLoadPromise = null;
-      console.log('%c[scratch:' + deckId + '] loadDeckBufferFromBlob ✓ PRÊT'
+      console.debug('%c[scratch:' + deckId + '] loadDeckBufferFromBlob ✓ PRÊT'
         + '  duration=' + decoded.duration.toFixed(1) + 's'
         + '  PCM=' + (decoded.length * decoded.numberOfChannels * 4 / 1024 / 1024).toFixed(1) + ' Mo'
         + '  decode=' + (performance.now() - _t0).toFixed(0) + 'ms', 'color:#0a0;font-weight:bold');

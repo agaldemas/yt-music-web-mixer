@@ -401,9 +401,12 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 /* Recherche */
 .deck-search {
   display: flex;
+  align-items: stretch;
   gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid #232733;
+  position: relative;
+  z-index: 4;
 }
 .search-input {
   flex: 1 1 auto;
@@ -416,21 +419,29 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   min-width: 0;
 }
 .search-input:focus { outline: none; border-color: #3b82f6; }
-.search-btn {
+.search-btn,
+.deck-results-clear {
+  flex: 0 0 44px;
   background: #1f2430;
   color: #e7e7ea;
   border: 1px solid #2e3444;
   border-radius: 6px;
-  padding: 0 12px;
+  padding: 0;
   font-size: 1rem;
 }
-.search-btn:hover { background: #272d3b; }
+.search-btn:hover,
+.deck-results-clear:hover { background: #272d3b; }
+.deck-results-clear[hidden] { display: none; }
+.deck-results-clear { color: #9ca3af; }
+.deck-results-clear:hover { color: #fca5a5; border-color: #7f1d1d; }
 
 /* Bouton bascule mode de recherche (YouTube API ↔ PipedSearch) */
 .deck-search-mode {
   display: flex;
   justify-content: flex-end;
   padding: 0 14px 4px;
+  position: relative;
+  z-index: 3;
 }
 .deck-search-mode:empty { display: none; }
 .search-mode-btn {
@@ -447,18 +458,11 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.search-mode-btn:hover {
-  border-color: #3a4356;
-  color: #e7e7ea;
-}
+.search-mode-btn:hover { border-color: #3a4356; color: #e7e7ea; }
 .search-mode-btn[hidden] { display: none; }
-.search-mode-btn[aria-pressed="true"] {
-  background: #1e3a32;
-  border-color: #2f6b52;
-  color: #6ee7b7;
-}
+.search-mode-btn[aria-pressed="true"] { background: #1e3a32; border-color: #2f6b52; color: #6ee7b7; }
 
-/* Résultats */
+/* Résultats : zone autonome, au-dessus des éléments de lecture. */
 .deck-results {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -467,23 +471,25 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   max-height: 260px;
   overflow-y: auto;
   border-bottom: 1px solid #232733;
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
 }
 .deck-results:not([data-state="results"]):empty,
 .deck-results[data-state="idle"] { display: none; }
 
-/* Bouton "✕ Effacer les résultats" : inséré juste avant .deck-results */
-/* Barre d'outils résultats : pagination ‹ › + bouton effacer ✕ */
+/* Toolbar : pagination uniquement ; le bouton de fermeture est dans la recherche. */
 .deck-results-toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 4px 14px;
   border-bottom: 1px solid #232733;
-  background: transparent;
+  background: #15181f;
+  position: relative;
+  z-index: 2;
 }
 .deck-results-toolbar[hidden] { display: none; }
-
-/* Boutons pagination : icônes triangle SVG */
 .deck-nav-btn {
   display: inline-flex;
   align-items: center;
@@ -500,27 +506,31 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 .deck-nav-btn:hover:not(:disabled) { background: #272d3b; border-color: #3b82f6; }
 .deck-nav-btn:disabled { opacity: 0.3; cursor: default; }
 .deck-nav-btn svg { display: block; }
-
-/* Bouton effacer : pousse à droite dans la toolbar flex */
-.deck-results-toolbar .deck-results-clear {
-  flex: 1 1 auto;
-  width: auto;
-  background: transparent;
-  color: #9ca3af;
-  border: 0;
-  padding: 4px 0;
-  font-size: 0.8rem;
-  text-align: right;
+.deck-results-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  background: #1f2430;
+  color: #e7e7ea;
+  border: 1px solid #2e3444;
+  border-radius: 4px;
   cursor: pointer;
+  padding: 0;
+  font-size: 0.9rem;
+  line-height: 1;
 }
-.deck-results-toolbar .deck-results-clear:hover { color: #e7e7ea; background: transparent; }
+.deck-results-toggle:hover { background: #272d3b; border-color: #3b82f6; }
+.deck-results.is-collapsed { display: none; }
+.deck-results-clear-legacy { display: none; }
 
 /* État non-resultats : 1 seule colonne centrée */
 .deck-results[data-state="loading"],
 .deck-results[data-state="error"],
-.deck-results[data-state="no-results"] {
-  grid-template-columns: 1fr;
-}
+.deck-results[data-state="warning"],
+.deck-results[data-state="no-results"] { grid-template-columns: 1fr; }
 .search-state {
   padding: 14px;
   border-radius: 6px;
@@ -528,38 +538,30 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   text-align: center;
   line-height: 1.4;
 }
-.search-state-loading {
-  background: #1a2030;
-  border: 1px solid #2e3444;
-  color: #c7c7cc;
-}
-.search-state-no-results {
-  background: #1f1a30;
-  border: 1px dashed #2e3444;
-  color: #9ca3af;
-}
-.search-state-error {
-  background: #3a1212;
-  border: 1px solid #7f1d1d;
-  color: #fecaca;
-}
-.search-state-warning {
-  background: #2a2410;
-  border: 1px solid #6b5b1f;
-  color: #fde68a;
-}
-.search-state-warning {
-  background: #2a2410;
-  border: 1px solid #6b5b1f;
-  color: #fde68a;
-}
+.search-state-loading { background: #1a2030; border: 1px solid #2e3444; color: #c7c7cc; }
+.search-state-no-results { background: #1f1a30; border: 1px dashed #2e3444; color: #9ca3af; }
+.search-state-error { background: #3a1212; border: 1px solid #7f1d1d; color: #fecaca; }
+.search-state-warning { background: #2a2410; border: 1px solid #6b5b1f; color: #fde68a; }
+.search-state-inline { grid-column: 1 / -1; padding: 8px 10px; text-align: left; }
 
-/* Warning inline : pleine largeur dans la grille des résultats conservés */
-.search-state-inline {
-  grid-column: 1 / -1;
-  padding: 8px 10px;
-  text-align: left;
+/* Le lecteur et ses enfants restent dans leur propre couche : aucun élément
+   absolu de la platine ne peut recouvrir recherche, résultats ou import. */
+.deck-player {
+  isolation: isolate;
+  z-index: 1;
 }
+.deck-nowplaying,
+.deck-local-row,
+.deck-transport,
+.deck-dj,
+.deck-cue-loop,
+.deck-error { position: relative; z-index: 1; }
+.deck-local-row { flex: 0 0 auto; }
+.deck-scratch { z-index: 0; }
+
+/* Bouton de fermeture intégré à la barre de recherche : anciennes toolbars
+   déjà présentes dans le DOM restent masquées. */
+.deck-results-toolbar .deck-results-clear { display: none; }
 
 /* Une carte résultat */
 .search-result {
@@ -655,6 +657,9 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   background: #000;
   min-height: 200px;
   position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  z-index: 1;
   aspect-ratio: 16 / 9;
 }
 /* Mode Piped : le lecteur devient une ligne analyser | platine,

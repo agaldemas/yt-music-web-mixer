@@ -452,7 +452,17 @@
   // Lit le dernier videoId persisté pour une voie (ou '' si absent)
   function getPersistedVideoId(deck) {
     const key = (deck === 'A') ? CFG.STORAGE_KEYS.LAST_VIDEO_A : CFG.STORAGE_KEYS.LAST_VIDEO_B;
-    try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
+    try {
+      var stored = localStorage.getItem(key) || '';
+      // Nettoie les anciennes valeurs issues du parsing permissif des requêtes
+      // (ex. « africando » enregistré comme videoId).
+      var validId = SEARCH && typeof SEARCH.extractVideoId === 'function'
+        ? SEARCH.extractVideoId(stored)
+        : null;
+      if (validId) return validId;
+      if (stored) localStorage.removeItem(key);
+    } catch (e) { /* ignore */ }
+    return '';
   }
 
   // Mode de lecture persisté ('auto' | 'piped' | 'iframe'), défaut CFG.PLAYER_MODE_DEFAULT
@@ -1527,6 +1537,11 @@
     const search = SEARCH.create(deck, {
       onSelect: function (videoId) {
         onSearchSelect(deck, videoId);
+      },
+      onSearchStart: function () {
+        // Une recherche ne doit pas laisser visible une erreur de lecture
+        // appartenant au morceau précédent.
+        clearDeckError(deck);
       },
       onError: function () { /* déjà affichée dans le panneau */ },
     });
