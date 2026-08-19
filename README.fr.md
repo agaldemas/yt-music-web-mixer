@@ -17,10 +17,12 @@ L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le s
 - **Panneau de résultats** : boutons de pagination précédent/suivant et bouton `▲`/`▼` dans la barre de pagination pour replier ou déployer les résultats sans supprimer leur contenu. Le bouton existant `✕` efface toujours la requête et les résultats.
 - **Trim de gain par voie** (±10 dB, neutre à 0 dB) avant le crossfader, avec affichage dB en temps réel, persistance, reset par double-clic et bouton dédié `↺`.
 - **Scratch / platine** en mode DJ : décodage paresseux du buffer complet, scratch bidirectionnel, release conservant la position et logs de debug réduits (les jalons importants d'engage/release restent visibles).
+- **Sauvegarde locale (`💾 Save local`)** en mode DJ : chaque voie expose un bouton `💾 Save local` à droite de `📁 Load local`. Il sauvegarde le MP3 en cours de lecture sur le disque via le dialogue standard du navigateur (`showSaveFilePicker`, fallback `<a download>`). Le nom proposé est `<titre>-<artiste>.mp3`, et le fichier embarque les métadonnées YouTube (titre, artiste, date, genre…) **ainsi que la pochette** (APIC/ID3, écrite côté serveur avec `ffmpeg`). Le bouton est désactivé pour une source locale (fichier déjà sur disque) et en mode IFrame.
 - **Crossfader A↔B** (0 = full A, 100 = full B, 50 = équilibré) avec courbe *equal-power* pour éviter le creux de niveau au milieu.
 - **Volume master** global (0–100%).
 - **Boutons mute/unmute par voie** (obligatoire pour contourner les politiques d'autoplay des navigateurs).
 - **Contrôles de lecture** : *play both* / *pause both*, plus bouton lecture/pause par voie.
+- **Sauvegarde locale du morceau courant (`💾 Save local`)** : dans chaque voie, un bouton `💾 Save local` (à droite de `📁 Load local`) enregistre le MP3 en cours de lecture sur votre disque. Le nom proposé est `<titre>-<artiste>.mp3` et le fichier embarque les métadonnées YouTube (titre, artiste, album, date, genre…) **ainsi que la pochette** (APIC/ID3 écrite côté serveur avec `ffmpeg`). Fonctionne en **mode DJ** sur une source YouTube ; désactivé pour un fichier déjà local.
 - **Sync B → A** : aligner B sur la position de A (ponctuel ou continu).
 - **Démutage automatique au changement de vidéo** : la sélection d'un nouveau morceau active le son automatiquement (le clic compte comme geste utilisateur pour les politiques d'autoplay).
 - **Affichage séparé des volumes A/B** : la barre de crossfade affiche le pourcentage de volume de chaque voie individuellement.
@@ -139,13 +141,15 @@ yt-music-web-mixer/
 ├── README.md            # ce fichier
 ├── index.html           # structure : header, zone A | B, barre de mixage
 ├── server/
-│   └── server.js        # serveur Express, extraction yt-dlp et relais audio same-origin
+│   └── server.js        # serveur Express, extraction yt-dlp, relais audio same-origin, téléchargement /api/download/:id
 ├── css/
 │   └── styles.css       # layout grille 2 colonnes + barre fixe + contrôles DJ
 └── js/
     ├── config.js        # constantes, clé API et configuration lecteur
     ├── youtube.js       # wrapper YouTube IFrame API (fallback IFrame)
     ├── piped-streams.js # backend local prioritaire, fallback flux Piped, cache et refresh
+    ├── local-load.js    # import de fichiers audio/vidéo locaux (bouton "Load local")
+    ├── local-save.js    # sauvegarde du MP3 courant (bouton "Save local", nom <titre>-<artiste>.mp3, showSaveFilePicker)
     ├── audio-player.js  # lecteur audio du mode DJ (autoplay sûr, play/pause optimiste)
     ├── audio-engine.js  # graphe Web Audio : source, EQ, filtre, gain, analyseur et pitch
     ├── visualizer.js    # canvas spectre/waveform via AnalyserNode

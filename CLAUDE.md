@@ -84,7 +84,7 @@ yt-music-web-mixer/
     ├── bpm-detector.js          # real-time BPM detection (bass band → peaks → intervals)
     ├── search.js                # YouTube Data API + Piped search + results display
     ├── mixer.js                 # crossfader logic (GainNode for Piped, setVolume for IFrame)
-    └── local.js                 # file import binding + local library index
+    └── local-load.js              # file import binding + local library index
 ```
 
 ### `server/server.js` — Local Extraction Backend (yt-dlp)

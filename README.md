@@ -17,6 +17,7 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
 - **Search results panel**: previous/next pagination controls plus a `▲`/`▼` toggle in the pagination toolbar to collapse or expand results without clearing their content. The existing `✕` button still clears the query and results.
 - **Per-deck gain trim** (±10 dB, neutral at 0 dB) before the crossfader, with live dB readout, persistence, double-click reset and a dedicated `↺` reset button.
 - **Scratch / platter** in DJ mode: lazy full-track buffer decoding, bidirectional scratch playback, position-preserving release and reduced debug logging (important engage/release milestones remain visible).
+- **Save current track locally (`💾 Save local`)**: each deck has a `💾 Save local` button (right of `📁 Load local`) that saves the current MP3 to your disk. The suggested filename is `<title>-<artist>.mp3` and the file includes YouTube metadata (title, artist, album, date, genre…) **plus the cover art** (APIC/ID3 written server-side with `ffmpeg`). Works in **DJ mode** on a YouTube source; disabled for local files (already on disk).
 - **A↔B crossfader** (0 = full A, 100 = full B, 50 = balanced) with an *equal-power* curve to avoid the level dip in the middle.
 - **Global master volume** (0–100%).
 - **Per-deck mute/unmute buttons** (required to work around browser autoplay policies).
@@ -138,6 +139,8 @@ yt-music-web-mixer/
     ├── config.js        # constants, API key and player configuration
     ├── youtube.js       # YouTube IFrame API wrapper (IFrame fallback)
     ├── piped-streams.js # local backend first, Piped stream fallback, cache and refresh
+    ├── local-load.js    # local audio/video file import (knowledge "Load local" buttons, ID3 metadata extraction)
+    ├── local-save.js    # save current MP3 (knowledge "Save local" buttons, <title>-<artist>.mp3, showSaveFilePicker)
     ├── audio-player.js  # audio player used by DJ mode (autoplay-safe, optimistic play/pause)
     ├── audio-engine.js  # Web Audio graph: source, trim, EQ, filter, gain, analyser and pitch
     ├── visualizer.js    # canvas spectrum/waveform via AnalyserNode
