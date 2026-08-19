@@ -36,8 +36,6 @@
   // borne le rate (avant/arrière) — cohérent avec AudioEngine.SCRATCH_MAX_RATE.
   // SMOOTH : facteur de lissage (low-pass) du rate pour éviter le jitter
   // des Pointer Events (~60-120 Hz vs audio 44.1 kHz). Bas = réactif.
-  // GEAR : rapport rotation platter / angle du curseur pendant un scratch.
-  // 1.0 = la platine suit 1:1 le doigt (vraie sensation vinyle attrapé).
   //
   // Vrai vinyle 33⅓ rpm : 1 tour physique = 1,8 s de audio (SEC_PER_TURN).
   // Le rate naturel = vitesseAngulaire / vitesseAngulaireNominale, donc
@@ -48,7 +46,22 @@
   var SENS = SEC_PER_RAD;    // rate = angularVelocity(rad/s) × SENS
   var MAX_RATE = 3;
   var SMOOTH = 0.15;          // 0 = pas de lissage, 1 = figé
-  var GEAR = 1.0;             // rotation visuelle par radian de mouvement curseur
+
+  // Rotation visuelle : la platine est TOUJOURS pilotée par la position de
+  // lecture (fonction rotationForPosition ci-dessous), pendant le scratch
+  // comme en streaming, avec LE MÊME facteur angulaire — SEC_PER_RAD
+  // (1 tour de platine = SEC_PER_TURN s de audio, le vrai rapport vinyle).
+  //  - Pendant le scratch : pos avance de dAngle(rad) × SEC_PER_RAD par move
+  //    → rotation = pos / SEC_PER_RAD avance de dAngle → platine COLLÉE au
+  //    doigt (1:1), aucune multiplication.
+  //  - En streaming : pos avance à 1× → rotation avance à 1/SEC_PER_RAD
+  //    = 3,49 rad/s = 33⅓ tours/min (le vrai rpm vinyle).
+  //  - Au release : pos = audio.currentTime → rotation identique des deux
+  //    côtés → aucun saut visuel. UN seul facteur partout.
+  function rotationForPosition(pos) {
+    if (!isFinite(pos) || pos < 0) return 0;
+    return pos / SEC_PER_RAD;
+  }
 
   // (Ancien DECODE_TIMEOUT_MS supprimé : le Promise.race/timeout cassait
   // l'état — rejetait l'appelant tout en laissant le decode tourner en
@@ -136,15 +149,21 @@
       if (!AE) return;
       if (AE.isScratchEngaged(deck)) {
         // En scratch : la rotation est pilotée directement par updateRate()
-        // (platine collée au doigt, 1:1 via GEAR). On ne fait RIEN ici — sinon
-        // on superposerait une rotation "libre" qui brouillerait la sensation.
-        // Le marker est déjà mis à jour dans updateRate().
+        // sur la base de la position (rotationForPosition) — même fonction
+        // que le streaming, donc aucune discontinuité au release. Le marker
+        // est déjà mis à jour dans updateRate(). On ne fait RIEN ici.
       } else {
-        // En streaming : rotation liée à la position de lecture (1 tour = morceau).
+        // En streaming : rotation liée à la position de lecture
+        // (rotationForPosition — même fonction que pendant le scratch).
         var audio = AE.getDeckAudioElement(deck);
         if (audio && audio.duration && isFinite(audio.duration) && audio.duration > 0) {
-          // 2 tours par morceau (rendu visuel, pas besoin d'être exact).
-          p.rotation = (audio.currentTime / audio.duration) * 2 * Math.PI * 4;
+          var newRot = rotationForPosition(audio.currentTime);
+          if (Math.abs(newRot - p.rotation) > 0.05) {
+            console.log('[platter:' + deck + '] rotation streaming: '
+              + p.rotation.toFixed(2) + 'rad → ' + newRot.toFixed(2)
+              + 'rad (audio.currentTime=' + audio.currentTime.toFixed(2) + 's)');
+          }
+          p.rotation = newRot;
         }
       }
       if (p.marker) {
@@ -319,13 +338,12 @@ function precache(deck) {
     var p = platters[deck];
     if (!p) return;
     var videoId = window.state && window.state.videoIds ? window.state.videoIds[deck] : '';
-    console.log('%c[scratch:' + deck + '] precache() appelé'
-      + '  videoId="' + videoId + '"'
-      + '  loadVideoId="' + p.loadVideoId + '"'
-      + '  bufferReady=' + p.bufferReady
-      + '  loading=' + p.loading
-      + '  hasLoadPromise=' + !!p.loadPromise,
-      'color:#08e');
+    // console.debug('[scratch:' + deck + '] precache() appelé'
+    //   + '  videoId="' + videoId + '"'
+    //   + '  loadVideoId="' + p.loadVideoId + '"'
+    //   + '  bufferReady=' + p.bufferReady
+    //   + '  loading=' + p.loading
+    //   + '  hasLoadPromise=' + !!p.loadPromise);
     // Si le morceau a changé sans invalidation explicite, on réinvalide.
     if (p.loadVideoId && p.loadVideoId !== videoId) {
       console.log('[scratch:' + deck + '] precache: morceau changé → invalidateBuffer');
@@ -333,7 +351,6 @@ function precache(deck) {
     }
     p.loadVideoId = videoId;
     if (p.bufferReady || p.loading || p.loadPromise) {
-      console.log('[scratch:' + deck + '] precache: déjà prêt/en cours → skip');
       return;
     }
     if (!videoId) {
@@ -403,7 +420,20 @@ function disengage(deck) {
     // Inutile d'appeler disengageScratch qui ferait un duckDown/swap pour rien.
     if (AE.isScratchEngaged(deck)) {
       var pos = AE.getScratchPosition(deck);
-      console.log('[scratch:' + deck + '] disengage: pos finale=' + pos.toFixed(2) + 's  wasPlaying=' + p.wasPlaying);
+      var audio = AE.getDeckAudioElement(deck);
+      console.log('[scratch:' + deck + '] disengage: pos finale=' + pos.toFixed(2)
+        + 's  wasPlaying=' + p.wasPlaying);
+      // === LOG PRÉCIS RELEASE ===
+      // p.rotation est déjà pilotée par rotationForPosition (pos/SEC_PER_RAD)
+      // pendant TOUT le scratch → elle vaut déjà rotationForPosition(audio
+      // .currentTime) au release. Aucun gel nécessaire : le streaming rAF
+      // reprend le calcul sur la MÊME position (audio.currentTime = pos) et
+      // trouve la même valeur → pas de saut visuel.
+      console.log('[platter:' + deck + '] release rotation='
+        + p.rotation.toFixed(2) + 'rad  rotationFromPos='
+        + rotationForPosition(pos).toFixed(2)
+        + 'rad  pos=' + pos.toFixed(2) + 's  audio.currentTime='
+        + (audio ? audio.currentTime.toFixed(2) : '?') + 's');
       AE.disengageScratch(deck, pos, p.wasPlaying);
     } else {
       console.log('[scratch:' + deck + '] disengage: scratch pas engagé (buffer pas prêt) → juste UI reset');
@@ -432,9 +462,21 @@ function disengage(deck) {
     p.lastAngle = angle;
     p.lastTime = t;
 
-    // La platine est "collée" au doigt (vraie sensation vinyle attrapé) :
-    // sa rotation visuelle suit 1:1 (× GEAR) le déplacement angulaire du curseur.
-    p.rotation += dAngle * GEAR;
+    // === ROTATION CALCULÉE EN CONTINU (KISS) ===
+    // La platine suit la position RÉELLE du scratch (getScratchPosition) via
+    // rotationForPosition = pos / SEC_PER_RAD. Comme pos avance de
+    // dAngle × SEC_PER_RAD à chaque move (rate = angularVel × SENS), la
+    // rotation avance de dAngle → platine COLLÉE au doigt (1:1), le même
+    // facteur que le streaming. Au release, pos = audio.currentTime →
+    // p.rotation est déjà la bonne valeur → aucun saut visuel.
+    var pos = AE.getScratchPosition(deck);
+    var newRot = rotationForPosition(pos);
+    if (Math.abs(newRot - p.rotation) > 0.05) {
+      console.log('[platter:' + deck + '] rotation scratch: '
+        + p.rotation.toFixed(2) + 'rad → ' + newRot.toFixed(2)
+        + 'rad (pos=' + pos.toFixed(2) + 's  dAngle=' + dAngle.toFixed(3) + 'rad)');
+    }
+    p.rotation = newRot;
     if (p.marker) p.marker.style.transform = 'rotate(' + p.rotation + 'rad)';
 
     // Vitesse angulaire (rad/ms).

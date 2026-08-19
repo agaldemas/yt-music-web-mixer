@@ -26,9 +26,22 @@
  *   - clearDeckBuffer(deckId)           : libère le buffer (changement de morceau)
  *
  * Graphe par voie :
- *   source → scratchGain → lowShelf → midPeak → highShelf → djFilter ─┬→ deckGain → masterGain
- *                                                                     │            → masterAnalyser → ctx.destination
- *                                                                     └→ analyser (tap pre-fader, visualiseur de voie)
+ *   source → sourceMuteGain → scratchGain → lowShelf → midPeak → highShelf → djFilter ─┬→ deckGain → masterGain
+ *                                                                                       │            → masterAnalyser → ctx.destination
+ *                                                                                       └→ analyser (tap pre-fader, visualiseur de voie)
+ *
+ * `sourceMuteGain` : GainNode (gain=1 par défaut) servant de VRAI point de
+ * coupure du MediaElementSource, à la place d'un `disconnect()` violent.
+ * Bug Chrome snap-back : quand on déconnecte brutalement le MES pendant un
+ * scratch, son buffer interne (~800 ms de samples) reste en mémoire et est
+ * rejoué d'un coup au prochain `connect()` — la lecture redémarre depuis
+ * l'ancienne position. Solution : on ne déconnecte PLUS le MES, on met juste
+ * sourceMuteGain.gain=0 pendant toute la durée du scratch (le MES continue
+ * de jouer en silence, son buffer se vide). Au disengage, on garde le
+ * sourceMuteGain à 0 pendant ~800 ms (drain du buffer stale) PUIS on seek
+ * sur l'<audio> (qui continue de jouer en silence) → le seek est honoré
+ * par le moteur — on remonte sourceMuteGain à 1, l'audio reprend à la
+ * position finale, sans snap-back.
  *
  * `scratchGain` est un GainNode intermédiaire (gain=1 en mode normal) servant
  * de point d'entrée commun à la chaîne EQ. En mode scratch, on y branche un
@@ -152,6 +165,12 @@
     // Source (entrée du graphe depuis l'<audio>)
     const source = ctx.createMediaElementSource(audioEl);
 
+    // Source mute gain : VRAI point de coupure du MES (pas de disconnect
+    // violent). gain=1 en mode normal ; mis à 0 pendant le scratch et le
+    // drain post-disengage (voir doc en-tête du fichier).
+    const sourceMuteGain = ctx.createGain();
+    sourceMuteGain.gain.value = 1.0;
+
     // Scratch gain : point d'entrée commun de la chaîne EQ. En mode normal
     // (streaming), le MediaElementSource s'y connecte. En mode scratch, on
     // le déconnecte et on y branche un AudioBufferSourceNode. gain=1 par
@@ -193,14 +212,17 @@
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0.8;
 
-    // Connexion : source → scratchGain → EQ → djFilter, puis split pre-fader.
+    // Connexion : source → sourceMuteGain → scratchGain → EQ → djFilter, puis split pre-fader.
     //   - Une branche → deckGain → masterGain (chemin audio, niveau crossfade).
     //   - Une branche → analyser (tap PRE-fader : visualise le flux en lecture,
     //     indépendamment du deckGain/crossfader). Ainsi le visualiseur d'une voie
     //     reste actif même si son crossfade est à 0.
+    // sourceMuteGain = point de coupure doux (gain=0 = mute silencieux, sans
+    // disconnect violent du MES qui causerait le snap-back).
     // scratchGain sert de pivot : en mode scratch, on y branche un
     // AudioBufferSourceNode à la place du MediaElementSource.
-    source.connect(scratchGain);
+    source.connect(sourceMuteGain);
+    sourceMuteGain.connect(scratchGain);
     scratchGain.connect(lowShelf);
     lowShelf.connect(midPeak);
     midPeak.connect(highShelf);
@@ -217,12 +239,15 @@
     chains[deckId] = {
       audioEl: audioEl,
       source: source,
+      sourceMuteGain: sourceMuteGain,
       scratchGain: scratchGain,
       scratchEngaged: false,
       scratchBuffer: null,
       scratchNode: null,
       scratchOffset: 0,
       scratchStartTime: 0,
+      scratchSyncRaf: 0,   // handle du requestAnimationFrame de synchro audio↔scratch
+      wasPlayingBeforeScratch: false,  // pour le play() au disengage
       lowShelf: lowShelf,
       midPeak: midPeak,
       highShelf: highShelf,
@@ -257,6 +282,7 @@
     } catch (e) { /* already stopped */ }
     try {
       chain.source.disconnect();
+      chain.sourceMuteGain.disconnect();
       chain.scratchGain.disconnect();
       chain.lowShelf.disconnect();
       chain.midPeak.disconnect();
@@ -515,9 +541,19 @@
     });
   }
 
-  // Bascule vers le scratch. Déconnecte le MediaElementSource de scratchGain,
-  // crée un AudioBufferSourceNode branché sur scratchGain, démarre à
-  // scratchOffset (position courante du <audio>).
+  // Bascule vers le scratch. À l'engage :
+  //   1. PAUSE le MES tout de suite (capture currentTime + mémorise wasPlaying).
+  //   2. Démarre la synchro continue audio.currentTime ↔ position scratch
+  //      (~60 Hz via rAF) — pendant que le MES est en pause, ces seeks sont
+  //      gratuits et inaudibles. Ça garantit qu'au release, l'audio est DÉJÀ
+  //      à la bonne position → play() direct, pas de snap-back (bug Chrome
+  //      où un MES avec buffer stale rejoue l'ancienne position au seek).
+  //   3. Déconnecte sourceMuteGain de scratchGain (le MES reste connecté
+  //      au sourceMuteGain, mais comme il est en pause, aucun sample ne sort).
+  //   4. Crée un AudioBufferSourceNode branché sur scratchGain, démarre à
+  //      scratchOffset (= audio.currentTime au moment du pause).
+  //   5. Remonte scratchGain → 1.
+  //   6. À chaque tick rAF, force audio.currentTime = getScratchPosition().
   async function engageScratch(deckId) {
     const chain = chains[deckId];
     if (!ctx || !chain) throw new Error('engageScratch: deck "' + deckId + '" absent');
@@ -528,23 +564,27 @@
     console.log('%c[scratch:' + deckId + '] engageScratch: swap source → AudioBufferSourceNode'
       + '  buffer.duration=' + chain.scratchBuffer.duration.toFixed(1) + 's',
       'color:#e80');
-    // Mémorise la position de lecture courante pour démarrer le scratch
-    // au même endroit (et pouvoir y revenir au disengage).
-    const offset = isFinite(chain.audioEl.currentTime)
-      ? chain.audioEl.currentTime : 0;
+
+    // === NOUVEAU : on PAUSE le MES tout de suite (capture sa position) ===
+    // Le MES en pause pendant le scratch = pas de buffer stale qui se vide =
+    // pas de snap-back au disengage. La synchro continue maintiendra
+    // audio.currentTime sur la position calculée du scratch.
+    const audio = chain.audioEl;
+    chain.wasPlayingBeforeScratch = !audio.paused;
+    const offset = isFinite(audio.currentTime) ? audio.currentTime : 0;
+    try { audio.pause(); } catch (e) { /* ignore */ }
     chain.scratchOffset = Math.max(0, Math.min(offset,
       chain.scratchBuffer.duration));
 
-    // Ducking avant le swap (évite le clic de reconnexion).
+    // Duck rapide sur scratchGain (avant le swap de source) pour éviter
+    // le clic de reconnexion. Puis on déconnecte sourceMuteGain de
+    // scratchGain (= ferme la porte du MES vers la chaîne EQ). Le MES
+    // reste vivant : source → sourceMuteGain (silencieux, son buffer
+    // interne se vide).
     await duckDown(chain);
-    // ⚠️ On NE met PAS l'<audio> en pause. Son signal est déconnecté du graphe
-    // (source.disconnect ci-dessous) → il est silencieux, mais il reste en
-    // lecture. C'est voulu : au disengage, le seek sur un élément EN LECTURE
-    // est fiable, alors qu'un seek sur un élément paused-puis-rejoué est avalé
-    // par le navigateur (le moteur rejouait à l'ancienne position → "retour à
-    // la case départ"). L'audio avance en silence pendant le scratch ; on le
-    // re-seek à la position finale au relâchement.
-    const wasPlaying = !chain.audioEl.paused;
+    try { chain.sourceMuteGain.disconnect(); } catch (e) { /* déjà déconnecté */ }
+
+    // (Le MES a été mis en pause plus haut → wasPlayingBeforeScratch mémorisé)
 
     // Crée le nœud scratch. onended remonte quand le buffer atteint la fin
     // (scratch en lecture avant prolongé) — on le neutralise pendant le
@@ -565,35 +605,102 @@
     chain.scratchEngaged = true;
     chain.scratchStartTime = ctx.currentTime;
 
-    // On déconnecte le MediaElementSource du scratchGain (il n'alimente
-    // plus la chaîne EQ). On garde la référence pour la rebrancher au
-    // disengage. ⚠️ On ne déconnecte pas TOUT (sinon on coupe aussi le
-    // tap analyser qui part de djFilter — on veut juste remplacer la
-    // source). disconnect() sans args coupe toutes les sorties du nœud,
-    // ce qui est ce qu'on veut pour le source.
-    try { chain.source.disconnect(); } catch (e) { /* déjà déconnecté */ }
+    // Démarre la synchro continue audio.currentTime ↔ position scratch
+    // (~60 Hz via rAF). Comme le MES est en pause, ces seeks sont
+    // instantanés et inaudibles. Ça garantit qu'au release, l'audio est
+    // DÉJÀ à la bonne position → play() direct, pas de snap-back.
+    startScratchSync(chain);
 
-    // Remonte le gain (le swap est fait, on peut réentendre).
+    // Remonte le gain (le swap est fait, on peut réentendre le scratch).
     duckUp(chain, 1);
 
     return {
       offset: chain.scratchOffset,
-      wasPlaying: wasPlaying,
+      wasPlaying: chain.wasPlayingBeforeScratch,
     };
   }
 
-  // Rebascule vers le streaming. Stoppe le nœud scratch, rebranche le
-  // MediaElementSource sur scratchGain, remet audio.currentTime à posSec,
-  // reprend la lecture si wasPlaying (renvoyé par engageScratch).
+  // Démarre la boucle rAF qui maintient audio.currentTime aligné sur la
+  // position calculée du scratch. Pendant que le MES est en pause, ces
+  // seeks sont gratuits (le moteur média n'a aucun sample à vider).
+  function startScratchSync(chain) {
+    stopScratchSync(chain);
+    const tick = function () {
+      if (!chain.scratchEngaged) return; // disengage a stoppé la boucle
+      const audio = chain.audioEl;
+      const want = getScratchPositionFromChain(chain);
+      if (isFinite(want) && isFinite(audio.currentTime)) {
+        // On ne seek que si l'écart est notable (>30 ms) pour ne pas
+        // martyriser Chrome avec des seeks à 60 Hz identiques.
+        if (Math.abs(audio.currentTime - want) > 0.03) {
+          try { audio.currentTime = want; } catch (e) { /* ignore */ }
+        }
+      }
+      chain.scratchSyncRaf = requestAnimationFrame(tick);
+    };
+    chain.scratchSyncRaf = requestAnimationFrame(tick);
+  }
+
+  function stopScratchSync(chain) {
+    if (chain.scratchSyncRaf) {
+      try { cancelAnimationFrame(chain.scratchSyncRaf); } catch (e) { /* ignore */ }
+      chain.scratchSyncRaf = 0;
+    }
+  }
+
+  // Variante locale de getScratchPosition qui prend chain direct (évite
+  // un lookup par deckId à chaque tick rAF).
+  function getScratchPositionFromChain(chain) {
+    if (!chain || !chain.scratchBuffer) return chain ? chain.scratchOffset : 0;
+    if (!chain.scratchEngaged) return chain.scratchOffset;
+    const rate = chain.scratchRate || 0;
+    const dt = ctx.currentTime - chain.scratchStartTime;
+    let pos = chain.scratchOffset + dt * rate;
+    const dur = chain.scratchBuffer.duration;
+    if (dur > 0) pos = ((pos % dur) + dur) % dur;
+    return pos;
+  }
+
+  // Rebascule vers le streaming. KISS : audio.pause() → currentTime = target
+  // → audio.play() (si wasPlaying). C'est le pattern standard recommandé
+  // contre le snap-back Chrome (le MES a un buffer stale interne qui n'est
+  // vidé que par pause + seek + play). On utilise sourceMuteGain pour
+  // silent-er la transition (~30 ms) et éviter le clic audible.
+  //
+  // Pourquoi pause + seek + play :
+  //   - audio.pause() vide le buffer stale du MES (force le moteur média à
+  //     "lâcher" les samples accumulés).
+  //   - audio.currentTime = target sur élément paused → seek honoré à
+  //     coup sûr (le moteur ne peut pas ignorer le seek).
+  //   - audio.play() reprend la lecture à target.
+  //   - Pendant la transition (~30 ms), sourceMuteGain maintient le silence.
   function disengageScratch(deckId, posSec, wasPlaying) {
     const chain = chains[deckId];
     if (!ctx || !chain || !chain.scratchEngaged) return;
     const dur = isFinite(chain.audioEl.duration) ? chain.audioEl.duration : 0;
-    const target = Math.max(0, Math.min(Number(posSec) || 0, dur > 0 ? dur : Infinity));
+    // posSec est ignoré comme valeur de vérité : audio.currentTime a été
+    // maintenu synchro avec le scratch pendant toute la durée via
+    // startScratchSync → il est DÉJÀ à la bonne position. On utilise posSec
+    // juste pour borner/clamp si fourni.
+    const target = Math.max(0, Math.min(Number(posSec) || chain.audioEl.currentTime,
+      dur > 0 ? dur : Infinity));
+    var audio = chain.audioEl;
 
-    // Ducking, swap, remontée.
+    // 1. Stoppe la synchro continue (audio.currentTime figé sur la position
+    //    calculée du scratch, qui correspond à `target` à ±30 ms).
+    stopScratchSync(chain);
+
+    // 2. MUTE INSTANTANÉ du sourceMuteGain (absorbe la transition).
+    try {
+      chain.sourceMuteGain.gain.cancelScheduledValues(ctx.currentTime);
+      chain.sourceMuteGain.gain.cancelAndHoldAtTime(ctx.currentTime);
+      chain.sourceMuteGain.gain.value = 0;
+    } catch (e) { /* fallback */ }
+    console.log('[scratch:' + deckId + '] disengageScratch: sourceMuteGain.gain=0 IMMÉDIAT (transition silencieuse)');
+
+    // 3. Duck rapide sur scratchGain (le nœud scratch y est encore branché).
     duckDown(chain).then(function () {
-      // Stoppe et libère le nœud scratch (one-shot → irréutilisable).
+      // 4. Stoppe et libère le nœud scratch (one-shot → irréutilisable).
       try {
         if (chain.scratchNode) {
           chain.scratchNode.onended = null;
@@ -604,52 +711,46 @@
       chain.scratchNode = null;
       chain.scratchEngaged = false;
       chain.scratchOffset = target;
+      chain.scratchStartTime = ctx.currentTime;
+      chain.scratchRate = 0;
 
-      // Rebranche le MediaElementSource sur scratchGain.
-      try { chain.source.connect(chain.scratchGain); } catch (e) { /* ignore */ }
+      // 5. Reconnecte sourceMuteGain → scratchGain (gain reste à 0).
+      try { chain.sourceMuteGain.connect(chain.scratchGain); } catch (e) { /* déjà connecté */ }
 
-      var audio = chain.audioEl;
+      // 6. Force un dernier seek à target (la synchro rAF a pu laisser un
+      //    petit écart, on veut être EXACT au sample près). L'audio est
+      //    déjà en pause (depuis engageScratch) → seek honoré à coup sûr.
+      try {
+        try { audio.currentTime = target; } catch (e) { /* ignore */ }
+      } catch (e) { /* ignore */ }
 
-      // ⚠️ Cause réelle du "retour à la case départ" : sur un <audio> Blob EN
-      // PAUSE, un seek (currentTime=X) n'est pas honoré par le moteur de
-      // décodage (la propriété lit X mais le moteur garde l'ancienne position).
-      // À la reprise de lecture, le moteur rejoue à l'ancienne position.
-      // Fix : on engage le moteur AVANT le seek (play() silencieux à gain 0),
-      // on seek sur un élément en lecture active → seek honoré. On attend
-      // 'seeked' pour confirmer, puis on remonte le gain et on repause si
-      // l'utilisateur ne voulait pas reprendre.
-      var applySeek = function () {
-        try { audio.currentTime = target; } catch (e) { /* seek impossible */ }
-      };
+      // 7. Play si l'audio jouait avant le scratch. Pas de pause préalable
+      //    (l'audio est déjà en pause depuis engageScratch). Pas de pattern
+      //    pause+seek+play violent : on est déjà à la bonne position.
+      if (chain.wasPlayingBeforeScratch) {
+        try {
+          var pr = audio.play();
+          if (pr && typeof pr.then === 'function') {
+            pr.catch(function () { /* autoplay rejeté, on ignore */ });
+          }
+        } catch (e) { /* ignore */ }
+      }
 
-      var done = false;
-      var finalize = function () {
-        if (done) return;
-        done = true;
-        duckUp(chain, 1);
-        if (!wasPlaying && !audio.paused) {
-          try { audio.pause(); } catch (e) { /* ignore */ }
-        }
+      // 8. Remonte sourceMuteGain → 1. ~30 ms de transition silencieuse
+      //    (le temps que play() démarre vraiment la lecture).
+      setTimeout(function () {
+        var c = chains[deckId];
+        if (!c) return;
+        try {
+          c.sourceMuteGain.gain.cancelScheduledValues(ctx.currentTime);
+          c.sourceMuteGain.gain.setTargetAtTime(1, ctx.currentTime, DUCK_TC);
+        } catch (e) {}
+        duckUp(c, 1);
         console.log('[scratch:' + deckId + '] disengageScratch FINAL currentTime='
           + (isFinite(audio.currentTime) ? audio.currentTime.toFixed(2) : '?')
-          + 's (target=' + target.toFixed(2) + '  paused=' + audio.paused + ')');
-      };
-
-      var afterSeek = function () {
-        audio.addEventListener('seeked', finalize, { once: true });
-        setTimeout(finalize, 150);
-      };
-
-      if (audio.paused) {
-        var pr = audio.play();
-        var onEngaged = function () { applySeek(); afterSeek(); };
-        if (pr && typeof pr.then === 'function') {
-          pr.then(onEngaged, function () { applySeek(); afterSeek(); });
-        } else { onEngaged(); }
-      } else {
-        applySeek();
-        afterSeek();
-      }
+          + 's (target=' + target.toFixed(2) + '  paused=' + audio.paused
+          + '  wasPlaying=' + chain.wasPlayingBeforeScratch + ')');
+      }, 30);
     });
   }
 
