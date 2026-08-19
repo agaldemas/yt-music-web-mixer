@@ -406,6 +406,10 @@
     }
 
     DeckTransport.setNowPlaying(deck, info);
+    // Synchronise le bouton "Save local" (local-save.js) avec l'état du deck
+    if (window.LocalSave && typeof window.LocalSave.updateSaveButtonState === 'function') {
+      window.LocalSave.updateSaveButtonState(deck);
+    }
   }
 
   window.updateNowPlaying = updateNowPlaying;
@@ -1307,8 +1311,10 @@
     if (active) startLoopWatch();
   }
 
-  // Efface les marqueurs de boucle d'une voie et désactive la boucle.
+  // Efface les marqueurs de boucle ET le cue point d'une voie, puis désactive la boucle.
   function clearLoop(deck) {
+    state.cue[deck] = null;
+    persistCuePoint(deck, null);
     state.loopIn[deck] = null;
     state.loopOut[deck] = null;
     state.loopActive[deck] = false;

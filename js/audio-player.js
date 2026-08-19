@@ -654,7 +654,7 @@
             console.warn('[audio:' + deckId + '] loadLocalFile: loadDeckBufferFromBlob échec', e);
             scratchReject(e);
           }
-          // 3) Extraire les métadonnées du fichier (fonctions depuis local.js)
+          // 3) Extraire les métadonnées du fichier (fonctions depuis local-load.js)
           var fileName = file.name;
           var meta = (window.extractAudioMetadata) ? window.extractAudioMetadata(buf, mime, fileName) : { title: fileName, artist: '' };
           var title = (meta && meta.title) ? meta.title : fileName;

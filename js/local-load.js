@@ -1,4 +1,4 @@
-/* local.js — Binding des boutons d'import de fichiers locaux
+/* local-load.js — Binding des boutons d'import de fichiers locaux
  *
  * Branche les boutons « Fichier local » des decks A et B sur le player
  * audio existant (state.players[deck]). Lit le File en mémoire (pas de réseau)
@@ -27,8 +27,8 @@
     if (!btnElement) return;
 
     var existingHandler = btnElement.getAttribute('data-handler');
-    if (existingHandler === 'local.js') return;
-    btnElement.setAttribute('data-handler', 'local.js');
+    if (existingHandler === 'local-load.js') return;
+    btnElement.setAttribute('data-handler', 'local-load.js');
 
     btnElement.addEventListener('click', function () {
       // showOpenFilePicker (Chrome 86+) → renvoie un FileSystemFileHandle
@@ -53,7 +53,7 @@
           if (!file) return;
           var player = getPlayer(deckId);
           if (!player) {
-            console.warn('local.js: player du deck ' + deckId + ' non disponible (mode IFrame ?)');
+            console.warn('local-load.js: player du deck ' + deckId + ' non disponible (mode IFrame ?)');
             return;
           }
           btnElement.disabled = true;
@@ -61,13 +61,13 @@
             btnElement.disabled = false;
           }, function (err) {
             btnElement.disabled = false;
-            console.error('local.js: loadLocalFile échec —', err && err.message || err);
+            console.error('local-load.js: loadLocalFile échec —', err && err.message || err);
           });
         }).catch(function (err) {
           // Annulé par l'utilisateur ou erreur (AbortError = annulation, sans gravité)
           btnElement.disabled = false;
           if (err && err.name !== 'AbortError') {
-            console.warn('local.js: Erreur chargement local - ' + (err.message || err));
+            console.warn('local-load.js: Erreur chargement local - ' + (err.message || err));
           }
         });
       } else {
@@ -80,7 +80,7 @@
           if (!file) return;
           var player = getPlayer(deckId);
           if (!player) {
-            console.warn('local.js: player du deck ' + deckId + ' non disponible (mode IFrame ?)');
+            console.warn('local-load.js: player du deck ' + deckId + ' non disponible (mode IFrame ?)');
             return;
           }
           btnElement.disabled = true;
@@ -88,7 +88,7 @@
             btnElement.disabled = false;
           }, function (err) {
             btnElement.disabled = false;
-            console.error('local.js: loadLocalFile échec —', err && err.message || err);
+            console.error('local-load.js: loadLocalFile échec —', err && err.message || err);
           });
         };
         input.click();
@@ -166,7 +166,7 @@ function extractCoverImage(buf, mime) {
     while (pos + 10 < data.byteLength) {
       var id = String.fromCharCode(data[pos], data[pos+1], data[pos+2], data[pos+3]);
       var size = (data[pos+4] << 24) | (data[pos+5] << 16) | (data[pos+6] << 8) | data[pos+7];
-      
+
       if (id === 'APIC') {
         var offset = pos + 10;
         // Format APIC: encoding(1), mime(0-30), type(1), description(0-254), data
@@ -177,7 +177,7 @@ function extractCoverImage(buf, mime) {
         while (descPos < data.byteLength && data[descPos] !== 0) descPos++;
         var imageDataPos = descPos + 1;
         var imageDataLen = (pos + 10 + size) - imageDataPos;
-        
+
         if (imageDataLen > 0) {
           var imageData = data.slice(imageDataPos, pos + 10 + size);
           return URL.createObjectURL(new Blob([imageData], { type: 'image/jpeg' }));

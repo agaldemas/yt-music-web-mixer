@@ -741,9 +741,10 @@ body.mode-piped #player-B {
 .deck-local-row {
   margin: 8px 14px 0;
   display: flex;
+  gap: 6px;
   justify-content: flex-end;
 }
-.deck-load-local-btn {
+.deck-local-btn {
   background: #1a1d25;
   color: #d7d9de;
   border: 1px solid #2a2e3a;
@@ -753,13 +754,17 @@ body.mode-piped #player-B {
   cursor: pointer;
   transition: background .15s, border-color .15s;
 }
-.deck-load-local-btn:hover {
+.deck-local-btn:hover {
   background: #232733;
   border-color: #3a3f4d;
 }
-.deck-load-local-btn:disabled {
+.deck-local-btn:disabled {
   opacity: .5;
   cursor: default;
+}
+.deck-local-btn:disabled:hover {
+  background: #1a1d25;
+  border-color: #2a2e3a;
 }
 
 /* ===== Barre de transport par voie (play/pause + seek + temps) ===== */

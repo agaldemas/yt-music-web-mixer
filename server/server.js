@@ -118,6 +118,7 @@ function extractAudio(videoId) {
         '-x',                       // extract audio (téléchargement + ffmpeg)
         '--audio-format', 'mp3',    // MP3 lisible par <audio> partout
         '--audio-quality', '5',     // ~64-96 kbps, ~5 Mo / 4 min
+        '--embed-metadata',         // tags ID3 (title, artist, album, date, genre…) dans le MP3
         '--no-warnings',
         '--no-playlist',
         '--no-cache-dir',
@@ -163,15 +164,76 @@ function extractAudio(videoId) {
             e.code = 'extract';
             return reject(e);
           }
-          return resolve(found);
+          return settleExtracted(videoId, found, resolve);
         }
-        resolve(cachePathFor(videoId));
+        settleExtracted(videoId, cachePathFor(videoId), resolve);
       });
     });
     pending.finally(() => extracting.delete(videoId));
     extracting.set(videoId, pending);
   }
   return pending;
+}
+
+// ===== Post-extraction : pochette YouTube (APIC) dans le MP3 =====
+
+// Exécute ffmpeg avec une liste d'arguments.
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    execFile('ffmpeg', args, { maxBuffer: 8 * 1024 * 1024, timeout: FFMPEG_TIMEOUT_MS }, (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
+
+// Embarque la miniature YouTube dans le MP3 en tant que pochette (APIC/ID3).
+// Télécharge hqdefault depuis i.ytimg.com puis ffmpeg pour l'insérer.
+// Non bloquant : toute erreur est loggée, l'audio reste servi sans pochette.
+function embedThumbnail(mp3Path, videoId) {
+  return new Promise((resolve) => {
+    const thumbUrl = 'https://i.ytimg.com/vi/' + encodeURIComponent(videoId) + '/hqdefault.jpg';
+    const thumbPath = path.join(CACHE_DIR, videoId + '.jpg');
+    const tmpPath = path.join(CACHE_DIR, videoId + '.cover.mp3');
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 5000);
+    fetch(thumbUrl, { signal: ctrl.signal })
+      .then((r) => { clearTimeout(to); if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+      .then((buf) => {
+        clearTimeout(to);
+        fs.writeFileSync(thumbPath, Buffer.from(buf));
+        return runFfmpeg([
+          '-y',
+          '-i', mp3Path,
+          '-i', thumbPath,
+          '-map', '0:a',
+          '-map_metadata', '0',
+          '-map', '1:v',
+          '-c:a', 'copy',
+          '-c:v', 'mjpeg',
+          '-id3v2_version', '3',
+          '-metadata:s:v', 'title=Album cover',
+          '-metadata:s:v', 'comment=Cover (front)',
+          tmpPath,
+        ]);
+      })
+      .then(() => { fs.renameSync(tmpPath, mp3Path); })
+      .catch((err) => {
+        console.warn('[server] Pochette non embarquée (' + videoId + ') :', err.message || err);
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+      })
+      .finally(() => {
+        clearTimeout(to);
+        try { fs.unlinkSync(thumbPath); } catch (_) {}
+        resolve();
+      });
+  });
+}
+
+// Après extraction réussie : embarque la pochette si MP3, puis résout.
+function settleExtracted(videoId, file, resolve) {
+  const embed = (extOf(file) === 'mp3') ? embedThumbnail(file, videoId) : Promise.resolve();
+  embed.then(() => resolve(file));
 }
 
 // Content-Type selon l'extension réelle du fichier servi.
@@ -188,6 +250,23 @@ function extOf(file) {
   const b = path.basename(file || '');
   const i = b.lastIndexOf('.');
   return i >= 0 ? b.slice(i + 1) : 'mp3';
+}
+
+// Nom de fichier de sauvegarde propre : "<titre>-<artiste>.mp3".
+// Nettoie les caractères interdits (/ \ : * ? " < > |), conserve les accents,
+// remplace les espaces multiples, tronque à 200 caractères.
+// Si artiste vide, retourne "<titre>.<ext>".
+function buildDownloadFilename(title, artist, ext) {
+  const clean = function (s) {
+    return String(s || '')
+      .replace(/[/\\:*?"<>|]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+  };
+  const extSafe = (ext || 'mp3').toLowerCase();
+  const base = artist ? (clean(title) + '-' + clean(artist)) : clean(title);
+  return (base || 'audio') + '.' + extSafe;
 }
 
 // ===== App Express =====
@@ -262,6 +341,44 @@ app.get('/api/audio/:id', async (req, res) => {
   try {
     const file = await extractAudio(id);
     res.setHeader('Content-Type', mimeForExt(extOf(file)));
+    res.sendFile(file, function (err) {
+      if (err && !res.headersSent) {
+        res.status(500).json({ error: 'Fichier audio indisponible.' });
+      }
+    });
+  } catch (err) {
+    if (!res.headersSent) {
+      const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' ? 503 : 502));
+      res.status(code).json({ error: err.message || 'Extraction audio échouée.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
+    }
+  }
+});
+
+// --- GET /api/download/:id ---
+// Sauvegarde locale (mode DJ) : sert le MP3 du cache en téléchargement
+// (Content-Disposition: attachment). Le nom de fichier proposé est
+// "<titre>-<artiste>.mp3", construit depuis fetchMeta (oEmbed, pas de yt-dlp).
+// Réutilise extractAudio → le fichier est extrait s'il n'est pas encore en cache.
+app.get('/api/download/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!RE_VIDEOID.test(id)) return res.status(400).json({ error: 'videoId invalide.' });
+
+  try {
+    const file = await extractAudio(id);
+    const ext = extOf(file);
+
+    // Nom de fichier proposé : "<titre>-<artiste>.mp3" (oEmbed, jamais bloquant).
+    let title = null, artist = null;
+    try {
+      const meta = await fetchMeta(id);
+      title = meta.title;
+      artist = meta.uploader;
+    } catch (_) { /* nom générique en dernier recours */ }
+    const filename = buildDownloadFilename(title, artist, ext);
+    // filename= (ASCII uniquement, fallback) ; filename*= (UTF-8, prioritaire)
+    const asciiSafe = filename.replace(/[^\x20-\x7E]/g, '_');
+    res.setHeader('Content-Type', mimeForExt(ext));
+    res.setHeader('Content-Disposition', 'attachment; filename="' + asciiSafe + '"; filename*=UTF-8\'\'' + encodeURIComponent(filename));
     res.sendFile(file, function (err) {
       if (err && !res.headersSent) {
         res.status(500).json({ error: 'Fichier audio indisponible.' });
