@@ -696,10 +696,10 @@ Le schéma ci-dessous décrit uniquement le composant `.deck-visualizer` / playe
 
 Ajouter un slider de contrôle de gain (volume) pour chaque deck A et B, positionné à gauche des contrôles EQ (LOW, MID, HIGH), avec une mise en page alignée verticalement et régulièrement espacée.
 
-**Status** : En développement ([~])
-- HTML à implémenter dans `index.html` (section 15.1)
-- Styles CSS à ajouter dans `css/styles.css`
-- Logique JS dans `js/audio-player.js` ou `js/audio-engine.js`
+**Status** : Terminé ([x])
+- HTML implémenté dans `index.html` (sections 15.1/15.2)
+- Styles CSS ajoutés dans `css/styles.css`
+- Logique JS dans `js/app.js` (wireDeckDj) + `js/audio-engine.js` (setDeckTrim)
 
 ### 15.1 Structure HTML — `index.html`
 
@@ -806,22 +806,23 @@ Règles pour l'alignement vertical et espacement :
 }
 ```
 
-### 15.3 JavaScript — `js/audio-player.js` ou `js/audio-engine.js`
+### 15.3 JavaScript — `js/app.js` + `js/audio-engine.js` [x]
 
 **Contrôles de gain :**
 
-- [ ] Écouter les événements `input` sur `.gain-slider-vertical` pour chaque deck
-- [ ] Convertir la valeur du slider (0-12) en dB approximatif : `value_dB ≈ value - 3`
-- [ ] Mettre à jour le label avec `+X.X dB`
-- [ ] Appliquer le gain via `GainNode.gain.value = Math.pow(10, value_dB / 20)`
-- [ ] Sauvegarder l'état dans `localStorage` (`gainA`, `gainB`)
-- [ ] Lors du chargement d'un nouveau vidéo, restaurer les gains précédents
+- [x] Écouter les événements `input` sur le fader `.dj-gain-fader` pour chaque deck (dans `wireDeckDj`)
+- [x] Plage pilotée par `config.GAIN_RANGE_DB` (±10 dB), pas de conversion arbitraire (le slider est en dB direct)
+- [x] Mettre à jour le label avec `+X.X dB` (`applyGain`)
+- [x] Appliquer le gain via `AudioEngine.setDeckTrim(deck, gainDb)` → `deckTrim.gain.value = Math.pow(10, db/20)` avec ramping `RAMP_TC`
+- [x] Sauvegarder l'état dans `localStorage` (`gainA`, `gainB`)
+- [x] Restaurer les gains au chargement + à chaque `onReady`/bascule de mode (`restoreDeckDj`)
+- [x] Reset par double-clic **et** bouton RAZ "↺" (`data-reset="gain"`)
 
 **Alignement vertical :**
 
-- [ ] Utiliser `flexbox` avec `align-items: center` pour aligner les sliders
-- [ ] Ajuster la hauteur des sliders via CSS (`height: 280px`)
-- [ ] Utiliser `margin-top: auto` sur chaque slider EQ pour pousser vers le bas
+- [x] Utiliser `flexbox` avec `gap` uniforme (même layout que les faders DJ existants, hauteur 110px)
+- [x] Slider vertical via `writing-mode: vertical-lr` + `direction: rtl` (même technique que `.dj-fader`)
+- [x] Curseur visuellement distinct (teinte verte) pour distinguer le trim du gain des faders EQ (bleu/rose par voie)
 
 ### 15.4 UX et rétroaction
 
@@ -873,18 +874,19 @@ Règles pour l'alignement vertical et espacement :
 - **Labels alignés à la base** pour lisibilité claire
 - **Cues/loop buttons** : rangés horizontalement, séparé par une barre verticale entre IN/OUT et les boutons 1/2/4/8
 
-### 15.6 Notes d'implémentation
+### 15.6 Notes d'implémentation [x]
 
-- Le gain est indépendant du crossfader
-- Plages recommandées : ±6 dB (suffisant pour la plupart des cas)
-- Éviter les valeurs extrêmes (> +10 dB ou < -10 dB) qui peuvent causer de la distorsion
-- Le slider de gain peut être positionné n'importe où dans l'UI, mais à gauche est plus naturel (comme un VU meter traditionnel)
+- Le gain est indépendant du crossfader : `deckTrim` est inséré **avant** `deckGain` dans le graphe (source → EQ → filtre → **trim** → crossfade → master)
+- Plage retenue : ±10 dB (configurable via `config.GAIN_RANGE_DB`), neutre à 0 dB
+- Clamp de sécurité à ±12 dB dans l'AudioEngine pour éviter la distorsion (> ±10 dB)
+- Le slider de gain est positionné à gauche des EQ (comme un VU meter traditionnel), séparé par une bordure verticale
+- Le visualiseur de voie tape AVANT le trim → il reste actif même si le gain est baissé (cohérent avec le crossfade)
 
 ---
 
 ## 16. Configuration — modification de `js/config.js` [x]
 
-- [ ] `STORAGE_KEYS` : ajouter :
+- [x] `STORAGE_KEYS` :
   - `PLAYER_MODE: 'playerMode'` — auto / piped / iframe
   - `EQ_LOW_A / EQ_MID_A / EQ_HIGH_A` (idem B) — positions d'EQ par voie
   - `DJ_FILTER_A / DJ_FILTER_B` — position du filtre DJ
@@ -892,11 +894,11 @@ Règles pour l'alignement vertical et espacement :
   - `CUE_A / CUE_B` — positions de cue
   - `LOOP_IN_A / LOOP_OUT_A` (idem B) — marqueurs de loop
   - `GAIN_A / GAIN_B` — volume gain par voie (+X.X dB)
-- [ ] Ajouter les constantes:
-  - `GAIN_RANGE_DB: 6` — plage gain (±6 dB)
+- [x] Constantes :
+  - `GAIN_RANGE_DB: 10` — plage gain (±10 dB)
   - `GAIN_DEFAULT_DB: 0` — gain par défaut (+0.0 dB)
-- [ ] `PIPED_INSTANCES` et `PIPED_INSTANCE_TIMEOUT_MS` : déplacer de `search.js` vers `config.js` (partagé entre `search.js` et `piped-streams.js`)
-- [ ] Constantes audio :
+- [x] `PIPED_INSTANCES` et `PIPED_INSTANCE_TIMEOUT_MS` : déplacés de `search.js` vers `config.js` (partagés entre `search.js` et `piped-streams.js`)
+- [x] Constantes audio :
   - `EQ_RANGE_DB: 12` — plage EQ (±12dB)
   - `EQ_LOW_FREQ: 200` — fréquence crossover graves
   - `EQ_MID_FREQ: 1000` — fréquence medium
@@ -945,17 +947,15 @@ Règles pour l'alignement vertical et espacement :
 
 ### 16.5 Notes de bugs connus & limitations
 
-**⚠️ Scratch exit position (IN PROGRESS)**
+**⚠️ Scratch exit position (CORRIGÉ ✓)**
 
-- **Problème** : À la sortie du scratch (quand on relâche le bouton et que l'audio reprend), l'audio est remis au point de démarrage du scratch (`currentTime = 0`) au lieu de rester à la position où a été fait lâcher
-- **Cause probable** : Le `seekTo()` ou la logique de position n'est pas restaurée après le scratch event
-- **Impact** : Moins grave que les autres bugs (pas perte de données, juste inconvenient)
-- **Priorité** : 🔴 Haute (affecte l'usage DJ normal)
-- **Status** : [~] En cours d'investigation
-  - Vérifier si `lastSeekA/B` est bien sauvegardé dans `localStorage`
-  - Vérifier si le `seekTo()` est appelé après restauration du gain
-  - Peut-être faut-il préserver la position dans le scratch buffer avant release
-- **Workaround** : Manuellement cliquer Play + ajuster currentTime si nécessaire
+- **Problème originel** : À la sortie du scratch (quand on relâche le bouton et que l'audio reprend), l'audio était remis au point de démarrage du scratch (`currentTime = 0`) au lieu de rester à la position où avait été fait le lâcher.
+- **Correction** : Le mécanisme `sourceMuteGain` (gain=0 pendant le drain du buffer stale ~800 ms post-disengage, puis seek + remontée du gain) a été implémenté dans `audio-engine.js`. La position finale est maintenant préservée.
+- **Status** : [x] Résolu
+
+**Logs scratch debug réduits**
+
+- Les `console.log` de la boucle de rotation streaming (`[platter:...] rotation streaming:`) et les logs intermédiaires du buffer scratch ont été passés en `console.debug` pour éviter le bruit dans la console. Seuls les jalons importants d'engage/release restent en `console.log` (8 lignes au total).
 
 ---
 
@@ -977,6 +977,17 @@ Règles pour l'alignement vertical et espacement :
       les bandes EQ + filtre DJ, mis à jour en temps réel (`applyEq` → "+X.X dB",
       `applyDjFilter` → "LP x% / HP x% / OFF"). Testé et validé.
 
+### 17. UI Recherche — Repli/Déploiement des résultats [x]
+
+**Ajout d'un bouton ▲/▼ dans la barre de pagination des résultats**
+
+- [x] Bouton `deck-results-toggle` créé dynamiquement dans `ensureToolbar()` (à droite des boutons ‹ ›) avec `margin-left: auto`
+- [x] `▲` quand les résultats sont visibles (ferme), `▼` quand repliés (ouvre)
+- [x] Repli via classe `.is-collapsed` sur `.deck-results` → `display: none` — **le contenu n'est pas vidé** (grille + pagination conservées)
+- [x] Attributs accessibles à jour : `aria-expanded`, `aria-label`, `title`
+- [x] L'état n'est pas persisté (simple confort UI, pas de state localStorage)
+- Complément : le bouton `✕` (`deck-results-clear`) reste disponible dans la barre de recherche pour effacer requête + résultats
+
 ### 17.5 Tests performance
 
 - [ ] 2 flux audio simultanés + 2 canvas waveform à 60fps → vérifier le CPU/latence
@@ -984,16 +995,16 @@ Règles pour l'alignement vertical et espacement :
 
 ---
 
-## 18. Documentation [ ]
+## 18. Documentation [x]
 
-- [ ] Mettre à jour `CLAUDE.md` :
+- [x] Mettre à jour `CLAUDE.md` :
   - Ajouter une section "Mode Piped / Web Audio API" décrivant la nouvelle architecture
   - **Mettre à jour la contrainte #1** : préciser que l'impossibilité DSP s'applique à l'IFrame YouTube, MAIS que l'approche Piped + Web Audio API contourne cette limite en utilisant les flux audio directs proxifiés
   - Documenter les nouveaux fichiers (`piped-streams.js`, `audio-engine.js`, `audio-player.js`, `visualizer.js`, `bpm-detector.js`)
   - Documenter le dual mode (Piped / IFrame fallback)
-- [ ] Mettre à jour `README.md` et `README.fr.md` :
-  - Nouvelles fonctionnalités : EQ 3 bandes, filtre DJ, pitch/tempo, BPM, waveform, cue/loop
-  - Nouvelle architecture audio (schéma du graphe Web Audio)
+- [x] Mettre à jour `README.md` et `README.fr.md` :
+  - Nouvelles fonctionnalités : EQ 3 bandes, filtre DJ, pitch/tempo, BPM, waveform, cue/loop, **gain trim par voie**, **repli résultats ▲/▼**, **scratch/platine**
+  - Nouvelle architecture audio (schéma du graphe Web Audio) — graphe mis à jour avec `deckTrim`
   - Prérequis : instances Piped (pour les flux audio), pas de clé API YouTube nécessaire
   - Limitations : CORS (dépend des instances Piped), expiration des URLs, audio-only (pas de vidéo), fiabilité des instances
 - [ ] Documenter dans l'UI :
@@ -1007,27 +1018,28 @@ Règles pour l'alignement vertical et espacement :
 
 ## 19. Plan d'implémentation (ordre suggéré)
 
-| Phase | Section | Description | Risque |
-|-------|---------|-------------|--------|
-| 1 | 0 | Recherche & validation CORS | 🔴 Critique — tout dépend de ça |
-| 2 | 1 | Client Piped Streams | 🟡 Modéré |
-| 3 | 2 | Moteur audio Web Audio | 🟡 Modéré |
-| 4 | 3 | Lecteur audio Piped | 🟡 Modéré |
-| 5 | 5 | Crossfader Web Audio | 🟢 Faible (modif mixer.js) |
-| 6 | 4 | Abstraction dual mode | 🟢 Faible |
-| 7 | 6 | EQ + filtre DJ | 🟡 UI + DSP |
-| 8 | 8 | Visualisation (spectre/waveform) | 🟢 Faible |
-| 9 | 9 | BPM & beatmatch | 🔴 Complexe (algo) |
-| 10 | 7 | Pitch / tempo | 🟢 Faible |
-| 11 | 10 | Cue & loop | 🟢 Faible |
-| 12 | 11 | Scratch / platine vinyle | 🔴 Complexe (buffer + mémoire + UI) |
-| 13 | 12 | Migration progressive & fallback | 🟡 Intégration |
-| 14 | 13 | UI/UX DJ | 🟡 CSS + HTML |
-| 15 | 14 | Gestion erreurs | 🟡 Robustesse |
-| 16 | 15 | Gain sliders + UI | 🟢 Faible (HTML/CSS) |
-| 17 | 16 | Config | 🟢 Faible |
-| 18 | 17 | Tests | 🟡 Validation |
-| 19 | 18 | Documentation | 🟢 Faible |
+| Phase | Section | Description | Risque | Statut |
+|-------|---------|-------------|--------|--------|
+| 1 | 0 | Recherche & validation CORS | 🔴 Critique — tout dépend de ça | ✅ |
+| 2 | 1 | Client Piped Streams | 🟡 Modéré | ✅ |
+| 3 | 2 | Moteur audio Web Audio | 🟡 Modéré | ✅ |
+| 4 | 3 | Lecteur audio Piped | 🟡 Modéré | ✅ |
+| 5 | 5 | Crossfader Web Audio | 🟢 Faible (modif mixer.js) | ✅ |
+| 6 | 4 | Abstraction dual mode | 🟢 Faible | ✅ |
+| 7 | 6 | EQ + filtre DJ | 🟡 UI + DSP | ✅ |
+| 8 | 8 | Visualisation (spectre/waveform) | 🟢 Faible | ✅ |
+| 9 | 9 | BPM & beatmatch | 🔴 Complexe (algo) | ✅ |
+| 10 | 7 | Pitch / tempo | 🟢 Faible | ✅ |
+| 11 | 10 | Cue & loop | 🟢 Faible | ✅ |
+| 12 | 11 | Scratch / platine vinyle | 🔴 Complexe (buffer + mémoire + UI) | ✅ |
+| 13 | 12 | Migration progressive & fallback | 🟡 Intégration | ✅ |
+| 14 | 13 | UI/UX DJ | 🟡 CSS + HTML | ✅ |
+| 15 | 14 | Gestion erreurs | 🟡 Robustesse | ✅ |
+| 16 | 15 | Gain sliders + UI | 🟢 Faible (HTML/CSS) | ✅ |
+| 17 | 16 | Config | 🟢 Faible | ✅ |
+| 18 | 17 | Tests | 🟡 Validation | ~ |
+| 19 | 18 | Documentation | 🟢 Faible | ✅ |
+| 20 | 17 | Repli/déploiement résultats recherche | 🟢 Faible (JS) | ✅ |
 
 ---
 

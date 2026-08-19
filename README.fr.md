@@ -11,9 +11,12 @@ L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le s
 ## ✨ Fonctionnalités
 
 - **2 voies côte à côte** (A à gauche, B à droite), chacune avec son lecteur et sa barre de recherche.
-- **Mode DJ** : backend Express local + extraction `yt-dlp`, relais audio same-origin et traitements Web Audio pour le vrai crossfade audio, l'EQ, les filtres et l'analyse. Si le backend local est indisponible, le lecteur peut utiliser les flux audio des instances Piped lorsque le CORS le permet.
+- **Mode DJ** : backend Express local + extraction `yt-dlp`, relais audio same-origin et traitements Web Audio pour le vrai crossfade audio, l'EQ, le trim de gain par voie, les filtres, l'analyse et le scratch. Si le backend local est indisponible, le lecteur peut utiliser les flux audio des instances Piped lorsque le CORS le permet.
 - **Recherche YouTube** par mot-clé **sans clé API** grâce à l'API publique [Piped](https://docs.piped.video/) (frontend YouTube alternatif, CORS activé, pas de quota Google). Plusieurs instances Piped sont essayées en cascade pour la fiabilité. Une clé API YouTube Data reste optionnelle pour des résultats plus pertinents et la pagination officielle. Saisie manuelle d'une URL / ID vidéo également possible.
 - **Bouton de bascule de mode de recherche** : quand une clé API est configurée, un bouton 🟢/⚪ permet de forcer la recherche via Piped (préserve le quota Google) ou de revenir à l'API YouTube Data officielle. Le choix est persisté en `localStorage`.
+- **Panneau de résultats** : boutons de pagination précédent/suivant et bouton `▲`/`▼` dans la barre de pagination pour replier ou déployer les résultats sans supprimer leur contenu. Le bouton existant `✕` efface toujours la requête et les résultats.
+- **Trim de gain par voie** (±10 dB, neutre à 0 dB) avant le crossfader, avec affichage dB en temps réel, persistance, reset par double-clic et bouton dédié `↺`.
+- **Scratch / platine** en mode DJ : décodage paresseux du buffer complet, scratch bidirectionnel, release conservant la position et logs de debug réduits (les jalons importants d'engage/release restent visibles).
 - **Crossfader A↔B** (0 = full A, 100 = full B, 50 = équilibré) avec courbe *equal-power* pour éviter le creux de niveau au milieu.
 - **Volume master** global (0–100%).
 - **Boutons mute/unmute par voie** (obligatoire pour contourner les politiques d'autoplay des navigateurs).
@@ -23,14 +26,14 @@ L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le s
 - **Affichage séparé des volumes A/B** : la barre de crossfade affiche le pourcentage de volume de chaque voie individuellement.
 - **Curseur de crossfade style mixage** : rectangle 15×30px avec curseur `ew-resize`, comme un fader de console matérielle.
 - **Contrôles DJ (mode Piped/DSP uniquement)** :
-  - **EQ 3 bandes** (Low / Mid / High, ±12 dB) par voie avec reset double-clic.
-  - **Filtre DJ** sweep (lowpass ↔ highpass, knob log-scale) par voie, double-clic = bypass.
+  - **EQ 3 bandes** (Low / Mid / High, ±12 dB) par voie avec affichage dB en temps réel, double-clic pour réinitialiser et bouton dédié `↺`.
+  - **Filtre DJ** sweep (lowpass ↔ highpass, knob log-scale) par voie avec affichage `LP x%` / `HP x%` / `OFF` en temps réel et retour au bypass.
   - **Slider pitch / tempo** (±8%) par voie avec `preservesPitch` (changement de tempo sans changement de hauteur), reset double-clic, l'afficheur BPM montre le BPM *effectif* (`bpm × playbackRate`).
   - **Boutons RAZ** (↺) à côté de chaque slider vertical DJ pour un reset en un clic à la valeur neutre.
   - **Détection BPM temps réel** par voie (spectral-flux onset + histogramme des intervalles inter-beat, verrouillage après cycles stables). Trois états visuels : **rouge** pendant l'acquisition (`idle`/`detecting`), **orange** dès qu'un BPM provisoire est disponible (~2-3 s, état `estimating`), **vert** quand la valeur est verrouillée (`locked`). Le BPM provisoire est calculé par médiane des intervalles et s'affiche tôt, puis l'histogramme continue d'affiner en arrière-plan jusqu'au verrouillage. Le bouton **RAZ** (↺) sous la valeur reste toujours visible pour relancer le calcul. La valeur verrouillée ne se met à jour qu'en cas de vrai changement (>3%) pour éviter le clignotement.
   - **Bouton SYNC** pour matcher le tempo de la voie B sur la voie A (limité à ±8%, répercuté sur le slider de pitch).
   - **Visualiseurs spectre/waveform** par voie + spectre master dans la barre de mixage (via `AnalyserNode`, 30+ FPS).
-- **Persistance** via `localStorage` : clé API, dernières requêtes, derniers videoIds, EQ, filtre DJ, pitch par voie sauvegardés et restaurés au reload et à la bascule de mode.
+- **Persistance** via `localStorage` : clé API, dernières requêtes, derniers videoIds, trim de gain, EQ, filtre DJ et pitch par voie sont sauvegardés et restaurés au reload et à la bascule de mode.
 - **Scripts de lancement en un clic** : `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) démarrent le serveur Express local sur le port 5400 et ouvrent l'app dans le navigateur par défaut.
 - **Responsive** : passe en une colonne sur petit écran.
 

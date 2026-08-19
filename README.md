@@ -11,9 +11,12 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
 ## ✨ Features
 
 - **2 side-by-side decks** (A on the left, B on the right), each with its own player and search bar.
-- **DJ mode**: local Express backend + `yt-dlp` extraction, same-origin audio relay and Web Audio processing for real audio crossfading, EQ, filters and analysis. If the local backend is unavailable, the player can fall back to audio streams from Piped instances when CORS allows it.
+- **DJ mode**: local Express backend + `yt-dlp` extraction, same-origin audio relay and Web Audio processing for real audio crossfading, EQ, per-deck gain trim, filters, analysis and scratch. If the local backend is unavailable, the player can fall back to audio streams from Piped instances when CORS allows it.
 - **YouTube search** by keyword **without any API key** thanks to the public [Piped](https://docs.piped.video/) API (alternative YouTube frontend, CORS-enabled, no Google quota). Multiple Piped instances are tried in cascade for reliability. A YouTube Data API key remains optional for more relevant results and official pagination. Manual entry of a URL / video ID is also supported.
 - **Search mode toggle button**: when an API key is configured, a 🟢/⚪ button lets you force search via Piped (preserves Google quota) or switch back to the official YouTube Data API. The choice is persisted in `localStorage`.
+- **Search results panel**: previous/next pagination controls plus a `▲`/`▼` toggle in the pagination toolbar to collapse or expand results without clearing their content. The existing `✕` button still clears the query and results.
+- **Per-deck gain trim** (±10 dB, neutral at 0 dB) before the crossfader, with live dB readout, persistence, double-click reset and a dedicated `↺` reset button.
+- **Scratch / platter** in DJ mode: lazy full-track buffer decoding, bidirectional scratch playback, position-preserving release and reduced debug logging (important engage/release milestones remain visible).
 - **A↔B crossfader** (0 = full A, 100 = full B, 50 = balanced) with an *equal-power* curve to avoid the level dip in the middle.
 - **Global master volume** (0–100%).
 - **Per-deck mute/unmute buttons** (required to work around browser autoplay policies).
@@ -23,14 +26,14 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
 - **Separate A/B volume readout**: the crossfade bar shows individual volume percentages for each deck.
 - **Mixer-style crossfade thumb**: rectangular 15×30px handle with `ew-resize` cursor, like a hardware mixer fader.
 - **DJ controls (Piped/DSP mode only)**:
-  - **3-band EQ** (Low / Mid / High, ±12 dB) per deck with double-click reset.
-  - **DJ filter** sweep (lowpass ↔ highpass, log-scale knob) per deck, double-click = bypass.
+  - **3-band EQ** (Low / Mid / High, ±12 dB) per deck with live dB readout, double-click reset and a dedicated `↺` reset button.
+  - **DJ filter** sweep (lowpass ↔ highpass, log-scale knob) per deck with live `LP x%` / `HP x%` / `OFF` readout and reset to bypass.
   - **Pitch / tempo** slider (±8%) per deck with `preservesPitch` (tempo change without pitch shift), double-click reset, BPM readout shows the *effective* BPM (`bpm × playbackRate`).
   - **RAZ (reset) buttons** (↺) next to each vertical DJ slider for one-click reset to neutral.
   - **Real-time BPM detection** per deck (spectral-flux onset + histogram of inter-beat intervals, locking after stable cycles). Three visual states: **red** during acquisition (`idle`/`detecting`), **orange** as soon as a provisional BPM is available (~2-3 s, `estimating` state), **green** when the value is locked (`locked`). The provisional BPM is computed by median of intervals and shown early, while the histogram keeps refining in the background until locking. The **RAZ** (↺) button under the value stays visible at all times to restart detection. The locked value only updates on a real change (>3%) to avoid flicker.
   - **SYNC button** to match deck B's tempo to deck A (clamped to ±8%, reflects on the pitch slider).
   - **Spectrum/waveform visualizers** per deck and a master spectrum in the mixer bar (via `AnalyserNode`, 30+ FPS).
-- **Persistence** via `localStorage`: API key, last queries, last video IDs, EQ, DJ filter, pitch per deck are saved and restored on reload and on mode switch.
+- **Persistence** via `localStorage`: API key, last queries, last video IDs, gain trim, EQ, DJ filter, pitch per deck are saved and restored on reload and on mode switch.
 - **One-click launch scripts**: `start.sh` (macOS/Linux/WSL) and `start.bat` (Windows) start the local Express server on port 5400 and open the app in your default browser.
 - **Responsive**: collapses to a single column on small screens.
 
@@ -136,11 +139,11 @@ yt-music-web-mixer/
     ├── youtube.js       # YouTube IFrame API wrapper (IFrame fallback)
     ├── piped-streams.js # local backend first, Piped stream fallback, cache and refresh
     ├── audio-player.js  # audio player used by DJ mode (autoplay-safe, optimistic play/pause)
-    ├── audio-engine.js  # Web Audio graph: source, EQ, filter, gain, analyser and pitch
+    ├── audio-engine.js  # Web Audio graph: source, trim, EQ, filter, gain, analyser and pitch
     ├── visualizer.js    # canvas spectrum/waveform via AnalyserNode
     ├── bpm-detector.js  # real-time BPM detection (spectral flux + histogram, provisional BPM then locking, states idle/detecting/estimating/locked)
     ├── deck-controls.js # per-deck transport buttons (optimistic play/pause)
-    ├── search.js        # YouTube Data API + Piped (keyless) search + results display
+    ├── search.js        # YouTube Data API + Piped (keyless) search + result panel and pagination/collapse controls
     ├── mixer.js         # crossfade logic (GainNode in DJ mode, volume in IFrame mode)
     └── app.js           # bootstrap, event wiring, mode and global state
 ```
@@ -157,8 +160,9 @@ yt-music-web-mixer/
 4. Start playback (**▶️ Play both**), or use the per-deck play/pause button.
 5. Move the **crossfader** to gradually transition from A to B. In DJ mode this uses Web Audio gain nodes; in IFrame mode it controls player volumes.
 6. Adjust the **master volume** as needed.
-7. **DJ mode only**: tweak the per-deck **EQ** (Low/Mid/High), **DJ filter**, **pitch/tempo** slider, and watch the **BPM** badge (red during acquisition, **orange** as soon as a provisional BPM appears, **green** when locked). The **RAZ** (↺) button under the BPM value restarts detection at any time. The **RAZ** buttons next to the vertical DJ sliders reset each slider to neutral. Press **SYNC** to match deck B's tempo to deck A.
-8. Optional: **Sync B → A** to align B to A's position.
+7. **DJ mode only**: use the **GAIN** trim first to balance track levels, then tweak the per-deck **EQ** (Low/Mid/High), **DJ filter**, and **pitch/tempo** slider. Every DJ control shows its live value below the slider and has a nearby **↺** reset button. Watch the **BPM** badge (red during acquisition, **orange** as soon as a provisional BPM appears, **green** when locked). The **RAZ** (↺) button under the BPM value restarts detection at any time. Press **SYNC** to match deck B's tempo to deck A.
+8. The search results panel can be browsed with `‹` / `›`, collapsed with `▲`, and reopened with `▼`; collapsing preserves the result cards and does not clear the search. Use `✕` to clear the query and results.
+9. Optional: **Sync B → A** to align B to A's position.
 
 ---
 
