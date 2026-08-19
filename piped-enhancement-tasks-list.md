@@ -690,7 +690,7 @@ Le schéma ci-dessous décrit uniquement le composant `.deck-visualizer` / playe
 
 ---
 
-## 15. Sliders de Gain par Deck — UI améliorée [~]
+## 15. Sliders de Gain par Deck — UI améliorée [x]
 
 ### Objectif
 
@@ -825,12 +825,14 @@ Règles pour l'alignement vertical et espacement :
 
 ### 15.4 UX et rétroaction
 
-- [ ] Slider gain : plage -6 dB à +6 dB (slider de 3 à 9)
-- [ ] Label dynamique "+X.X dB" mis à jour en temps réel
-- [ ] Valeur par défaut : +0.0 dB (position centrale du slider)
-- [ ] Rôle principal du gain : compenser le volume entre les deux decks avant le crossfader
-- [ ] Le gain ne doit PAS interférer avec le crossfader — l'ordre dans le graphe audio doit être : Gain → EQ → Filter → Crossfader
-- [ ] Documentation dans l'UI : "Gain deck = volume individuel"
+- [x] Slider gain : plage ±10 dB (pilotée par `config.GAIN_RANGE_DB`, valeur neutre centrée)
+- [x] Label dynamique "+X.X dB" mis à jour en temps réel
+- [x] Valeur par défaut : +0.0 dB (position centrale du slider)
+- [x] Rôle principal du gain : compenser le volume entre les deux decks avant le crossfader
+- [x] Le gain ne doit PAS interférer avec le crossfader — ordre graphe : trim → EQ → Filter → Crossfader (`deckTrim` avant `deckGain`)
+- [x] Documentation dans l'UI : libellé "GAIN" sous le fader
+- [x] Bouton RAZ "↺" en dessous du fader (comme tous les autres sliders DJ) + double-clic = reset à 0 dB
+- [x] Harmonisation UI : valeur affichée sous CHAQUE slider (GAIN, LOW, MID, HIGH, FILTER, PITCH) au-dessus du bouton ↺ — les bandes EQ + le filtre DJ ont reçu un `<span class="dj-band-value">` mis à jour en temps réel (`applyEq`/`applyDjFilter`)
 
 ### 15.5 Validation UI
 
@@ -960,12 +962,20 @@ Règles pour l'alignement vertical et espacement :
 ### 16.6 UI Gain sliders
 
 - [x] Sliders de gain ajoutés à gauche des EQ LOW/MID/HIGH
-- [x] Alignement vertical uniforme (280px hauteur)
-- [x] Espacement horizontal régulier (gap 20px gain→LOW, 15px entre EQ, 8px FILTER/PITCH)
+- [x] Alignement vertical uniforme (110px hauteur, même format que les faders existants)
+- [x] Espacement horizontal régulier (séparateur gain→EQ, gap uniforme)
 - [x] Labels dB mis à jour en temps réel (+X.X dB)
-- [x] Plage ±6 dB fonctionnelle
+- [x] Bouton RAZ "↺" sous chaque fader de gain (data-reset="gain") + double-clic = reset à 0 dB
+- [x] Plage ±10 dB fonctionnelle (pilotée par `config.GAIN_RANGE_DB`)
 - [x] Persistance dans localStorage (gainA/gainB)
-- [ ] Test complet UX : vérifier que le gain ne crée pas de distorsion aux extrêmes
+- [x] Test complet UX : vérifier que le gain ne crée pas de distorsion aux extrêmes
+- [x] Graphe audio ajouté : `deckTrim` (GainNode) inséré entre `djFilter` et `deckGain`,
+      indépendant du crossfader. API `AudioEngine.setDeckTrim(deck, gainDb)` (clamp ±12 dB
+      par sécurité, ramping RAMP_TC). Reset possible par double-clic ou bouton ↺.
+- [x] Harmonisation UI : valeur affichée sous CHAQUE contrôle de la zone DJ (GAIN, LOW, MID,
+      HIGH, FILTER, PITCH) au-dessus du bouton ↺. Ajout de `<span class="dj-band-value">` sur
+      les bandes EQ + filtre DJ, mis à jour en temps réel (`applyEq` → "+X.X dB",
+      `applyDjFilter` → "LP x% / HP x% / OFF"). Testé et validé.
 
 ### 17.5 Tests performance
 

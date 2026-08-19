@@ -8,6 +8,7 @@
  *   - applyCrossfade(p)                 : 0..1 → equal-power sur les deckGain
  *   - applyMasterVolume(v)              : 0..100 → gain master (multiplicatif)
  *   - setEQ(deck, band, gainDb)         : low/mid/high (-12..+12 dB)
+ *   - setDeckTrim(deck, gainDb)         : gain de voie (±10 dB, avant crossfade)
  *   - setDjFilter(deck, position)       : -1..+1 (lowpass ↔ bypass ↔ highpass)
  *   - setPitch(deck, pitchPct)          : -8..+8 % → audioEl.playbackRate (tempo)
  *   - getPitch(deck)                    : pitch courant en % (0 = vitesse native)
@@ -26,8 +27,8 @@
  *   - clearDeckBuffer(deckId)           : libère le buffer (changement de morceau)
  *
  * Graphe par voie :
- *   source → sourceMuteGain → scratchGain → lowShelf → midPeak → highShelf → djFilter ─┬→ deckGain → masterGain
- *                                                                                       │            → masterAnalyser → ctx.destination
+ *   source → sourceMuteGain → scratchGain → lowShelf → midPeak → highShelf → djFilter ─┬→ deckTrim → deckGain → masterGain
+ *                                                                                       │                        → masterAnalyser → ctx.destination
  *                                                                                       └→ analyser (tap pre-fader, visualiseur de voie)
  *
  * `sourceMuteGain` : GainNode (gain=1 par défaut) servant de VRAI point de
@@ -49,9 +50,10 @@
  * dernier de scratchGain et on connecte le buffer source. Au relâchement, on
  * fait l'inverse. Le ducking (~10-30 ms) au point de bascule évite le clic.
  *
- * Le visualiseur de voie tapote AVANT le deckGain : il reste actif même si
- * le crossfader coupe la voie (deckGain ≈ 0). Le masterAnalyser, lui, est
- * post-masterGain et reflète le mix de sortie effectif.
+ * Le visualiseur de voie tapote AVANT le deckTrim/deckGain : il reste actif
+ * même si le crossfader coupe la voie (deckGain ≈ 0) ou si le gain de voie
+ * est baissé. Le masterAnalyser, lui, est post-masterGain et reflète le
+ * mix de sortie effectif.
  *
  * Conventions : see search.js / piped-streams.js (camelCase, IIFE, window.X).
  */
@@ -207,16 +209,23 @@
     const deckGain = ctx.createGain();
     deckGain.gain.value = 0.5;
 
+    // Trim de voie (gain individuel, 16.6). Placé AVANT le deckGain pour
+    // ne pas interférer avec le crossfader : il compense le volume entre les
+    // deux voies (0 dB = neutre, ~+2 dB par cran). Rampping identique.
+    const deckTrim = ctx.createGain();
+    deckTrim.gain.value = 1.0;
+
     // Analyser pour visualisation par voie (spectre + waveform)
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0.8;
 
     // Connexion : source → sourceMuteGain → scratchGain → EQ → djFilter, puis split pre-fader.
-    //   - Une branche → deckGain → masterGain (chemin audio, niveau crossfade).
-    //   - Une branche → analyser (tap PRE-fader : visualise le flux en lecture,
-    //     indépendamment du deckGain/crossfader). Ainsi le visualiseur d'une voie
-    //     reste actif même si son crossfade est à 0.
+    //   - Une branche → deckTrim → deckGain → masterGain (chemin audio : trim de
+    //     voie puis niveau crossfade).
+    //   - Une branche → analyser (tap PRE-trim/PRE-fader : visualise le flux en
+    //     lecture, indépendamment du trim/deckGain/crossfader). Ainsi le
+    //     visualiseur d'une voie reste actif même si son crossfade est à 0.
     // sourceMuteGain = point de coupure doux (gain=0 = mute silencieux, sans
     // disconnect violent du MES qui causerait le snap-back).
     // scratchGain sert de pivot : en mode scratch, on y branche un
@@ -228,8 +237,9 @@
     midPeak.connect(highShelf);
     highShelf.connect(djFilter);
 
-    // Branche audio (niveau dépendant du crossfader + master).
-    djFilter.connect(deckGain);
+    // Branche audio (trim de voie → niveau dépendant du crossfader + master).
+    djFilter.connect(deckTrim);
+    deckTrim.connect(deckGain);
     deckGain.connect(masterGain);
 
     // Tap pre-fader : l'analyser voit le signal post-EQ/filtre mais AVANT
@@ -252,6 +262,7 @@
       midPeak: midPeak,
       highShelf: highShelf,
       djFilter: djFilter,
+      deckTrim: deckTrim,
       deckGain: deckGain,
       analyser: analyser,
       scratchRate: 0,        // dernier rate POSÉ (pour accumulateOffset en arrière)
@@ -288,6 +299,7 @@
       chain.midPeak.disconnect();
       chain.highShelf.disconnect();
       chain.djFilter.disconnect();
+      chain.deckTrim.disconnect();
       chain.deckGain.disconnect();
       chain.analyser.disconnect();
     } catch (e) {
@@ -353,6 +365,20 @@
       : null;
     if (!node) throw new Error('setEQ: band inconnue "' + band + '"');
     node.gain.setTargetAtTime(clamped, ctx.currentTime, RAMP_TC);
+  }
+
+  // ===== Trim de voie (gain individuel, 16.6) =====
+  //
+  // gainDb en dB autour de 0 (0 = neutre). On clamp ±EQ_RANGE_DB (12) comme
+  // garde-fou, mais l'UI expose ±10 dB. Converti en amplitude linéaire puis
+  // ramping court (RAMP_TC) — même douceur que l'EQ, pas de clic au drag.
+  // Agit sur deckTrim, placé AVANT deckGain : indépendant du crossfader.
+  function setDeckTrim(deckId, gainDb) {
+    const chain = chains[deckId];
+    if (!chain || !ctx) return;
+    const clamped = Math.max(-EQ_RANGE_DB, Math.min(EQ_RANGE_DB, Number(gainDb) || 0));
+    const linear = Math.pow(10, clamped / 20);
+    chain.deckTrim.gain.setTargetAtTime(linear, ctx.currentTime, RAMP_TC);
   }
 
   // ===== Pitch / Tempo (phase 7) =====
@@ -948,6 +974,7 @@
     applyCrossfade: applyCrossfade,
     applyMasterVolume: applyMasterVolume,
     setEQ: setEQ,
+    setDeckTrim: setDeckTrim,
     setDjFilter: setDjFilter,
     setPitch: setPitch,
     getPitch: getPitch,

@@ -1012,6 +1012,23 @@ body.mode-piped .deck-dj { display: flex; }
   padding-left: 10px;
   border-left: 1px solid #232733;
 }
+/* Gain de voie (16.6) : trim individuel, à GAUCHE de l'EQ. Séparateur à droite
+ * (miroir du séparateur gauche de .dj-filter). */
+.dj-gain {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding-right: 10px;
+  border-right: 1px solid #232733;
+}
+.dj-gain-value {
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  color: #9aa0ac;
+  min-height: 0.9rem;
+}
 /* Pitch / Tempo (phase 7) : même forme que le filtre, séparé par une bordure */
 .dj-pitch {
   display: flex;
@@ -1023,6 +1040,14 @@ body.mode-piped .deck-dj { display: flex; }
   border-left: 1px solid #232733;
 }
 .dj-pitch-value {
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  color: #9aa0ac;
+  min-height: 0.9rem;
+}
+/* Valeur affichée sous les faders EQ (LOW/MID/HIGH) et le filtre DJ.
+ * Même format que .dj-gain-value et .dj-pitch-value : harmonisation 16.6. */
+.dj-band-value {
   font-size: 0.62rem;
   font-variant-numeric: tabular-nums;
   color: #9aa0ac;
@@ -1134,7 +1159,7 @@ body.mode-piped .deck-dj { display: flex; }
 /* Faders verticaux EQ + knob filtre.
  * `writing-mode: vertical-lr` + `direction: rtl` rend les range verticaux
  * avec le bas = min, le haut = max (sens console DJ) dans Chrome/Firefox. */
-.dj-fader, .dj-knob, .dj-pitch-fader {
+.dj-fader, .dj-knob, .dj-pitch-fader, .dj-gain-fader {
   -webkit-appearance: none;
   appearance: none;
   width: 8px;
@@ -1151,19 +1176,23 @@ body.mode-piped .deck-dj { display: flex; }
 /* Track centré pour visualiser le 0 dB / bypass au milieu */
 .dj-fader::-webkit-slider-runnable-track,
 .dj-knob::-webkit-slider-runnable-track,
-.dj-pitch-fader::-webkit-slider-runnable-track {
+.dj-pitch-fader::-webkit-slider-runnable-track,
+.dj-gain-fader::-webkit-slider-runnable-track {
   width: 6px;
   background: #2e3444;
   border-radius: 3px;
 }
 .dj-fader::-moz-range-track,
 .dj-knob::-moz-range-track,
-.dj-pitch-fader::-moz-range-track {
+.dj-pitch-fader::-moz-range-track,
+.dj-gain-fader::-moz-range-track {
   width: 6px;
   background: #2e3444;
   border-radius: 3px;
 }
 
+/* Curseur gain : teinte verte (même famille que le trim/knob) pour le
+ * distinguer des faders EQ (teintés bleu/rose par voie). */
 .dj-fader::-webkit-slider-thumb,
 .dj-pitch-fader::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -1183,6 +1212,25 @@ body.mode-piped .deck-dj { display: flex; }
   border-radius: 3px;
   background: #93c5fd;
   border: 1px solid #b9d4fd;
+  cursor: ns-resize;
+}
+.dj-gain-fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 12px;
+  border-radius: 3px;
+  background: #6ee7b7;
+  border: 1px solid #a7f3d0;
+  cursor: ns-resize;
+  margin-left: -8px;
+}
+.dj-gain-fader::-moz-range-thumb {
+  width: 22px;
+  height: 12px;
+  border-radius: 3px;
+  background: #6ee7b7;
+  border: 1px solid #a7f3d0;
   cursor: ns-resize;
 }
 /* Knob filtre : pastille ronde (vert en mode Piped) */

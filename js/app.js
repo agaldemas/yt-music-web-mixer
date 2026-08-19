@@ -942,6 +942,15 @@
     return CFG.STORAGE_KEYS['PITCH_' + deck];
   }
 
+  function gainStorageKey(deck) {
+    return CFG.STORAGE_KEYS['GAIN_' + deck];
+  }
+
+  // Plage du gain de voie (±dB) — source de vérité dans config.js.
+  function gainRangeDb() {
+    return Math.abs(Number(CFG.GAIN_RANGE_DB) || 10);
+  }
+
   // Lit la valeur persistée d'une bande d'EQ (number, défaut 0).
   function loadEqValue(deck, band) {
     try {
@@ -967,11 +976,27 @@
     return 0;
   }
 
-  // Pousse une valeur d'EQ vers l'AudioEngine + met à jour le fader DOM.
+  // Lit le gain de voie persisté (dB, défaut 0 = neutre).
+  function loadGainValue(deck) {
+    try {
+      var v = localStorage.getItem(gainStorageKey(deck));
+      if (v !== null) return Math.max(-gainRangeDb(), Math.min(gainRangeDb(), parseFloat(v) || 0));
+    } catch (e) { /* ignore */ }
+    return CFG.GAIN_DEFAULT_DB || 0;
+  }
+
+  // Pousse une valeur d'EQ vers l'AudioEngine + met à jour le fader DOM + label dB.
   function applyEq(deck, band, value) {
     var fader = document.querySelector(
       '.deck-dj[data-deck="' + deck + '"] .dj-band[data-band="' + band + '"] .dj-fader');
+    var valEl = document.querySelector(
+      '.deck-dj[data-deck="' + deck + '"] .dj-band[data-band="' + band + '"] .dj-band-value');
     if (fader) fader.value = value;
+    if (valEl) {
+      var db = Number(value) || 0;
+      var sign = db >= 0 ? '+' : '-';
+      valEl.textContent = sign + Math.abs(db).toFixed(1) + ' dB';
+    }
     if (AudioEngine && AudioEngine.hasDeck(deck)) {
       try { AudioEngine.setEQ(deck, band, value); } catch (e) { /* deck pas prêt */ }
     }
@@ -979,9 +1004,33 @@
 
   function applyDjFilter(deck, position) {
     var knob = document.querySelector('.deck-dj[data-deck="' + deck + '"] .dj-knob');
+    var valEl = document.querySelector('.deck-dj[data-deck="' + deck + '"] .dj-filter .dj-band-value');
     if (knob) knob.value = Math.round(position * 100);
+    if (valEl) {
+      // Position -1..+1 → libellé lisible : LP x% (lowpass) / HP x% (highpass) / OFF (bypass).
+      var pos = Number(position) || 0;
+      if (pos < -0.005) valEl.textContent = 'LP ' + Math.round(-pos * 100) + '%';
+      else if (pos > 0.005) valEl.textContent = 'HP ' + Math.round(pos * 100) + '%';
+      else valEl.textContent = 'OFF';
+    }
     if (AudioEngine && AudioEngine.hasDeck(deck)) {
       try { AudioEngine.setDjFilter(deck, position); } catch (e) { /* deck pas prêt */ }
+    }
+  }
+
+  // Pousse le gain de voie (dB) vers l'AudioEngine + met à jour fader + label.
+  function applyGain(deck, value) {
+    var root = document.querySelector('.deck-dj[data-deck="' + deck + '"]');
+    var fader = root ? root.querySelector('.dj-gain-fader') : null;
+    var valEl = root ? root.querySelector('.dj-gain-value') : null;
+    var db = Number(value) || 0;
+    if (fader) fader.value = db;
+    if (valEl) {
+      var sign = db >= 0 ? '+' : '-';
+      valEl.textContent = sign + Math.abs(db).toFixed(1) + ' dB';
+    }
+    if (AudioEngine && AudioEngine.hasDeck(deck)) {
+      try { AudioEngine.setDeckTrim(deck, db); } catch (e) { /* deck pas prêt */ }
     }
   }
 
@@ -1015,6 +1064,7 @@
     EQ_BANDS.forEach(function (band) { applyEq(deck, band, loadEqValue(deck, band)); });
     applyDjFilter(deck, loadDjFilterValue(deck));
     applyPitch(deck, loadPitchValue(deck));
+    applyGain(deck, loadGainValue(deck));
   }
 
   function persistEq(deck, band, value) {
@@ -1029,9 +1079,33 @@
     try { localStorage.setItem(pitchStorageKey(deck), String(value)); } catch (e) { /* ignore */ }
   }
 
+  function persistGain(deck, value) {
+    try { localStorage.setItem(gainStorageKey(deck), String(value)); } catch (e) { /* ignore */ }
+  }
+
   function wireDeckDj(deck) {
     var root = document.querySelector('.deck-dj[data-deck="' + deck + '"]');
     if (!root) return;
+
+    // --- Fader gain de voie (16.6) ---
+    var gainFader = root.querySelector('.dj-gain-fader');
+    if (gainFader) {
+      var gainRange = gainRangeDb();
+      gainFader.min = String(-gainRange);
+      gainFader.max = String(gainRange);
+      gainFader.value = loadGainValue(deck);
+      gainFader.addEventListener('input', function () {
+        var v = parseFloat(gainFader.value) || 0;
+        applyGain(deck, v);
+        persistGain(deck, v);
+      });
+      // Double-clic = reset à 0 dB (neutre)
+      gainFader.addEventListener('dblclick', function () {
+        gainFader.value = 0;
+        applyGain(deck, 0);
+        persistGain(deck, 0);
+      });
+    }
 
     // --- Faders EQ ---
     EQ_BANDS.forEach(function (band) {
@@ -1096,7 +1170,7 @@
     }
 
     // --- Boutons RAZ (reset) par slider vertical (phase 7/9) ---
-    // data-reset="eq-low" | "eq-mid" | "eq-high" | "filter" | "pitch"
+    // data-reset="eq-low" | "eq-mid" | "eq-high" | "filter" | "pitch" | "gain"
     var resetBtns = root.querySelectorAll('.dj-reset[data-reset]');
     Array.prototype.forEach.call(resetBtns, function (btn) {
       btn.addEventListener('click', function () {
@@ -1111,6 +1185,9 @@
         } else if (target === 'pitch') {
           applyPitch(deck, 0);
           persistPitch(deck, 0);
+        } else if (target === 'gain') {
+          applyGain(deck, 0);
+          persistGain(deck, 0);
         }
       });
     });

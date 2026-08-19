@@ -15,6 +15,8 @@ window.YT_CONFIG = {
     // Mode Piped DJ (phase 6) : EQ 3 bandes + filtre DJ par voie.
     EQ_LOW_A: 'eqLowA', EQ_MID_A: 'eqMidA', EQ_HIGH_A: 'eqHighA', DJ_FILTER_A: 'djFilterA',
     EQ_LOW_B: 'eqLowB', EQ_MID_B: 'eqMidB', EQ_HIGH_B: 'eqHighB', DJ_FILTER_B: 'djFilterB',
+    // Mode Piped DJ (16.6) : gain de voie (défaut 0 dB = neutre).
+    GAIN_A: 'gainA', GAIN_B: 'gainB',
     // Mode Piped DJ (phase 7) : pitch / tempo par voie (en %, -8..+8).
     PITCH_A: 'pitchA', PITCH_B: 'pitchB',
     // Mode Piped DJ (phase 10) : cue points & boucles par voie.
@@ -41,6 +43,10 @@ window.YT_CONFIG = {
   // mais on l'élargit à ±15% pour permettre des ajustements de tempo plus
   // larges (beatmatch entre morceaux éloignés, transitions rapide/lent).
   PITCH_RANGE_PERCENT: 15,
+  // Gain de voie (16.6) : plage ±dB du slider et valeur par défaut (neutre).
+  // Le gain sert à compenser le volume entre les 2 voies AVANT le crossfader.
+  GAIN_RANGE_DB: 10,
+  GAIN_DEFAULT_DB: 0,
   // playerVars minimum vital. `origin` est ajouté au runtime par youtube.js
   // uniquement quand on est en http(s) ; en file:// il déclenche l'erreur 153.
   PLAYER_VARS: {

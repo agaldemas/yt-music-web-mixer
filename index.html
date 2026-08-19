@@ -176,25 +176,38 @@
 
       <!-- Bloc DJ (EQ 3 bandes + filtre DJ) — visible uniquement en mode Piped -->
       <div class="deck-dj" data-deck="A" hidden>
+        <!-- Gain de voie (16.6) : trim individuel AVANT le crossfader.
+             Compense le volume entre les deux voies. Plage pilotée par
+             config.GAIN_RANGE_DB (±10 dB). Double-clic = reset. -->
+        <div class="dj-gain">
+          <input class="dj-gain-fader" type="range" min="-10" max="10" value="0" step="0.1" orient="vertical" aria-label="Gain de voie" />
+          <span class="dj-gain-value">+0.0 dB</span>
+          <button class="dj-reset" type="button" data-reset="gain" aria-label="RAZ gain" title="RAZ">↺</button>
+          <span class="dj-band-label">GAIN</span>
+        </div>
         <div class="dj-eq">
           <div class="dj-band" data-band="low">
             <input class="dj-fader" type="range" min="-12" max="12" value="0" step="0.5" orient="vertical" aria-label="EQ graves (Low)" />
+            <span class="dj-band-value">+0.0 dB</span>
             <button class="dj-reset" type="button" data-reset="eq-low" aria-label="RAZ EQ graves" title="RAZ">↺</button>
             <span class="dj-band-label">LOW</span>
           </div>
           <div class="dj-band" data-band="mid">
             <input class="dj-fader" type="range" min="-12" max="12" value="0" step="0.5" orient="vertical" aria-label="EQ médiums (Mid)" />
+            <span class="dj-band-value">+0.0 dB</span>
             <button class="dj-reset" type="button" data-reset="eq-mid" aria-label="RAZ EQ médiums" title="RAZ">↺</button>
             <span class="dj-band-label">MID</span>
           </div>
           <div class="dj-band" data-band="high">
             <input class="dj-fader" type="range" min="-12" max="12" value="0" step="0.5" orient="vertical" aria-label="EQ aigus (High)" />
+            <span class="dj-band-value">+0.0 dB</span>
             <button class="dj-reset" type="button" data-reset="eq-high" aria-label="RAZ EQ aigus" title="RAZ">↺</button>
             <span class="dj-band-label">HIGH</span>
           </div>
         </div>
         <div class="dj-filter">
           <input class="dj-knob" type="range" min="-100" max="100" value="0" step="1" orient="vertical" aria-label="Filtre DJ" />
+          <span class="dj-band-value">OFF</span>
           <button class="dj-reset" type="button" data-reset="filter" aria-label="RAZ filtre DJ" title="RAZ">↺</button>
           <span class="dj-band-label">FILTER</span>
         </div>
@@ -294,25 +307,38 @@
 
       <!-- Bloc DJ (EQ 3 bandes + filtre DJ) — visible uniquement en mode Piped -->
       <div class="deck-dj" data-deck="B" hidden>
+        <!-- Gain de voie (16.6) : trim individuel AVANT le crossfader.
+             Compense le volume entre les deux voies. Plage pilotée par
+             config.GAIN_RANGE_DB (±10 dB). Double-clic = reset. -->
+        <div class="dj-gain">
+          <input class="dj-gain-fader" type="range" min="-10" max="10" value="0" step="0.1" orient="vertical" aria-label="Gain de voie" />
+          <span class="dj-gain-value">+0.0 dB</span>
+          <button class="dj-reset" type="button" data-reset="gain" aria-label="RAZ gain" title="RAZ">↺</button>
+          <span class="dj-band-label">GAIN</span>
+        </div>
         <div class="dj-eq">
           <div class="dj-band" data-band="low">
             <input class="dj-fader" type="range" min="-12" max="12" value="0" step="0.5" orient="vertical" aria-label="EQ graves (Low)" />
+            <span class="dj-band-value">+0.0 dB</span>
             <button class="dj-reset" type="button" data-reset="eq-low" aria-label="RAZ EQ graves" title="RAZ">↺</button>
             <span class="dj-band-label">LOW</span>
           </div>
           <div class="dj-band" data-band="mid">
             <input class="dj-fader" type="range" min="-12" max="12" value="0" step="0.5" orient="vertical" aria-label="EQ médiums (Mid)" />
+            <span class="dj-band-value">+0.0 dB</span>
             <button class="dj-reset" type="button" data-reset="eq-mid" aria-label="RAZ EQ médiums" title="RAZ">↺</button>
             <span class="dj-band-label">MID</span>
           </div>
           <div class="dj-band" data-band="high">
             <input class="dj-fader" type="range" min="-12" max="12" value="0" step="0.5" orient="vertical" aria-label="EQ aigus (High)" />
+            <span class="dj-band-value">+0.0 dB</span>
             <button class="dj-reset" type="button" data-reset="eq-high" aria-label="RAZ EQ aigus" title="RAZ">↺</button>
             <span class="dj-band-label">HIGH</span>
           </div>
         </div>
         <div class="dj-filter">
           <input class="dj-knob" type="range" min="-100" max="100" value="0" step="1" orient="vertical" aria-label="Filtre DJ" />
+          <span class="dj-band-value">OFF</span>
           <button class="dj-reset" type="button" data-reset="filter" aria-label="RAZ filtre DJ" title="RAZ">↺</button>
           <span class="dj-band-label">FILTER</span>
         </div>
