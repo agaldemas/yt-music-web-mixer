@@ -133,7 +133,7 @@
   // ===== Rendu =====
 
   // Construit le DOM d'un résultat (bouton cliquable : vignette + titre + durée)
-  function buildResultEl(video, onSelect, onMarkPlayed) {
+  function buildResultEl(deck, video, onSelect, onMarkPlayed) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'search-result';
@@ -162,10 +162,20 @@
 
     btn.innerHTML = html;
     btn.addEventListener('click', function () {
-      // On NE vide PAS le panneau de résultats après sélection : on conserve
-      // la grille pour que l'utilisateur puisse changer de piste rapidement.
-      // Le panneau sera remplacé à la prochaine recherche, ou vidé via "✕ Effacer".
+      // 1. Effectue la sélection (pour le tracking web et l'état de la liste des résultats)
       onSelect(video.id);
+      // 2. Met à jour le lecteur principal avec les métadonnées (résolution du bug)
+      //    On utilise ici les données du jeu de données (video) pour passer les infos.
+      var info = {
+        title: video.title,
+        uploader: video.uploaderName,
+        thumbnailUrl: safeImgUrl(video.thumbnails.medium?.url),
+        modeLabel: 'Search Result'
+      };
+      if (typeof updateNowPlaying === 'function') {
+        updateNowPlaying(deck, info);
+      }
+      // 3. Met à jour le badge "En cours"
       if (typeof onMarkPlayed === 'function') onMarkPlayed(video.id);
     });
     return btn;
@@ -720,6 +730,7 @@
         setState(UI_STATE.RESULTS);
         videos.forEach(function (v) {
           panelEl.appendChild(buildResultEl(
+            deck,
             v,
             function (id) { onSelect(id); },
             markActive
@@ -761,6 +772,7 @@
       setState(UI_STATE.RESULTS);
       videos.forEach(function (v) {
         panelEl.appendChild(buildResultEl(
+          deck,
           v,
           function (id) { onSelect(id); },
           markActive

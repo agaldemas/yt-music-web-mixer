@@ -27,6 +27,9 @@
   var stepHandle = null; // setInterval pour crossfade progressif (IFrame only)
   var stepPercent = 100; // palier en % (>= 100 = instantané)
   var stepIntervalMs = 0; // intervalle en ms (<= 0 = instantané)
+  var autoXf = false; // tâche 18 : crossfade progressif armé (case « Auto XF »)
+                     // true → tout déplacement du slider atteint sa cible par
+                     // paliers (palier + intervalle config), même en mode Piped.
 
   // Seuils de sync continu selon le mode (Piped = plus précis)
   var SYNC_DRIFT_THRESHOLD_PIPED = 0.2; // s
@@ -51,14 +54,12 @@
     if (mode === 'piped') {
       var AE = window.AudioEngine;
       if (!AE) return; // AudioEngine pas chargé → fallback silencieux
-      // Mode Piped : le crossfade et le master sont gérés par GainNode.
-      // Pas besoin d'attendre une rampe par paliers : setTargetAtTime fait
-      // la transition de manière fluide en interne. On pousse la cible
-      // directement.
-      AE.applyCrossfade(crossfade / 100);
+      // Mode Piped : le crossfade est géré par GainNode.setTargetAtTime
+      // (transition fluide en interne). Quand le crossfade progressif est
+      // armé (autoXf), appliedCrossfade progresse par paliers — c'est cette
+      // valeur intermédiaire que l'on pousse au graphe, pas la cible finale.
+      AE.applyCrossfade(appliedCrossfade / 100);
       AE.applyMasterVolume(master);
-      // Mémorise pour l'affichage (cohérent avec la cible).
-      appliedCrossfade = crossfade;
       return;
     }
     // Mode IFrame : comportement historique (setVolume + paliers).
@@ -89,10 +90,63 @@
     }
   }
 
+  // Arme / désarme le crossfade progressif (tâche 18, case « Auto XF »).
+  //   - true  → tout déplacement du slider crossfade atteint sa cible par
+  //             paliers (palier + intervalle config), y compris en mode Piped.
+  //   - false → comportement standard (Piped : saut direct à la cible ;
+  //             IFrame : paliers seulement si réglé dans les Paramètres).
+  // Quand on désarme pendant un ramp-up en cours, on atteint immédiatement
+  // la cible (pas d'état intermédiaire bloqué).
+  function setAutoXf(enabled) {
+    autoXf = !!enabled;
+    if (!autoXf) {
+      stopStepping();
+      appliedCrossfade = crossfade;
+      applyVolumes();
+    }
+  }
+
+  function isAutoXf() {
+    return autoXf;
+  }
+
   // Lance le crossfade progressif de appliedCrossfade vers crossfade par paliers.
-  // En mode Piped, on saute directement à la cible (ramping natif Web Audio).
-  // En mode IFrame, comportement historique par paliers si configuré.
+  //
+  // Règles d'application de la cible du slider :
+  //   - Si le crossfade progressif est ARMÉ (autoXf = true, case « Auto XF »
+  //     cochée) : la cible est atteinte par paliers (stepPercent / stepIntervalMs)
+  //     dans les DEUX modes (Piped + IFrame).
+  //   - Si désarmé :
+  //       · Mode Piped : saut direct à la cible (le ramping fluide est géré
+  //         nativement par GainNode.setTargetAtTime → pas de paliers manuels).
+  //       · Mode IFrame : comportement historique par paliers SI stepPercent < 100
+  //         ET stepIntervalMs > 0 (réglage « crossfade progressif » des
+  //         Paramètres), sinon saut direct.
+  //   - Toujours : palier >= 100 ou intervalle <= 0 → instantané.
   function stepTowardsTarget() {
+    if (autoXf) {
+      // Crossfade progressif armé : ramp-up par paliers, même en mode Piped.
+      if (stepPercent >= 100 || stepIntervalMs <= 0) {
+        appliedCrossfade = crossfade;
+        applyVolumes();
+        return;
+      }
+      stopStepping();
+      stepHandle = setInterval(function () {
+        var delta = crossfade - appliedCrossfade;
+        if (Math.abs(delta) <= stepPercent) {
+          // Dernier palier : on atteint la cible exacte
+          appliedCrossfade = crossfade;
+          applyVolumes();
+          stopStepping();
+          return;
+        }
+        // Avance vers la cible par incrément signé
+        appliedCrossfade += (delta > 0 ? stepPercent : -stepPercent);
+        applyVolumes();
+      }, stepIntervalMs);
+      return;
+    }
     if (mode === 'piped') {
       // En Piped, setTargetAtTime fait la transition fluide en interne.
       // On pousse directement la cible sans paliers.
@@ -250,9 +304,17 @@
     init: init,
     applyVolumes: applyVolumes,
     setStepOptions: setStepOptions,
+    setAutoXf: setAutoXf,
+    isAutoXf: isAutoXf,
     setMode: setMode,
     getMode: getMode,
     isPipedMode: isPipedMode,
+    syncBtoA: syncBtoA,
+    toggleContinuousSync: toggleContinuousSync,
+    // État courant (debug / tests)
+    getState: function () {
+      return { crossfade: crossfade, appliedCrossfade: appliedCrossfade, master: master, autoXf: autoXf };
+    },
     // Constantes exportées (debug / tests)
     CONST: {
       SYNC_DRIFT_THRESHOLD_PIPED: SYNC_DRIFT_THRESHOLD_PIPED,

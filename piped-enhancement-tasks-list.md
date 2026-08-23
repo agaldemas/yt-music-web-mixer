@@ -292,7 +292,8 @@ Remplacer (ou compléter) le lecteur IFrame YouTube par un lecteur `<audio>` bra
 La lecture automatique en mode DJ ne démarrait pas après la sélection d'un morceau dans les résultats de recherche (alors que ça marche en IFrame), et les boutons lecture/pause des decks ne se mettaient pas à jour dans certains cas.
 
 - [x] **Fix race condition autoplay dans `loadVideoById`** : `state.pendingPlay` était lu **dans le `.then()`** après le fetch réseau, après que `_pendingPlayRequested` avait pu être réinitialisé. Maintenant, `pendingPlay` est **capturé avant le fetch** dès l'entrée dans `loadVideoById`, et `_pendingPlayRequested` est initialisé à `false` sur le wrapper du lecteur.
-- [x] **Retry `play()` après 150 ms** : le handler `canplay` retente `audio.play()` une fois après 150 ms si la première tentative échoue (le geste de sélection de recherche compte comme interaction, mais l'`AudioContext` peut ne pas encore être resumé).
+- [x] **Séquence de lecture KISS (conserve `onReady`)** : Simplification du handler `canplay` : `AudioEngine.resume()` → `audio.play()` sans retry complexe. Appel de `onReady` conservé (débloque l'init). Correction `deck is not defined` en `state.deckId` dans `loadLocalFile`.
+- [x] **Synchronisation UI Now-Playing** : Ajout d'un appel explicite à `updateNowPlaying(deck, info)` dans le handler `click` de `buildResultEl` (search.js). Correction de la portée `deck` manquante dans les appels à `buildResultEl` (ajout de l'argument) et dans `audio-player.js` (utilisation de `state.deckId`). Résout le problème où le titre `np-info` ne se mettait pas à jour malgré le chargement audio.
 - [x] **`playVideo()` retourne la promesse** de `play()` pour que le caller puisse réagir à un échec et re-signaler `PAUSED` sur rejet.
 - [x] **`reportState()` ne filtre plus les doublons** : avant, un même état publié deux fois était ignoré → l'icône restait désynchronisée après un échec de `play()` optimiste. Maintenant on publie toujours, et `onStateChange` force la mise à jour de l'icône.
 - [x] **Boutons lecture/pause optimistes** (`js/deck-controls.js`) : le click handler bascule l'icône immédiatement (`BUFFERING` → spinner pendant que `play()` se résout). Si `play()` échoue, `playVideo()` re-signale `PAUSED` → l'icône revient à `▶`.
@@ -995,7 +996,25 @@ Règles pour l'alignement vertical et espacement :
 
 ---
 
-## 18. Documentation [x]
+## 18. Auto crossfade [x]
+
+- [x] Ajouter une case à cocher « 🔄 Auto XF » dans la barre de mixage, à droite du bouton « Pause both »
+  - Visible dans les **deux modes** (DJ et YT IFrame)
+  - Quand cochée : arme le crossfade progressif — tout déplacement du slider crossfade déclenche un **ramp-up progressif** vers la nouvelle position
+  - Quand décochée : crossfade instantané (comportement actuel)
+- [x] Logique de pilotage :
+  - Quand l'utilisateur bouge le slider crossfade avec la checkbox cochée → au lieu d'un saut instantané, le crossfade utilise le **ramp-up progressif** basé sur les paramètres **palier** et **intervalle** de la configuration (modal Paramètres)
+  - Le crossfade progresse par paliers jusqu'à atteindre la nouvelle position cible
+  - Si l'utilisateur bouge à nouveau le slider pendant le ramp-up, la cible est mise à jour (nouveau départ depuis la position courante)
+- [x] UI :
+  - Checkbox « 🔄 Auto XF » avec état visuel (cochée = armé, décochée = désactivé)
+  - Titre/description : « Active le crossfade progressif (palier + intervalle config) »
+- [x] Persistance : état de la checkbox dans localStorage
+- [x] Tests : vérifier le ramp-up progressif, la mise à jour de cible en cours de ramp-up, le comportement instantané quand décochée
+
+---
+
+## 19. Documentation [x]
 
 - [x] Mettre à jour `CLAUDE.md` :
   - Ajouter une section "Mode Piped / Web Audio API" décrivant la nouvelle architecture
@@ -1016,7 +1035,7 @@ Règles pour l'alignement vertical et espacement :
 
 ---
 
-## 19. Plan d'implémentation (ordre suggéré)
+## 20. Plan d'implémentation (ordre suggéré)
 
 | Phase | Section | Description | Risque | Statut |
 |-------|---------|-------------|--------|--------|
@@ -1038,8 +1057,9 @@ Règles pour l'alignement vertical et espacement :
 | 16 | 15 | Gain sliders + UI | 🟢 Faible (HTML/CSS) | ✅ |
 | 17 | 16 | Config | 🟢 Faible | ✅ |
 | 18 | 17 | Tests | 🟡 Validation | ~ |
-| 19 | 18 | Documentation | 🟢 Faible | ✅ |
-| 20 | 17 | Repli/déploiement résultats recherche | 🟢 Faible (JS) | ✅ |
+| 19 | 18 | Auto crossfade | 🟢 Faible (config + UI checkbox) | ✅ |
+| 20 | 19 | Documentation | 🟢 Faible | ✅ |
+| 21 | 17 | Repli/déploiement résultats recherche | 🟢 Faible (JS) | ✅ |
 
 ---
 

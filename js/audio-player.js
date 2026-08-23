@@ -390,30 +390,13 @@
     // morceau en mode Piped → autoplay demandé), on lance la lecture.
     audio.addEventListener('canplay', function () {
       if (state.refreshCount === 0) {
-        // 1er ready de la session — on notifie le caller
+        // 1er ready de la session — on notifie le caller pour débloquer l'init
         try { onReady({ target: audio }); } catch (e) { /* ignore */ }
       }
       if (state.pendingPlay) {
         state.pendingPlay = false;
-        // resume() débloque l'AudioContext (politique autoplay) AVANT play().
-        // Sans cela, l'AudioContext reste suspended et le son ne sort pas.
         AudioEngine.resume().then(function () {
-          var pr = audio.play();
-          if (pr && typeof pr.catch === 'function') {
-            pr.catch(function (err) {
-              // Autoplay peut être bloqué si l'AudioContext n'a pas encore
-              // été débloqué par un geste utilisateur. On retente une fois
-              // après un court délai — le geste de sélection de recherche
-              // compte normalement comme interaction.
-              setTimeout(function () {
-                audio.play().catch(function () { /* échec définitif — silencieux */ });
-              }, 150);
-            });
-          }
-        }).catch(function () {
-          // resume() a échoué : on tente quand même le play (le son sortira
-          // peut-être en direct si le contexte est déjà actif).
-          audio.play().catch(function () { /* silencieux */ });
+          audio.play().catch(function () { /* autoplay bloqué */ });
         });
       }
     });
@@ -670,7 +653,7 @@
           }
           // 4) Notifier app.js pour mettre à jour l'UI
           if (typeof window.updateNowPlaying === 'function') {
-            window.updateNowPlaying(deck);
+            window.updateNowPlaying(state.deckId);
           }
           return buf;
         }, function (err) {

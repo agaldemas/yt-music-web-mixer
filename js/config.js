@@ -10,6 +10,7 @@ window.YT_CONFIG = {
     LAST_SEEK_B: 'lastSeekB',
     CROSSFADE_STEP_PERCENT: 'crossfadeStepPercent',
     CROSSFADE_STEP_INTERVAL_MS: 'crossfadeStepIntervalMs',
+    AUTO_XF: 'autoXf', // crossfade progressif armé (case à cocher)
     FORCE_PIPED: 'forcePipedSearch', // forcer la recherche via Piped même si clé API présente
     PLAYER_MODE: 'playerMode', // mode de lecture : 'auto' | 'piped' | 'iframe'
     // Mode Piped DJ (phase 6) : EQ 3 bandes + filtre DJ par voie.
@@ -36,6 +37,11 @@ window.YT_CONFIG = {
   // Si stepPercent >= 100 ou stepIntervalMs <= 0 → application instantanée.
   CROSSFADE_STEP_PERCENT: 100,
   CROSSFADE_STEP_INTERVAL_MS: 0,
+  // Crossfade progressif armé (tâche 18) : quand true (case « Auto XF »
+  // cochée dans la barre de mixage), déplacer le slider crossfade atteint sa
+  // cible par paliers (stepPercent / stepIntervalMs) au lieu d'un saut
+  // instantané. Applicable dans les deux modes (Piped + IFrame).
+  AUTO_XF_DEFAULT: false,
   // Timeout de chargement de l'API IFrame (ms)
   API_LOAD_TIMEOUT_MS: 10000,
   // Pitch / tempo (phase 7) : plage du slider en % autour de 0.

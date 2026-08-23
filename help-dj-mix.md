@@ -108,7 +108,7 @@ Affiche le tempo détecté en temps réel, avec 3 états visuels :
 
 ## 💿 Scratch / Platine vinyle (SCRATCH)
 
-![Platine scratch dans le deck](dj-deck-ui.png)
+![Platine scratch dans le deck](dj-deck-full.png)
 
 Chaque deck embarque une **platine vinyle tactile** (`.platter`) à droite du visualiseur. Le scratch est un vrai **scratch bidirectionnel** (avant/arrière, sample-accurate) utilisant un `AudioBufferSourceNode` — pas un simple déplacement de `currentTime` sur un `<audio>`.
 
@@ -243,6 +243,20 @@ Depuis la modal **Paramètres** (bouton ⚙️ dans l'en-tête), tu peux configu
 
 > Exemple : palier = 20 %, intervalle = 50 ms → le crossfade atteint sa cible en ~5 pas étalés sur 250 ms, pour une transition douce sans à-coup. Palier = 100 % ou intervalle = 0 ms = comportement instantané.
 
+### 🔄 Auto XF — case à cocher dans la barre de mixage
+
+À droite du bouton **⏸️ Pause both**, une case **🔄 Auto XF** permet d'**armer** (cochée) ou **désarmer** (décochée) le crossfade progressif, dans les **deux modes** (DJ et YT IFrame) :
+
+| État | Comportement du slider crossfade |
+|------|----------------------------------|
+| **Décochée** (défaut) | Saut **instantané** à la position demandée (mode Piped, le ramping fluide est géré nativement par Web Audio) |
+| **Cochée** | La position demandée est atteinte par **paliers** progressifs, en utilisant le **palier %** et **l'intervalle** configurés dans Paramètres |
+
+- **Armé + déplacement du slider** → le crossfade descend/remonte par paliers jusqu'à la nouvelle position cible (au lieu d'un saut).
+- **Changement de cible pendant le ramp-up** → la cible est mise à jour ; la rampe repart de la position courante.
+- **Désarmer pendant un ramp-up** (décochée) → la cible est atteinte immédiatement.
+- **Persistance** : l'état de la case est sauvegardé dans le `localStorage` et restauré au démarrage.
+
 ---
 
 ## 🎛️ Visualiseur master
@@ -264,6 +278,7 @@ Les réglages suivants sont sauvegardés dans le `localStorage` et restaurés au
 | Filtre DJ | `djFilterA` / `djFilterB` | Restauré ✅ |
 | Pitch | `pitchA` / `pitchB` | Restauré ✅ |
 | Crossfade | `crossfade` | Restauré ✅ |
+| Auto XF (case armée) | `autoXf` | Restauré ✅ |
 | Volume master | `masterVolume` | Restauré ✅ |
 | Cue point | `cueA` / `cueB` | Restauré ✅ |
 | Loop In | `loopInA` / `loopInB` | Restauré ✅ |

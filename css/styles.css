@@ -889,6 +889,34 @@ body.mode-piped .dt-seek::-moz-range-thumb { background: #6ee7b7; }
 .mixer-btn:hover { background: #272d3b; }
 .mixer-btn-toggle[aria-pressed="true"] { background: #2563eb; border-color: #3b82f6; }
 
+/* Case « 🔄 Auto XF » — crossfade progressif armé (tâche 18) */
+.mixer-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #c7c7cc;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 10px;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  background: #1f2430;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.mixer-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: #2563eb;
+}
+.mixer-check:has(input:checked) {
+  background: #1a2440;
+  border-color: #3b82f6;
+  color: #fff;
+}
+
 .crossfade-slider, .master-slider {
   -webkit-appearance: none;
   appearance: none;

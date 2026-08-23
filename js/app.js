@@ -1757,6 +1757,38 @@
     });
   }
 
+  // ===== Auto crossfade (tâche 18) — case « 🔄 Auto XF » =====
+
+  // Lit l'état armé/désarmé depuis localStorage (fallback config.js)
+  function loadAutoXf() {
+    var arm = CFG.AUTO_XF_DEFAULT;
+    try {
+      var v = localStorage.getItem(CFG.STORAGE_KEYS.AUTO_XF);
+      if (v !== null) arm = v === '1' || v === 'true';
+    } catch (e) { /* ignore */ }
+    return !!arm;
+  }
+
+  // Sauvegarde l'état + pousse vers le mixer
+  function saveAutoXf(arm) {
+    try {
+      localStorage.setItem(CFG.STORAGE_KEYS.AUTO_XF, arm ? '1' : '0');
+    } catch (e) { /* ignore */ }
+    Mixer.setAutoXf(arm);
+  }
+
+  // Lit l'état persisté, met la case à jour, câble le changement
+  function initAutoXf() {
+    var chk = document.getElementById('auto-xf');
+    if (!chk) return;
+    var arm = loadAutoXf();
+    chk.checked = arm;
+    Mixer.setAutoXf(arm);
+    chk.addEventListener('change', function () {
+      saveAutoXf(chk.checked);
+    });
+  }
+
   // ===== Bootstrap =====
 
   async function init() {
@@ -1775,6 +1807,7 @@
     wireSearch('B');
     initSettingsModal();
     initStepControls();
+    initAutoXf();
     wireModeButton();
     wireSettingsModeSelect();
     wireFallbackAlert();
