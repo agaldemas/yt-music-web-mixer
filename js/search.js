@@ -208,6 +208,15 @@
       html += '<span class="search-result-duration">' + escapeHtml(video.duration) + '</span>';
     }
     html += '</div>';
+    // Lien explicite vers YouTube : il affiche l'ID et demande confirmation
+    // avant d'ouvrir la vidéo dans un nouvel onglet.
+    const youtubeUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(video.id);
+    html += '<a class="search-result-youtube-link" href="' + youtubeUrl
+      + '" target="_blank" rel="noopener noreferrer"'
+      + ' aria-label="Ouvrir ' + escapeHtml(video.id) + ' sur YouTube"'
+      + ' title="Ouvrir sur YouTube : ' + escapeHtml(video.id) + '">'
+      + '<span class="youtube-play-icon" aria-hidden="true">▶</span>'
+      + '</a>';
 
     btn.innerHTML = html;
 
@@ -220,11 +229,18 @@
     btn.addEventListener('pointerleave', () => {
       clearTimeout(hoverTimer);
       hoverTimer = null;
-      hidePopup();
+      scheduleHidePopup();
     });
     // Focus clavier : immédiat (pas de rafale possible)
     btn.addEventListener('focus', () => showPopup(video, btn));
     btn.addEventListener('blur', hidePopup);
+
+    const youtubeLink = btn.querySelector('.search-result-youtube-link');
+    youtubeLink.addEventListener('click', function (event) {
+      event.stopPropagation();
+      const open = window.confirm('Ouvrir cette vidéo YouTube dans un nouvel onglet ?\n\nID : ' + video.id);
+      if (!open) event.preventDefault();
+    });
 
     // Clic → sélection, avec confirmation si live stream
     btn.addEventListener('click', function () {
@@ -267,6 +283,7 @@
   let popupDescCtrl = null;     // AbortController du fetch description en cours
   let popupCurrentId = null;    // videoId affiché dans le popup courant
   let hoverTimer = null;        // timeout du debounce hover (500 ms)
+  let popupHideTimer = null;    // délai avant fermeture du popup
 
   function ensurePopup() {
     if (!popupEl || !popupEl.parentNode) {
@@ -274,7 +291,13 @@
       popupEl.className = 'search-result-popup';
       popupEl.setAttribute('role', 'tooltip');
       popupEl.hidden = true;
-      // On l'attache au body pour éviter les conflits d'overflow/position
+      // On l'attache au body pour éviter les conflits d'overflow/position.
+      // Le popup reste interactif afin de permettre la sélection/copie du
+      // texte ; son survol annule le délai de fermeture.
+      popupEl.addEventListener('pointerenter', function () {
+        clearTimeout(popupHideTimer);
+      });
+      popupEl.addEventListener('pointerleave', scheduleHidePopup);
       document.body.appendChild(popupEl);
     }
     return popupEl;
@@ -411,6 +434,7 @@
   }
 
   function showPopup(video, cardEl) {
+    clearTimeout(popupHideTimer);
     const el = populatePopup(video);
     popupCurrentId = video.id;
     // Mesure avant positionnement
@@ -469,12 +493,22 @@
   }
 
   function hidePopup() {
+    clearTimeout(popupHideTimer);
+    popupHideTimer = null;
     clearTimeout(hoverTimer);
     hoverTimer = null;
     if (popupEl) popupEl.hidden = true;
     if (popupScrollCleanup) { popupScrollCleanup(); popupScrollCleanup = null; }
     if (popupDescCtrl) { try { popupDescCtrl.abort(); } catch (_) {} popupDescCtrl = null; }
     popupCurrentId = null;
+  }
+
+  // Laisse le popup visible quelques secondes après la sortie de la carte,
+  // afin que l'utilisateur puisse déplacer la souris vers le texte et le
+  // sélectionner/copier. Le popup reste pointer-events:none comme avant.
+  function scheduleHidePopup() {
+    clearTimeout(popupHideTimer);
+    popupHideTimer = setTimeout(hidePopup, 4000);
   }
 
   // ===== Confirmation live stream =====
@@ -513,7 +547,9 @@
   // Nettoie popup + confirm si le panneau est vidé (nouvelle recherche, ✕, pagination)
   function cleanupOverlays() {
     clearTimeout(hoverTimer);
+    clearTimeout(popupHideTimer);
     hoverTimer = null;
+    popupHideTimer = null;
     hidePopup();
     if (confirmEl) confirmEl.hidden = true;
   }

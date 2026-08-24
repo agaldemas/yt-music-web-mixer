@@ -582,6 +582,27 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 }
 .search-result:hover { background: #272d3b; border-color: #3b82f6; }
 .search-result:focus { outline: none; border-color: #3b82f6; }
+.search-result-youtube-link {
+  flex: 0 0 18px;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 13px;
+  border-radius: 3px;
+  background: #ff0033;
+  color: #fff;
+  text-decoration: none;
+  line-height: 1;
+  font-size: 0.52rem;
+  transition: transform 0.12s, background 0.12s;
+}
+.search-result-youtube-link:hover {
+  background: #cc0029;
+  transform: scale(1.08);
+}
+.youtube-play-icon { transform: translateX(0.5px); }
 .search-result.is-active {
   background: #1f3346;
   border-color: #3b82f6;
@@ -669,8 +690,8 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   border-radius: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
   padding: 10px 12px;
-  pointer-events: none; /* jamais bloquant pour le survol/les clics */
-  opacity: 1;
+  pointer-events: auto; /* texte sélectionnable/copier */
+  user-select: text;
   transition: opacity 0.1s ease;
 }
 .search-result-popup[hidden] { display: none; }
