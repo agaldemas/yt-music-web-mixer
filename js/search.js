@@ -41,20 +41,35 @@
     return n + ' vues';
   }
 
-  // Timestamp (secondes) → "il y a X mois / X jours / X heures"
-  function formatUploadedDate(ts) {
-    if (!ts) return '';
-    const d = new Date(Number(ts) * 1000);
-    if (isNaN(d.getTime())) return '';
-    const now = Date.now();
-    const diff = Math.max(0, Math.floor((now - d.getTime()) / 1000));
-    if (diff < 60) return 'à l\'instant';
-    if (diff < 3600) return 'il y a ' + Math.floor(diff / 60) + ' min';
-    if (diff < 86400) return 'il y a ' + Math.floor(diff / 3600) + ' h';
-    if (diff < 2592000) return 'il y a ' + Math.floor(diff / 86400) + ' jours';
-    if (diff < 31536000) return 'il y a ' + Math.floor(diff / 2592000) + ' mois';
-    return 'il y a ' + Math.floor(diff / 31536000) + ' ans';
-  }
+  // Normalise un timestamp Piped vers des secondes. Piped renvoie parfois
+    // `uploaded` en millisecondes, parfois -1 (inconnu). Renvoie 0 si invalide.
+    function normalizeUploaded(v) {
+      const n = Number(v);
+      if (!isFinite(n) || n <= 0) return 0;      // -1, 0, NaN → inconnu
+      if (n > 1e12) return Math.floor(n / 1000);  // déjà en millisecondes
+      if (n > 1e9) return Math.floor(n);          // déjà en secondes
+      return 0;                                    // valeur aberrante
+    }
+
+    // Timestamp (secondes) → "il y a X" (récent) ou date lisible "21/01/2003"
+    // (ancien). Rejette les dates impossibles : avant 2005 (YouTube n'existait
+    // pas — cas du timestamp -1 qui donnait "il y a 56 ans") ou dans le futur.
+    function formatUploadedDate(ts) {
+      if (!ts) return '';
+      const d = new Date(Number(ts) * 1000);
+      if (isNaN(d.getTime())) return '';
+      const MIN_YT = Date.UTC(2005, 0, 1);   // lancement de YouTube
+      const now = Date.now();
+      if (d.getTime() < MIN_YT || d.getTime() > now + 86400000) return '';
+      const diff = Math.max(0, Math.floor((now - d.getTime()) / 1000));
+      if (diff < 60) return "à l'instant";
+      if (diff < 3600) return 'il y a ' + Math.floor(diff / 60) + ' min';
+      if (diff < 86400) return 'il y a ' + Math.floor(diff / 3600) + ' h';
+      if (diff < 2592000) return 'il y a ' + Math.floor(diff / 86400) + ' jours';
+      if (diff < 31536000) return 'il y a ' + Math.floor(diff / 2592000) + ' mois';
+      // Au-delà d'un an : la date exacte est plus informative que "il y a X ans"
+      return 'le ' + d.toLocaleDateString('fr-FR');
+    }
 
   // Convertit une durée en secondes vers "M:SS" ou "H:MM:SS"
   function secondsToDuration(total) {
@@ -285,6 +300,15 @@
   let hoverTimer = null;        // timeout du debounce hover (500 ms)
   let popupHideTimer = null;    // délai avant fermeture du popup
 
+  // Ferme immédiatement le popup dès qu'un clic/tap intervient ailleurs.
+  // Un clic dans le popup lui-même reste autorisé pour sélectionner/copier
+  // sa description ; le délai de fermeture ne sert alors que pour la sortie
+  // par survol.
+  document.addEventListener('pointerdown', function (event) {
+    if (!popupEl || popupEl.hidden || popupEl.contains(event.target)) return;
+    hidePopup();
+  });
+
   function ensurePopup() {
     if (!popupEl || !popupEl.parentNode) {
       popupEl = document.createElement('div');
@@ -306,7 +330,10 @@
   function populatePopup(video) {
     const el = ensurePopup();
     const viewsStr = video.views ? formatViews(video.views) : '';
-    const dateStr = video.uploadedDate || formatUploadedDate(video.uploaded);
+    // Date : le champ texte Piped ("3 years ago" en anglais) est ignoré si un
+    // timestamp valide existe — formatUploadedDate produit du français fiable
+    // et rejette les valeurs aberrantes (ex. -1 → "il y a 56 ans").
+    const dateStr = formatUploadedDate(video.uploaded) || (video.uploadedDate || '');
 
     // Pas de doublon avec la carte (vignette/titre/uploader/durée) : on
     // n'affiche que les infos ABSENTES de la carte (vues, date, LIVE) +
@@ -706,7 +733,7 @@
         uploaderName: it.uploaderName || '',
         uploaderAvatar: it.uploaderAvatar || '',
         views: Number(it.views) || 0,
-        uploaded: Number(it.uploaded) || 0,       // timestamp secondes
+        uploaded: normalizeUploaded(it.uploaded),  // timestamp secondes (ou 0)
         uploadedDate: it.uploadedDate || '',      // texte déjà formaté par Piped
         isLive: isLive,
         thumbnails: {
