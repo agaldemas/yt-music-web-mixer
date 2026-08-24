@@ -1088,7 +1088,7 @@ Règles pour l'alignement vertical et espacement :
   - Documenter les nouveaux fichiers (`piped-streams.js`, `audio-engine.js`, `audio-player.js`, `visualizer.js`, `bpm-detector.js`)
   - Documenter le dual mode (Piped / IFrame fallback)
 - [x] Mettre à jour `README.md` et `README.fr.md` :
-  - Nouvelles fonctionnalités : EQ 3 bandes, filtre DJ, pitch/tempo, BPM, waveform, cue/loop, **gain trim par voie**, **repli résultats ▲/▼**, **scratch/platine**
+  - Nouvelles fonctionnalités : EQ 3 bandes, filtre DJ, pitch/tempo, BPM, waveform, cue/loop, **gain trim par voie**, **repli résultats ▲/▼**, **scratch/platine**, **bandeau now-playing enrichi** (bouton YouTube ▶ + popup description via bouton « ! »)
   - Nouvelle architecture audio (schéma du graphe Web Audio) — graphe mis à jour avec `deckTrim`
   - Prérequis : instances Piped (pour les flux audio), pas de clé API YouTube nécessaire
   - Limitations : CORS (dépend des instances Piped), expiration des URLs, audio-only (pas de vidéo), fiabilité des instances
@@ -1098,6 +1098,26 @@ Règles pour l'alignement vertical et espacement :
   - La dépendance aux instances Piped (peuvent être lentes/indisponibles)
   - L'audio-only en mode Piped (pas de vidéo)
 - [ ] Mettre à jour `tasks-list.md` : marquer les nouvelles tâches comme liées à cette migration
+
+---
+
+## 19.1 Bandeau now-playing enrichi — description du morceau courant [x]
+
+**Popup description du morceau en cours via bouton « ! »** — terminé dans `js/deck-controls.js`, `css/styles.css` et `index.html`.
+
+- [x] **Bouton info « ! »** dans le bandeau now-playing (`.deck-nowplaying`), aligné à droite sous le bouton YouTube ▶, visible uniquement quand un `videoId` est chargé.
+- [x] **Bouton YouTube ▶ dans le bandeau** : même apparence que celui des vignettes de résultats (`.search-result-youtube-link`), lien complet `https://www.youtube.com/watch?v=<id>`, confirmation `confirm()` avant ouverture dans un nouvel onglet.
+- [x] **Popup description** ouvert au clic sur « ! » (plus de hover sur le titre), contenu = description YouTube complète récupérée via `/api/description/:id` (même pipeline que le popup de recherche, cache mémoire par morceau).
+- [x] **Overlay toujours au premier plan** : popup attaché à `document.body` (jamais descendant du deck — le contexte d'empilement du deck, avec la platine de scratch et l'analyser, le cachait) + `position: fixed` + `z-index: 1000` inline. Résout le bug « le popup passe sous la platine/l'analyser ».
+- [x] **Hauteur max 500 px** (`max-height: 500px`), largeur `min(420px, 100vw - 16px)`, corps scrollable (`.np-desc-body`).
+- [x] **Fermeture** : bouton **✕** en haut à droite (`.np-desc-close`, header `.np-desc-head`) ou **Échap** (handler global `closeAllDescPopups` sur les 2 voies).
+- [x] **État actif du bouton « ! »** : bascule `.is-active` (bleu) quand le popup est ouvert, retiré à la fermeture.
+- [x] **Reconstruction propre par morceau** : l'ancien popup est supprimé (`c.npDesc.remove()`), les boutons `#np-actions` vidés (`innerHTML=''`) à chaque `setNowPlaying` — aucun doublon entre voies A/B ni entre deux morceaux successifs. Cycle de mise à jour du titre loggé (`[title-update] Deck X -> ...`).
+- [x] **Positionnement** : popup placé près du bouton « ! » (bord droit, dessous ; bascule au-dessus si pas de place), clampé dans la fenêtre (8 px de marge).
+
+**Pitfalls documentés :**
+- ❌ Ne pas attacher le popup en descendant du deck (z-index local de la platine/analyser gagne).
+- ❌ Ne pas toggler `el.style.display` pour mesurer la largeur avant l'affichage (écrase `.np-desc-visible`).
 
 ---
 
@@ -1127,11 +1147,13 @@ Règles pour l'alignement vertical et espacement :
 | 20 | 19 | Documentation | 🟢 Faible | ✅ |
 | 21 | 17 | Repli/déploiement résultats recherche | 🟢 Faible (JS) | ✅ |
 | 22 | 17.6 | Popups info hover résultats recherche | 🟢 Faible (HTML/CSS/JS) | ✅ |
+| 23 | 19.1 | Bandeau now-playing enrichi (bouton YouTube ▶ + popup description « ! ») | 🟢 Faible (deck-controls.js + CSS) | ✅ |
 
 ---
 
 ## Notes
 
+- **Nettoyage CSS (2026-08-24)** : `css/styles.css` allégé de ~2 100 caractères — suppression des blocs **entièrement dupliqués** (`.piped-fallback-alert` + `.pfa-*`, `.search-result-uploader`, `.dj-bpm`/`.dj-bpm-value`, `.mixer-sync-status` + `.mixer-btn.is-error/.is-pulsing` + `@keyframes btn-pulse`) et des **classes mortes** (`.deck-results-clear-legacy`, `.search-result-popup.np-tooltip`). Aucune classe utilisée n'a été perdue (vérification par scan croisé CSS ↔ JS/HTML, accolades équilibrées 300/300). Backup : `/tmp/styles.css.bak`.
 - **Phase 0 = tout ou rien** : si CORS est bloqué même via le proxy Piped, l'approche Web Audio API est impossible en web pur. Dans ce cas, les options sont : (a) garder l'IFrame (volume-only), (b) utiliser un mini-serveur local qui proxy les flux (ajoute une dépendance serveur), ou (c) faire l'app en React Native avec un module audio natif (voir `mobile-app-tasks-list.md`).
 - **Audio-only en mode Piped** : on perd la vidéo YouTube. C'est un trade-off accepté pour un mixeur DJ. L'IFrame reste disponible en fallback si la vidéo est souhaitée.
 - **`MediaElementAudioSourceNode` = point de non-retour** : une fois qu'un élément `<audio>` est connecté à un `MediaElementAudioSourceNode`, son audio ne sort plus directement vers les haut-parleurs — il DOIT passer par le graphe Web Audio jusqu'à `ctx.destination`. Pas de mode hybride (audio direct + DSP en parallèle) sur le même élément.
