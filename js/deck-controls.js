@@ -78,6 +78,8 @@
     var npThumb = npRoot ? npRoot.querySelector('.np-thumb') : null;
     var npTitle = npRoot ? npRoot.querySelector('.np-title') : null;
     var npMeta = npRoot ? npRoot.querySelector('.np-meta') : null;
+    var npActions = npRoot ? npRoot.querySelector('.np-actions') : null;
+    var npInfoBtn = npRoot ? npRoot.querySelector('.np-info-btn') : null;
 
     var c = {
       deck: deck,
@@ -87,6 +89,7 @@
         root: root, playBtn: playBtn, seek: seek,
         currentEl: currentEl, durationEl: durationEl, iconEl: iconEl,
         npRoot: npRoot, npThumb: npThumb, npTitle: npTitle, npMeta: npMeta,
+        npInfoBtn: npInfoBtn, npActions: npActions,
       },
       dragging: false,    // vrai pendant que l'utilisateur glisse le curseur
       lastState: STATE.UNSTARTED,
@@ -156,6 +159,11 @@
       seek.addEventListener('blur', function () { c.dragging = false; });
     }
 
+    // Échap ferme le popup description s'il est ouvert (geste global).
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeAllDescPopups();
+    });
+
     // Initialise l'icône.
     renderState(c);
   }
@@ -192,6 +200,87 @@
       return;
     }
     c.els.npRoot.hidden = false;
+    // Popup description : attaché au <body> (overlay global), recréé à
+    // chaque morceau. Un descendant du deck serait piégé dans le contexte
+    // d'empilement du deck (platine/analyser plus hauts) → mauvais z-order.
+    if (c.npDesc) c.npDesc.remove();
+    var npDesc = document.createElement('div');
+    npDesc.className = 'np-desc';
+    npDesc.setAttribute('role', 'dialog');
+    npDesc.style.position = 'fixed';
+    npDesc.style.zIndex = '1000';
+
+    // En-tête du popup : bouton "X" de fermeture (aligné à droite).
+    var npDescHead = document.createElement('div');
+    npDescHead.className = 'np-desc-head';
+    var npDescClose = document.createElement('button');
+    npDescClose.type = 'button';
+    npDescClose.className = 'np-desc-close';
+    npDescClose.textContent = '✕';
+    npDescClose.setAttribute('aria-label', 'Fermer la description');
+    npDescClose.title = 'Fermer';
+    npDescClose.addEventListener('click', function () { hideDesc(c); });
+    npDescHead.appendChild(npDescClose);
+
+    // Corps : texte de la description (scrollable si trop long).
+    var npDescBody = document.createElement('div');
+    npDescBody.className = 'np-desc-body';
+
+    npDesc.appendChild(npDescHead);
+    npDesc.appendChild(npDescBody);
+    document.body.appendChild(npDesc);
+    c.npDesc = npDesc;
+    c.npDescBody = npDescBody;
+    c._npDescId = info.id || '';
+    c._npDescText = '';
+    c._npDescFailed = false;
+    // Titre : texte (ellipsis). Le bouton YouTube est dans .np-actions,
+    // au-dessus du bouton info "!" (colonne alignée à droite).
+    if (c.els.npTitle) {
+      c.els.npTitle.innerHTML = '';
+      var titleSpan = document.createElement('span');
+      titleSpan.className = 'np-title-text';
+      titleSpan.textContent = info.title || '—';
+      c.els.npTitle.appendChild(titleSpan);
+    }
+    // Boutons d'action alignés à droite : YouTube (haut) + info "!" (dessous).
+    if (c.els.npActions) {
+      var act = c.els.npActions;
+      act.innerHTML = '';
+      if (info.id) {
+        var ytBtn = document.createElement('a');
+        ytBtn.className = 'search-result-youtube-link';
+        ytBtn.href = 'https://www.youtube.com/watch?v=' + encodeURIComponent(info.id);
+        ytBtn.target = '_blank';
+        ytBtn.rel = 'noopener noreferrer';
+        ytBtn.setAttribute('aria-label', 'Ouvrir ' + info.id + ' sur YouTube');
+        ytBtn.title = 'Ouvrir sur YouTube : ' + info.id;
+        ytBtn.innerHTML = '<span class="youtube-play-icon" aria-hidden="true">▶</span>';
+        ytBtn.addEventListener('click', function (e) {
+          if (!window.confirm('Ouvrir cette vidéo YouTube dans un nouvel onglet ?\n\nID : ' + info.id)) {
+            e.preventDefault();
+          }
+        });
+        act.appendChild(ytBtn);
+        c.npYtBtn = ytBtn;
+
+        var infoBtn = document.createElement('button');
+        infoBtn.type = 'button';
+        infoBtn.className = 'np-info-btn';
+        infoBtn.textContent = '!';
+        infoBtn.setAttribute('aria-label', 'Afficher la description');
+        infoBtn.title = 'Afficher la description';
+        infoBtn.addEventListener('click', function () {
+          toggleDesc(c);
+        });
+        act.appendChild(infoBtn);
+        c.els.npInfoBtn = infoBtn;
+      } else {
+        c.npYtBtn = null;
+        c.els.npInfoBtn = null;
+      }
+    }
+    if (c.els.npMeta) c.els.npMeta.innerHTML = [info.uploader, info.modeLabel].filter(Boolean).join('<br>');
     if (c.els.npThumb) {
       if (info.thumbnailUrl) {
         c.els.npThumb.src = info.thumbnailUrl;
@@ -200,8 +289,88 @@
         c.els.npThumb.hidden = true;
       }
     }
-    if (c.els.npTitle) c.els.npTitle.textContent = info.title || '—';
-    if (c.els.npMeta) c.els.npMeta.innerHTML = [info.uploader, info.modeLabel].filter(Boolean).join('<br>');
+    // ---- Verification hook ----
+    // Log the title update for deck verification (visible in console)
+    console.log('[title-update] Deck', deck, '->', info.title);
+    // Store a timestamp to allow manual verification of per‑deck cycle
+    c._lastTitleUpdate = Date.now();
+  }
+
+  // Bascule le popup description ouvert/fermé, et charge la description
+  // une seule fois par morceau (cache sur c). Le texte va dans le corps
+  // (.np-desc-body) pour préserver l'en-tête avec le bouton "X".
+  function showDesc(c) {
+    var el = c.npDesc;
+    if (!el || el.classList.contains('np-desc-visible')) return;
+    var id = c._npDescId;
+    var body = c.npDescBody;
+    // Le popup est attaché au <body> (overlay global, z-index 1000) :
+    // il passe TOUJOURS au-dessus de l'analyser et de la platine.
+    // Positionne près du bouton "!" de la voie concernée.
+    var btn = c.els.npInfoBtn;
+    if (btn) {
+      var r = btn.getBoundingClientRect();
+      var vw = window.innerWidth;
+      var vh = window.innerHeight;
+      // Largeur connue via le CSS (min(420px, 100vw-16px)) : pas besoin
+      // de toggler display pour mesurer (le style inline display:none
+      // écraserait la classe .np-desc-visible et cacherait le popup).
+      var w = Math.min(420, vw - 16);
+      var left = Math.min(Math.max(8, r.right - w), vw - w - 8);
+      var top = r.bottom + 8;
+      if (top + 500 > vh - 8) top = Math.max(8, r.top - 500 - 8);
+      el.style.left = Math.round(left) + 'px';
+      el.style.top = Math.round(top) + 'px';
+    }
+    if (id && !c._npDescText && !c._npDescFailed) {
+      if (body) body.textContent = 'Description…';
+      el.classList.add('np-desc-visible');
+      fetch('/api/description/' + encodeURIComponent(id))
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+        .then(function (data) {
+          if (data && data.description) {
+            c._npDescText = data.description;
+            if (body) body.textContent = c._npDescText;
+          } else {
+            c._npDescFailed = true;
+            if (body) body.textContent = 'Description indisponible.';
+          }
+        })
+        .catch(function () {
+          c._npDescFailed = true;
+          if (body) body.textContent = 'Description indisponible.';
+        });
+    } else {
+      if (body) body.textContent = c._npDescText || 'Description indisponible.';
+      el.classList.add('np-desc-visible');
+    }
+    if (c.els.npInfoBtn) c.els.npInfoBtn.classList.add('is-active');
+  }
+
+  // Ferme le popup description s'il est ouvert.
+  function hideDesc(c) {
+    if (!c) return;
+    var el = c.npDesc;
+    if (el && el.classList.contains('np-desc-visible')) {
+      el.classList.remove('np-desc-visible');
+    }
+    if (c.els.npInfoBtn) c.els.npInfoBtn.classList.remove('is-active');
+  }
+
+  // Bascule la visibilité du popup description.
+  function toggleDesc(c) {
+    var el = c.npDesc;
+    if (!el) return;
+    if (el.classList.contains('np-desc-visible')) hideDesc(c);
+    else showDesc(c);
+  }
+
+  // Ferme tous les popups description (gestes globaux : Échap).
+  function closeAllDescPopups() {
+    ['A', 'B'].forEach(function (deck) {
+      var c = controllers[deck];
+      if (c) hideDesc(c);
+    });
   }
 
   // Met à jour la seek bar + les temps d'un deck (appelé par la loop).

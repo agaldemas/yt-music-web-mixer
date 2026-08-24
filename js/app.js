@@ -367,7 +367,7 @@
     }
     var videoId = state.videoIds[deck];
     var modeLabel = (state.resolvedMode === 'piped') ? 'DJ · DSP' : 'YT IFrame';
-    var info = { title: '', uploader: '', thumbnailUrl: '', modeLabel: modeLabel };
+    var info = { title: '', uploader: '', thumbnailUrl: '', modeLabel: modeLabel, id: videoId };
 
     if (state.playerType[deck] === 'piped') {
       var entry = PipedStreams && videoId ? PipedStreams.getCachedStream(videoId) : null;

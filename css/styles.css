@@ -113,41 +113,6 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 }
 .pfa-dismiss:hover { background: rgba(253, 230, 138, 0.12); }
 
-/* ===== Alerte fallback Piped → IFrame (dual mode) ===== */
-.piped-fallback-alert {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin: 0;
-  padding: 10px 20px;
-  background: #2a2410;
-  border-bottom: 1px solid #6b5b1f;
-  color: #fde68a;
-  font-size: 0.88rem;
-}
-.piped-fallback-alert[hidden] { display: none; }
-.pfa-text { flex: 1 1 auto; min-width: 220px; }
-.pfa-btn {
-  background: #2563eb;
-  color: #fff;
-  border: 1px solid #3b82f6;
-  border-radius: 6px;
-  padding: 6px 14px;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-.pfa-btn:hover { background: #1d4ed8; }
-.pfa-dismiss {
-  background: transparent;
-  color: #fde68a;
-  border: 0;
-  font-size: 1rem;
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-.pfa-dismiss:hover { background: rgba(253, 230, 138, 0.12); }
-
 /* ===== Modal (Paramètres) ===== */
 .modal {
   position: fixed;
@@ -524,7 +489,6 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 }
 .deck-results-toggle:hover { background: #272d3b; border-color: #3b82f6; }
 .deck-results.is-collapsed { display: none; }
-.deck-results-clear-legacy { display: none; }
 
 /* État non-resultats : 1 seule colonne centrée */
 .deck-results[data-state="loading"],
@@ -556,7 +520,6 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 .deck-dj,
 .deck-cue-loop,
 .deck-error { position: relative; z-index: 1; }
-.deck-local-row { flex: 0 0 auto; }
 .deck-scratch { z-index: 0; }
 
 /* Bouton de fermeture intégré à la barre de recherche : anciennes toolbars
@@ -653,13 +616,6 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   font-size: 0.72rem;
   color: #9ca3af;
   font-variant-numeric: tabular-nums;
-}
-.search-result-uploader {
-  font-size: 0.72rem;
-  color: #9ca3af;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .search-result-uploader {
   font-size: 0.72rem;
@@ -811,6 +767,7 @@ body.mode-piped #player-B {
 
 /* ===== Now-playing (métadonnées du morceau courant) ===== */
 .deck-nowplaying {
+  position: relative;   /* ancre le tooltip description */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -836,12 +793,93 @@ body.mode-piped #player-B {
   flex: 1 1 auto;
 }
 .np-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* bouton YouTube aligné à droite */
+  gap: 6px;
   font-size: 0.9rem;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
+.np-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.np-title .search-result-youtube-link {
+  flex: 0 0 auto;
+}
+.np-desc {
+  position: fixed;
+  z-index: 1000;
+  display: none;
+  width: min(420px, calc(100vw - 16px));
+  max-height: 500px;
+  background: #1a1f29;
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  flex-direction: column;
+  overflow: hidden;
+}
+.np-desc.np-desc-visible { display: flex; }
+.np-desc-head {
+  display: flex;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid #2e3444;
+  background: #14181f;
+}
+.np-desc-close {
+  background: none;
+  border: none;
+  color: #9aa0ac;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.np-desc-close:hover { color: #fff; background: rgba(255,255,255,0.08); }
+.np-desc-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px 12px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+  word-break: break-word;
+  overflow-y: auto;
+}
+/* Bouton info "!" : aligné à droite dans deck-nowplaying, sous le bouton YouTube */
+.np-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  flex: 0 0 auto;
+}
+.np-info-btn {
+  background: #1a1d25;
+  color: #d7d9de;
+  border: 1px solid #2a2e3a;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s, border-color .15s;
+}
+.np-info-btn:hover { background: #232733; border-color: #3b82f6; }
+.np-info-btn.is-active { background: #2563eb; border-color: #2563eb; color: #fff; }
 .np-meta {
   font-size: 0.75rem;
   color: #9aa0ac;
@@ -856,6 +894,7 @@ body.mode-piped #player-B {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  flex: 0 0 auto;
 }
 .deck-local-btn {
   background: #1a1d25;
@@ -1228,30 +1267,6 @@ body.mode-piped .deck-dj { display: flex; }
 }
 .deck-a .dj-bpm-value { color: #93c5fd; }
 .deck-b .dj-bpm-value { color: #f9a8d4; }
-/* BPM détecté (phase 9) : badge compact à droite des contrôles DJ */
-.dj-bpm {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  flex: 0 0 auto;
-  padding: 6px 8px;
-  margin-left: 4px;
-  background: #1a1f2b;
-  border: 1px solid #2a3243;
-  border-radius: 6px;
-  min-width: 52px;
-}
-.dj-bpm-value {
-  font-size: 0.95rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: #e5e7eb;
-  line-height: 1;
-}
-.deck-a .dj-bpm-value { color: #93c5fd; }
-.deck-b .dj-bpm-value { color: #f9a8d4; }
 /* États de détection (phase 9) :
  * - rouge (calcul en cours) tant que la mesure n'est pas verrouillée,
  * - bordure + valeur verte une fois 'locked' (valeur fiable).
@@ -1498,23 +1513,6 @@ body.mode-piped .deck-cue-loop { display: flex; }
 }
 
 /* Statut sync BPM (phase 9) : texte compact sous les boutons de sync */
-.mixer-sync-status {
-  font-size: 0.72rem;
-  color: #9aa0ac;
-  align-self: center;
-  margin-left: 6px;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mixer-btn.is-error { color: #fca5a5; border-color: #7f1d1d; }
-.mixer-btn.is-pulsing { animation: btn-pulse 0.5s ease-out; }
-@keyframes btn-pulse {
-  0% { transform: scale(1); }
-  40% { transform: scale(1.06); }
-  100% { transform: scale(1); }
-}
 
 /* ============================================================
  * Scratch / platine vinyle (phase 11) — mode Piped uniquement
