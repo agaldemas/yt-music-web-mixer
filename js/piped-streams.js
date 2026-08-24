@@ -464,7 +464,40 @@
       instance: instance,
       fetchedAt: fetchedAt,
       expiresAt: expiresAt,
+      // Métadonnées du popup (vues, date ISO, description) — servies par le
+      // backend local /api/streams (cache disque). Présentes → le popup les
+      // affiche SANS fetch /api/description (zéro requête). Si absentes,
+      // search.js retombe sur fetchDescription (fallback Piped).
+      views: Number(data.views) || 0,
+      uploadDate: String(data.uploadDate || ''),
+      uploadDateLabel: formatFrenchDate(data.uploadDate),
+      description: String(data.description || '').trim(),
     };
+  }
+
+  // Formate une date YouTube (YYYY-MM-DD, YYYYMMDD ou timestamp) en
+  // français : "18 avr. 2008". Renvoie '' si invalide. Identique au
+  // formateur de search.js (DRY : exporté du module pour réutilisation).
+  function formatFrenchDate(input) {
+    if (!input) return '';
+    let y = 0, m = 0, d = 0;
+    const s = String(input).trim();
+    let mm = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+    if (mm) { y = +mm[1]; m = +mm[2]; d = +mm[3]; }
+    else {
+      mm = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
+      if (mm) { y = +mm[1]; m = +mm[2]; d = +mm[3]; }
+      else {
+        const ts = Number(s);
+        if (isFinite(ts) && ts > 0 && ts < 1000000000000) {
+          const dt = new Date(ts * 1000);
+          y = dt.getUTCFullYear(); m = dt.getUTCMonth() + 1; d = dt.getUTCDate();
+        }
+      }
+    }
+    if (!y) return '';
+    const MONTHS_FR = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+    return d + ' ' + (MONTHS_FR[m - 1] || '') + ' ' + y;
   }
 
   // Helper public : retourne l'URL CORS-safe d'un flux audio donné, ou ''
@@ -543,6 +576,7 @@
     getCachedStream: getCachedStream,
     clearCache: clearCache,
     classifyError: classifyError,
+    formatFrenchDate: formatFrenchDate,
     // Constantes exportées pour les tests / debug
     FORMATS: { OPUS: 'opus', M4A: 'm4a', WEBMA: 'webma' },
   };

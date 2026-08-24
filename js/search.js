@@ -335,6 +335,16 @@
     // et rejette les valeurs aberrantes (ex. -1 → "il y a 56 ans").
     const dateStr = formatUploadedDate(video.uploaded) || (video.uploadedDate || '');
 
+    // Infos du popup servies par le CACHE (backend local /api/streams) :
+    // si l'entrée PipedStreams contient déjà vues / date-ISO / description,
+    // on les affiche SANS requête réseau supplémentaire (zéro fetch).
+    let cachedPopup = null;
+    try {
+      const entry = window.PipedStreams && window.PipedStreams.getCachedStream
+        ? window.PipedStreams.getCachedStream(video.id) : null;
+      if (entry) cachedPopup = entry;
+    } catch (_) { /* cache indisponible → comportement actuel */ }
+
     // Pas de doublon avec la carte (vignette/titre/uploader/durée) : on
     // n'affiche que les infos ABSENTES de la carte (vues, date, LIVE) +
     // la description complète YouTube (celle du "more" / "détails").
@@ -343,8 +353,21 @@
       liveBadge = '<span class="popup-live-badge">🔴 EN DIRECT</span>';
     }
 
+    // Vues : cache d'abord, sinon la valeur du résultat de recherche.
+    const viewsFinal = (cachedPopup && cachedPopup.views) ? cachedPopup.views : (video.views || 0);
+    const viewsStrFinal = viewsFinal ? formatViews(viewsFinal) : '';
+    // Date : cache d'abord (label français calculé), sinon la valeur du résultat.
+    const dateStrFinal = (cachedPopup && cachedPopup.uploadDateLabel)
+      ? cachedPopup.uploadDateLabel
+      : (dateStr || ((cachedPopup && cachedPopup.uploadDate) ? cachedPopup.uploadDate : ''));
+
     let desc = '';
-    if (descCache.has(video.id)) {
+    // 1) Description déjà dans l'entrée cache → affichage direct (zéro fetch).
+    if (cachedPopup && cachedPopup.description) {
+      desc = '<div class="popup-desc">' + escapeHtml(cachedPopup.description) + '</div>';
+      // On mémorise aussi dans descCache : showPopup ne relancera aucun fetch.
+      descCache.set(video.id, cachedPopup.description);
+    } else if (descCache.has(video.id)) {
       const cached = descCache.get(video.id);
       if (cached) desc = '<div class="popup-desc">' + escapeHtml(cached) + '</div>';
       // cache à '' → aucune description → pas de section
@@ -354,8 +377,8 @@
 
     el.innerHTML = ''
       + '<div class="popup-head">'
-      + (viewsStr ? '<span class="popup-views">' + escapeHtml(viewsStr) + '</span>' : '')
-      + (dateStr ? '<span class="popup-date">' + escapeHtml(dateStr) + '</span>' : '')
+      + (viewsStrFinal ? '<span class="popup-views">' + escapeHtml(viewsStrFinal) + '</span>' : '')
+      + (dateStrFinal ? '<span class="popup-date">' + escapeHtml(dateStrFinal) + '</span>' : '')
       + liveBadge
       + '</div>'
       + desc;
@@ -399,6 +422,18 @@
   // Renvoie '' si indisponible (le popup n'affiche alors aucune section).
   async function fetchDescription(videoId, signal) {
     if (descCache.has(videoId)) return descCache.get(videoId);
+
+    // 0) Cache d'entrée PipedStreams : si la description y est déjà (servie
+    //    par /api/streams — cache disque serveur), on la réutilise SANS
+    //    requête réseau.
+    try {
+      const entry = window.PipedStreams && window.PipedStreams.getCachedStream
+        ? window.PipedStreams.getCachedStream(videoId) : null;
+      if (entry && entry.description) {
+        descCache.set(videoId, entry.description);
+        return entry.description;
+      }
+    } catch (_) { /* cache indisponible → on continue */ }
 
     // 1) Backend local (same-origin, yt-dlp sur l'IP de l'utilisateur,
     //    fiable — pas de 500 errors comme Piped)
@@ -491,10 +526,11 @@
     window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     popupScrollCleanup = () => window.removeEventListener('scroll', onScroll, { capture: true });
 
-    // Description : cachée si déjà en cache, sinon fetch Piped (le popup
-    // peut changer de carte pendant le fetch → on vérifie l'id au retour).
-    // Timeout 3 s : si le fetch est long (yt-dlp ~11 s, Piped cascade ~20 s),
-    // on ne laisse pas le placeholder "Description…" visible indéfiniment.
+    // Description : affichée si déjà en cache (descCache OU entrée
+    // PipedStreams — populatePopup les a synchronisées), sinon fetch. Le
+    // popup peut changer de carte pendant le fetch → on vérifie l'id au
+    // retour. Timeout 3 s : si le fetch est long (yt-dlp ~11 s, Piped
+    // cascade ~20 s), on ne laisse pas le placeholder visible indéfiniment.
     if (!descCache.has(video.id)) {
       if (popupDescCtrl) { try { popupDescCtrl.abort(); } catch (_) {} }
       popupDescCtrl = new AbortController();

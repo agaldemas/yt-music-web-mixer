@@ -1,6 +1,6 @@
 /* server/server.js — Serveur local du mixer (Express)
  *
- * Sert le frontend en statique + 3 routes API pour le mode DJ.
+ * Sert le frontend en statique + 5 routes API pour le mode DJ.
  *
  * PRINCIPE : l'audio YouTube est téléchargé UNE FOIS par morceau via
  * `yt-dlp -x` (qui gère lui-même le contournement des verrous YouTube),
@@ -11,18 +11,29 @@
  *   GET /api/health       → { ffmpeg, cache:"disk" }. Pas de yt-dlp ici.
  *   GET /api/streams/:id  → métadonnées (titre, vignette, auteur) via
  *                           oEmbed YouTube. Rapide (~0,15 s). PAS de yt-dlp.
+ *                           + views/uploadDate/description (cache disque,
+ *                           best-effort) pour le popup.
+ *   GET /api/meta/:id     → métadonnées enrichies (vues, date ISO, durée,
+ *                           uploader, description). Cache disque : 1re
+ *                           génération oEmbed + yt-dlp --skip-download,
+ *                           ensuite lecture directe, zéro requête upstream.
  *   GET /api/audio/:id    → sert le MP3. 1er appel : yt-dlp -x + ffmpeg
  *                           (~10-15 s) puis cache disque. Suivants : direct.
+ *   GET /api/download/:id → comme /api/audio mais en téléchargement
+ *                           (Content-Disposition).
+ *   GET /api/description/:id → description seule (cache mémoire 24 h).
  *
- * yt-dlp n'est appelé QUE dans /api/audio (lazy). Le démarrage du serveur
- * ne l'attend pas → l'HTML s'affiche vite.
+ * yt-dlp n'est appelé QUE paresseusement (audio à la 1re demande,
+ * métadonnées enrichies à la 1re demande). Le démarrage du serveur ne
+ * l'attend pas → l'HTML s'affiche vite.
  *
  * Dépendances : express (npm), yt-dlp + ffmpeg (binaires système).
  *   yt-dlp ≥ nightly 2026.08.18 requis (la stable 2026.07.04 est cassée).
  *   Sans yt-dlp → l'app bascule sur Piped/IFrame.
  *   Sans ffmpeg → yt-dlp -x échoue → 502 sur /api/audio.
  *
- * Cache : ./cache/audio/<videoId>.mp3 (au .gitignore). Persistant.
+ * Cache : ./cache/audio/<videoId>.mp3 et ./cache/meta/<videoId>.json
+ * (au .gitignore). Persistant.
  */
 
 'use strict';
@@ -109,6 +120,161 @@ function fetchMeta(videoId) {
         e.code = 'notfound';
         reject(e);
       });
+  });
+}
+
+// ===== Métadonnées enrichies (vues, date ISO, description) — cache disque =====
+//
+// L'utilisateur veut éviter les requêtes répétées vers l'upstream (yt-dlp /
+// oEmbed / Piped) : chaque info est récupérée UNE fois, écrite sur disque
+// dans cache/meta/<videoId>.json, puis servie sans jamais retoucher le
+// réseau. C'est la source unique de vérité pour le popup (vues, date,
+// description) ET pour l'enrichissement du MP3.
+//
+// Contenu du JSON : { id, title, uploader, duration, thumbnailUrl, views,
+// uploadDate, description, fetchedAt }. Note : `views` sert au popup et à
+// /api/meta — il n'est PAS embarqué dans le MP3 (inutile dans un fichier
+// audio).
+//
+// TTL : 24 h succès, 30 min échec (négatif caché, comme descCache).
+const META_DIR = path.join(__dirname, '..', 'cache', 'meta');
+try { fs.mkdirSync(META_DIR, { recursive: true }); } catch (_) {}
+const META_OK_TTL_MS = 24 * 3600 * 1000;
+const META_ERR_TTL_MS = 30 * 60 * 1000;
+const META_TIMEOUT_MS = 25000;
+
+// Dédup en vol + sérialisation : un seul yt-dlp meta à la fois.
+const metaFetching = new Map();   // videoId → Promise
+let metaQueue = Promise.resolve(); // chaîne globale
+
+function metaPathFor(videoId) { return path.join(META_DIR, videoId + '.json'); }
+
+// Lit le cache disque. Renvoie l'objet ou null (absent/expiré).
+function readMetaCache(videoId) {
+  try {
+    const raw = fs.readFileSync(metaPathFor(videoId), 'utf8');
+    const entry = JSON.parse(raw);
+    if (!entry || typeof entry !== 'object') return null;
+    const ttl = (entry.ok === false) ? META_ERR_TTL_MS : META_OK_TTL_MS;
+    if (!entry.fetchedAt || (Date.now() - entry.fetchedAt) > ttl) return null;
+    if (entry.ok === false) return { error: true, message: entry.message || 'Métadonnées indisponibles.', code: entry.code || 'extract' };
+    return entry;
+  } catch (_) { return null; }
+}
+
+// Écrit le cache disque de façon atomique (tmp + rename).
+function writeMetaCache(videoId, entry) {
+  try {
+    const tmp = metaPathFor(videoId) + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(entry), 'utf8');
+    fs.renameSync(tmp, metaPathFor(videoId));
+  } catch (_) { /* non bloquant */ }
+}
+
+// Point d'entrée public : renvoie les métadonnées enrichies (cache disque
+// prioritaire, génération une fois sinon). Réutilise le pattern de
+// fetchVideoDescription (dédup + sérialisation).
+function fetchMetaEnriched(videoId) {
+  const cached = readMetaCache(videoId);
+  if (cached) {
+    if (cached.error) {
+      const e = new Error(cached.message);
+      e.code = cached.code || 'extract';
+      return Promise.reject(e);
+    }
+    return Promise.resolve(cached);
+  }
+  if (metaFetching.has(videoId)) return metaFetching.get(videoId);
+
+  const p = metaQueue.then(() => runMetaExtract(videoId));
+  metaQueue = p.catch(() => {});
+  metaFetching.set(videoId, p);
+  p.finally(() => metaFetching.delete(videoId)).catch(() => {});
+  return p;
+}
+
+// Un seul essai de génération : oEmbed (rapide) + yt-dlp --skip-download
+// pour views/uploadDate/description. NE télécharge PAS l'audio.
+function runMetaExtract(videoId) {
+  const result = {};
+  // 1) oEmbed : title / uploader / thumbnail (~0,15 s, sans clé).
+  return fetchMeta(videoId)
+    .then((meta) => {
+      result.title = meta.title;
+      result.uploader = meta.uploader;
+      result.thumbnailUrl = meta.thumbnailUrl;
+      return runMetaYtdlp(videoId);
+    })
+    .then((yt) => {
+      result.views = yt.views;
+      result.uploadDate = yt.uploadDate;
+      result.duration = yt.duration;
+      result.description = yt.description;
+      result.id = videoId;
+      result.fetchedAt = Date.now();
+      writeMetaCache(videoId, result);
+      return result;
+    })
+    .catch((err) => {
+      // Négatif caché 30 min.
+      writeMetaCache(videoId, {
+        ok: false, message: err.message || 'Métadonnées indisponibles.',
+        code: err.code || 'extract', fetchedAt: Date.now(),
+      });
+      throw err;
+    });
+}
+
+// yt-dlp --skip-download --print view_count|upload_date|duration|description.
+// Avec cookies navigateur, retry sans cookies si l'extraction des cookies
+// échoue (même logique qu'extractAudio). Résout { views, uploadDate,
+// duration, description } (valeurs par défaut si champ absent).
+function runMetaYtdlp(videoId) {
+  const attempt = (withCookies) => new Promise((resolve, reject) => {
+    const watchUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(videoId);
+    const args = [
+      '--skip-download',
+      '--no-warnings',
+      '--no-playlist',
+      '--no-cache-dir',
+      '--print', '%(view_count)s\u0001%(upload_date)s\u0001%(duration)s',
+      '--print', 'description',
+      watchUrl,
+    ];
+    if (withCookies && YTDLP_COOKIES_BROWSER && YTDLP_COOKIES_BROWSER !== 'none') {
+      args.splice(0, 0, '--cookies-from-browser', YTDLP_COOKIES_BROWSER);
+    }
+    const opts = { maxBuffer: 2 * 1024 * 1024, timeout: META_TIMEOUT_MS };
+    execFile(YTDLP_BIN, args, opts, (err, stdout) => {
+      const out = String(stdout || '');
+      if (err && RE_ANTIBOT.test(err.message + '\n' + out)) {
+        const e = new Error('YouTube exige une vérification anti-bot.');
+        e.code = 'antibot';
+        return reject(e);
+      }
+      if (err) {
+        // Erreur d'extraction des cookies → on retente sans cookies.
+        if (RE_COOKIES_ERR.test(err.message || '')) return reject({ retryWithoutCookies: true });
+        const e = new Error('yt-dlp métadonnées a échoué.');
+        e.code = 'extract';
+        return reject(e);
+      }
+      const lines = out.split('\n').map((s) => s.trim());
+      // 1re ligne : view_count \x01 upload_date \x01 duration
+      const head = (lines.shift() || '').split('\u0001');
+      const views = (/^\d+$/.test(head[0] || '')) ? Number(head[0]) : 0;
+      const uploadDate = /^\d{8}$/.test(head[1] || '')
+        ? head[1].slice(0, 4) + '-' + head[1].slice(4, 6) + '-' + head[1].slice(6, 8)
+        : '';
+      const duration = (/^\d+$/.test(head[2] || '')) ? Number(head[2]) : 0;
+      const description = lines.join('\n').trim();
+      resolve({ views, uploadDate, duration, description });
+    });
+  });
+
+  return attempt(true).catch((err) => {
+    if (err && err.retryWithoutCookies) return attempt(false);
+    throw err;
   });
 }
 
@@ -199,8 +365,18 @@ function runDescExtract(videoId) {
 // retry SANS cookies si l'extraction des cookies elle-même échoue.
 function extractAudio(videoId) {
   if (hasCached(videoId)) {
+    // MP3 déjà en cache (extrait une seule fois). On l'enrichit en arrière-
+    // plan s'il ne porte pas encore notre commentaire JSON (id/durée/date) :
+    // c'est ce qui évite toute requête upstream répétée à l'avenir, et le
+    // fichier servi/ téléchargé contient les infos du popup.
+    const file = cachePathFor(videoId);
+    if (extOf(file) === 'mp3' && !hasMetaStamp(file)) {
+      // Non bloquant : le serveur répond avec le fichier actuel ; la
+      // réécriture (binaire, ré-encodage zéro) se termine en tâche de fond.
+      embedPopupMeta(file, videoId);
+    }
     console.log('[extract] ♻ cache disque pour ' + videoId + ' (' + cachePathFor(videoId) + ')');
-    return Promise.resolve(cachePathFor(videoId));
+    return Promise.resolve(file);
   }
 
   let pending = extracting.get(videoId);
@@ -365,8 +541,153 @@ function embedThumbnail(mp3Path, videoId) {
 
 // Après extraction réussie : embarque la pochette si MP3, puis résout.
 function settleExtracted(videoId, file, resolve) {
-  const embed = (extOf(file) === 'mp3') ? embedThumbnail(file, videoId) : Promise.resolve();
-  embed.then(() => resolve(file));
+  if (extOf(file) !== 'mp3') { resolve(file); return; }
+  embedThumbnail(file, videoId).then(() => embedPopupMeta(file, videoId).then(() => resolve(file)));
+}
+
+// ===== Enrichissement du MP3 : commentaire JSON (id/title/uploader/duration/uploadDate) =====
+//
+// L'utilisateur veut les infos du popup DANS le fichier MP3, dans la limite
+// de ~3 ko. Les champs ID3 natifs (title/artist/date/description) sont déjà
+// écrits par yt-dlp --embed-metadata, et la pochette YouTube est embarquée
+// en APIC par embedThumbnail (AVANT cette étape). On ajoute ici UN
+// commentaire JSON compact avec ce qui n'a pas de frame ID3 standard : id
+// vidéo, uploader, durée, date de publication ISO. Le nombre de vues n'est
+// PAS embarqué (inutile dans un fichier audio).
+//
+// ⚠ POCHETTE (APIC) : elle est CONSERVÉE telle quelle. On ne fait PAS
+// repasser le fichier par ffmpeg pour tagger (ffmpeg -map 0:a droperait la
+// frame APIC) : on réécrit le tag ID3 en binaire (parseId3v2 +
+// setCommentJson) en ne supprimant que les anciens commentaires COMM, sans
+// jamais toucher aux autres frames ni à l'audio (ré-encodage zéro).
+//
+// Pipelines d'appel :
+//   - /api/audio/:id  → extractAudio (mp3 déjà taggé par yt-dlp) → serve.
+//   - /api/meta/:id   → fetchMetaEnriched (cache disque) → embedPopupMeta.
+//   - mp3 déjà en cache mais sans commentaire JSON → enrichi au 1er /api/audio
+//     (embedPopupMeta est idempotent : hasMetaStamp → skip).
+function embedPopupMeta(mp3Path, videoId) {
+  return new Promise((resolve) => {
+    if (hasMetaStamp(mp3Path)) { resolve(); return; } // déjà enrichi, skip
+    fetchMetaEnriched(videoId)
+      .then((meta) => {
+        let payload = JSON.stringify({
+          id: videoId,
+          title: String(meta.title || '').slice(0, 500),
+          uploader: String(meta.uploader || '').slice(0, 500),
+          duration: Number(meta.duration) || 0,
+          uploadDate: meta.uploadDate || '',
+        });
+        // Garde-fou : le commentaire ID3 doit rester ≤ ~3 ko.
+        if (Buffer.byteLength(payload, 'utf8') > 3072) payload = payload.slice(0, 3072);
+        return 'YTWM:' + payload; // préfixe détectable (stamp) : description COMM = YTWM
+      })
+      .then((stamped) => setCommentJson(mp3Path, stamped))
+      .catch((err) => {
+        console.warn('[server] Métadonnées popup non embarquées (' + videoId + ') :', err.message || err);
+        try { fs.unlinkSync(mp3Path + '.meta.mp3'); } catch (_) {}
+      })
+      .finally(() => resolve());
+  });
+}
+
+// Parse le tag ID3v2 d'un buffer (début du fichier). Renvoie
+// { version, tagEnd, frames:[{ id, offset, bodySize, body }] } où `offset`
+// pointe sur l'en-tête complet de la frame (10 octets) ; ou null si pas
+// d'ID3v2. Ne modifie pas le buffer. Tailles gérées : plain 32-bit (v2.3)
+// et synchsafe (v2.4, détecté par bit haut).
+function parseId3v2(b) {
+  if (!b || b.length < 12 || b.toString('latin1', 0, 3) !== 'ID3') return null;
+  const version = b[3];
+  let sz = (b[6] & 0x7f) * 0x200000 + (b[7] & 0x7f) * 0x4000 + (b[8] & 0x7f) * 0x80 + (b[9] & 0x7f);
+  const tagEnd = Math.min(10 + sz, b.length);
+  const frames = [];
+  let off = 10;
+  while (off + 10 <= tagEnd) {
+    const id = b.toString('latin1', off, off + 4);
+    if (!/^[A-Z0-9]{4}$/.test(id)) break;
+    let fs2 = b.readUInt32BE(off + 4);
+    if (fs2 & 0x80000000) {
+      fs2 = (b[off + 4] & 0x7f) * 0x200000 + (b[off + 5] & 0x7f) * 0x4000 + (b[off + 6] & 0x7f) * 0x80 + (b[off + 7] & 0x7f);
+    }
+    const bodySize = Math.min(fs2, Math.max(0, tagEnd - off - 10));
+    frames.push({ id: id, offset: off, bodySize: bodySize, body: b.slice(off + 10, off + 10 + bodySize) });
+    off += 10 + bodySize;
+  }
+  return { version: version, tagEnd: tagEnd, frames: frames };
+}
+
+// Vrai si le MP3 contient déjà notre commentaire (marqueur YTWM:).
+function hasMetaStamp(mp3Path) {
+  try {
+    const parsed = parseId3v2(fs.readFileSync(mp3Path));
+    if (!parsed) return false;
+    return parsed.frames.some(function (f) {
+      return (f.id === 'COMM' || f.id === 'TXXX') && f.body.includes('YTWM:');
+    });
+  } catch (_) { return false; }
+}
+
+// Réécrit le tag ID3v2 du MP3 : supprime les anciens commentaires COMM (et
+// les TXXX portant notre marqueur YTWM:), ajoute UNE frame COMM avec le
+// texte fourni (encodage UTF-8, langue 'eng', description courte 'YTWM').
+// Toutes les AUTRES frames — y compris APIC (pochette) — sont conservées
+// octet pour octet, et l'audio n'est jamais ré-encodé. Idempotent par
+// construction (le marqueur YTWM: est retiré avant d'être re-ajouté).
+function setCommentJson(mp3Path, stampedText) {
+  return new Promise((resolve, reject) => {
+    try {
+      const b = fs.readFileSync(mp3Path);
+      let frames = [];
+      let audioStart = 0;
+      let version = 3;
+      const parsed = parseId3v2(b);
+      if (parsed) {
+        version = parsed.version;
+        audioStart = parsed.tagEnd;
+        frames = parsed.frames
+          .filter(function (f) {
+            return !(f.id === 'COMM' || (f.id === 'TXXX' && f.body.includes('YTWM:')));
+          })
+          .map(function (f) { return b.slice(f.offset, f.offset + 10 + f.bodySize); });
+      }
+      // Nouvelle frame COMM : [encoding=UTF-8(3)][lang 'eng'][desc 'YTWM' terminée 00][texte]
+      const text = Buffer.from(String(stampedText || ''), 'utf8');
+      const desc = Buffer.from('YTWM', 'latin1');
+      const body = Buffer.alloc(1 + 3 + desc.length + 1 + text.length);
+      body[0] = 3;
+      body.write('eng', 1, 'latin1');
+      desc.copy(body, 4);
+      body[4 + desc.length] = 0;
+      text.copy(body, 5 + desc.length);
+      const sizeBytes = Buffer.alloc(4);
+      if (version >= 4) {
+        sizeBytes[0] = (body.length >> 21) & 0x7f;
+        sizeBytes[1] = (body.length >> 14) & 0x7f;
+        sizeBytes[2] = (body.length >> 7) & 0x7f;
+        sizeBytes[3] = body.length & 0x7f;
+      } else {
+        sizeBytes.writeUInt32BE(body.length);
+      }
+      const comm = Buffer.concat([Buffer.from('COMM', 'latin1'), sizeBytes, Buffer.from([0, 0]), body]);
+      frames.push(comm);
+      // Header ID3v2 (même version que l'entrée, taille synchsafe).
+      let bodyLen = 0;
+      for (let i = 0; i < frames.length; i++) bodyLen += frames[i].length;
+      const header = Buffer.alloc(10);
+      header.write('ID3', 0, 'latin1');
+      header[3] = version; header[4] = 0; header[5] = 0;
+      header[6] = (bodyLen >> 21) & 0x7f;
+      header[7] = (bodyLen >> 14) & 0x7f;
+      header[8] = (bodyLen >> 7) & 0x7f;
+      header[9] = bodyLen & 0x7f;
+      const out = Buffer.concat([header].concat(frames, [b.slice(audioStart)]));
+      const tmp = mp3Path + '.meta.mp3';
+      fs.writeFileSync(tmp, out);
+      fs.renameSync(tmp, mp3Path);
+      resolve();
+    } catch (err) { reject(err); }
+  });
 }
 
 // Content-Type selon l'extension réelle du fichier servi.
@@ -447,12 +768,24 @@ app.get('/api/streams/:id', async (req, res) => {
 
   try {
     const meta = await fetchMeta(id);
+
+    // Métadonnées enrichies (best-effort, jamais bloquant) : vues, date ISO,
+    // description. Servies au frontend pour le popup — le client n'a plus à
+    // refaire /api/description quand l'entrée cache les contient.
+    let enriched = {};
+    try {
+      enriched = await fetchMetaEnriched(id);
+    } catch (_) { /* cache disque absent/échec → on sert juste oEmbed */ }
+
     res.json({
       title: meta.title,
       duration: meta.duration,
       thumbnailUrl: meta.thumbnailUrl,
       uploader: meta.uploader,
       proxyUrl: '',
+      views: enriched.views || 0,
+      uploadDate: enriched.uploadDate || '',
+      description: enriched.description || '',
       audioStreams: [
         { url: '/api/audio/' + id, format: 'MP3', bitrate: 96, mimeType: 'audio/mpeg', videoOnly: false },
       ],
@@ -484,6 +817,28 @@ app.get('/api/description/:id', async (req, res) => {
     const code = err.code === 'antibot' ? 451 : 502;
     if (!res.headersSent) {
       res.status(code).json({ error: err.message || 'Description indisponible.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
+    }
+  }
+});
+
+// --- GET /api/meta/:id ---
+// Métadonnées enrichies (vues, date ISO, durée, uploader, description) —
+// source unique de vérité, cache disque : 1re génération via oEmbed +
+// yt-dlp --skip-download (léger, ~2-10 s), ensuite lecture disque directe,
+// ZÉRO requête upstream. TTL 24 h. Utilisée par le popup et par
+// l'enrichissement du MP3 (embedPopupMeta).
+app.get('/api/meta/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!RE_VIDEOID.test(id)) return res.status(400).json({ error: 'videoId invalide.' });
+
+  try {
+    const meta = await fetchMetaEnriched(id);
+    res.json(meta);
+  } catch (err) {
+    const code = err.code === 'notfound' ? 404 : (err.code === 'antibot' ? 451 : 502);
+    console.error('[api] ✗ /api/meta/' + id + ' → HTTP ' + code + ' (' + (err.code || 'extract') + ') : ' + err.message);
+    if (!res.headersSent) {
+      res.status(code).json({ error: err.message || 'Métadonnées indisponibles.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
     }
   }
 });
