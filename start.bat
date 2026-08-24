@@ -31,8 +31,40 @@ if errorlevel 1 (
   echo   ^(L'app basculera sur Piped/IFrame en attendant.^)
 )
 
-REM 3) Ouvre le navigateur, puis demarre le serveur (bloquant).
-start "" "%URL%"
+REM 3) Gère l'ouverture du navigateur selon le paramètre --open-app et par défaut.
+set auto_open=%1
+if "%auto_open%"=="" ( set auto_open=prompt )           REM Pas de paramètre : demander par défaut
+
+REM Normalise pour accepter yes/yes/no/Y/N/etc.
+sset "normalized_auto_open=%auto_open: = %"
+set "normalized_auto_open_lower=%auto_open:lower=/%
+if /i "%normalized_auto_open_lower%"=="yes" (
+  set auto_open=yes
+) else if /i "%normalized_auto_open_lower%"=="y" (
+  set auto_open=yes
+) else if /i "%normalized_auto_open_lower%"=="no" (
+  set auto_open=no
+) else if /i "%normalized_auto_open_lower%"=="n" (
+  set auto_open=no
+) else (
+  set auto_open=prompt
+)
+
+if "%auto_open%"=="yes" (
+  REM Ouverture automatique demandée
+  start "" "%URL%"
+) else if "%auto_open%"=="no" (
+  REM Ouverture automatique désactivée
+  echo Le serveur est demarré sur %URL%. Ouvrez-le manuellement.
+) else (
+  REM Prompt demandé a l'utilisateur
+  set /p confirm="Voulez-vous ouvrir l'application dans le navigateur ? (y/n): "
+  if /i "%confirm%"=="yes" (
+    start "" "%URL%"
+  ) else if /i "%confirm%"=="y" (
+    start "" "%URL%"
+  )
+)
 
 set PORT=%PORT%
 node server/server.js

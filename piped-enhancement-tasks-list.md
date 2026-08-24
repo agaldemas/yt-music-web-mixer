@@ -994,6 +994,46 @@ Règles pour l'alignement vertical et espacement :
 - [ ] 2 flux audio simultanés + 2 canvas waveform à 60fps → vérifier le CPU/latence
 - [ ] Si saccades → réduire `fftSize` à 1024, limiter le FPS à 30, ou dessiner le waveform à une fréquence inférieure au spectre
 
+### 17.6 Popups d'information au survol des résultats de recherche [ ]
+
+**Objectif** : afficher une info-bulle (tooltip) riche au survol (hover) de chaque élément des résultats de recherche, pour donner à l'utilisateur plus de contexte sur un morceau **avant** de le charger dans un deck. Complète la section 17 (repli/déploiement) et le rendu existant des résultats.
+
+**Rendu actuel (rappel)** : chaque résultat est un `<button class="search-result">` construit dans `buildResultEl` (`js/search.js:136`), contenant `.search-result-thumb` (vignette) + `.search-result-info` (titre `.search-result-title`, uploader `.search-result-uploader`, durée `.search-result-duration`).
+
+**Données disponibles pour le popup :**
+- Déjà présentes dans `video` : `title`, `uploaderName`, `duration` (format `mm:ss`), `thumbnails` (`medium`/`high`).
+- À **ajouter à la normalisation** (`callPipedInstance`, `js/search.js:321`) car Piped les renvoie mais elles sont actuellement ignorées :
+  - `views` (nombre de vues) → formater en `1,2 M vues` (`formatViews()`)
+  - `uploaded` (timestamp) ou `uploadedDate` (texte) → « il y a X mois / le JJ/MM/AAAA »
+  - `uploaderAvatar` (avatar de la chaîne) → affiché dans le popup à côté du nom
+- API YouTube (clé Google) : `channelTitle`, `publishedAt` (ISO) — mêmes champs à normaliser côté `callSearchApi` si l'on veut un popup homogène entre les deux sources.
+- **Enrichissement possible (optionnel)** : interroger `/api/streams/{id}` (oEmbed local, ~0.15 s, déjà en cache) au survol pour obtenir `uploader` + thumbnail haute qualité. ⚠️ Ne PAS faire un fetch par résultat au rendu (N+1) — seulement au survol, avec debounce ~300 ms, et un seul fetch en vol (annulé si le pointeur quitte avant la réponse).
+
+**Implémentation — `js/search.js` + `css/styles.css` :**
+- [ ] **Structure** : dans `buildResultEl`, ajouter un conteneur `.search-result-popup` en fin de `html` (ou `aria-describedby` pointant vers lui). Contenu : grande vignette (optionnelle), titre complet (tronqué dans la carte), uploader + avatar, durée, vues, date d'upload.
+- [ ] **Positionnement** : popup en `position: absolute` par rapport au résultat (`position: relative` sur `.search-result`), apparu via `pointerenter`/`pointerleave` + `focusin`/`focusout` (pas de `hover` CSS seul, pour l'accessibilité clavier et le tactile). Classe `.is-visible` pour la transition (opacity/transform, ~120 ms).
+- [ ] **Anti-débordement** : si le résultat est dans la moitié droite de la grille → popup aligné à gauche du résultat (`right: 100%`), sinon à droite (`left: 100%`). Si le deck est près du bord haut de l'écran → basculer au-dessus en dessous. Testé aux 4 coins de la grille.
+- [ ] **Z-index & chevauchement** : `z-index` supérieur aux cartes voisines (la grille `.deck-results` doit laisser déborder les popups : pas de `overflow: hidden` sur le conteneur, sinon le popup est tronqué).
+- [ ] **Accessibilité** : contenu du popup lisible au clavier (`focus` sur la carte → popup visible), `aria-label` enrichi sur le bouton (titre + uploader + durée + vues) pour les lecteurs d'écran, `role="tooltip"` + `aria-describedby` sur le bouton. Le popup ne doit pas piéger le focus ni être interactif (info seule).
+- [ ] **Tactile / responsif** : sur mobile (< 720 px) ou écran tactile, pas de hover → le popup est ignoré (l'info reste accessible via le `aria-label`) ; ne pas bloquer le tap sur la carte (le popup doit avoir `pointer-events: none`).
+- [ ] **Perf** : un seul popup DOM partagé par panneau (réutilisé et repositionné au survol) plutôt qu'un popup par carte (évite N éléments + réécriture du DOM). Le contenu est rempli à la demande (`populatePopup(video)`), pas pré-généré.
+- [ ] **Nettoyage** : popup masqué + fetch annulé quand la grille est vidée (nouvelle recherche, `✕`, repli 17), et à la pagination ‹ ›.
+
+**Écueils & contraintes (À LIRE) :**
+- ⚠️ **Ne pas utiliser `title=""` natif** : trop lent à apparaître (~1 s), non stylable, illisible sur fond sombre. Le popup est un élément DOM stylé.
+- ⚠️ **Ne pas générer le popup dans le HTML de chaque carte** : 10 résultats × popup = DOM lourd + rendu plus lent (`renderPanel`). Popup unique partagé = KISS.
+- ⚠️ **Pas de fetch par résultat au rendu** : N+1 vers oEmbed = lenteur. Au survol uniquement, avec debounce + annulation.
+- ⚠️ **`overflow` du conteneur résultats** : un `overflow: hidden` (utilisé ailleurs pour le repli) coupe les popups qui dépassent — vérifier que `.deck-results.is-collapsed` reste le seul cas avec `overflow`.
+- ⚠️ **Pagination ‹ ›** : les cartes sont reconstruites à chaque page → le popup partagé doit être réinitialisé (sinon il affiche les infos de la carte précédente).
+
+**Tests :**
+- [ ] Hover sur une carte → popup avec titre complet, uploader, durée, vues, date (données Piped réelles)
+- [ ] Hover au bord droit/gauche de la grille → popup ne sort pas de l'écran (anti-débordement)
+- [ ] Navigation clavier (Tab + focus) → popup visible sur focus, masqué au blur
+- [ ] Mobile/tactile → pas de popup, tap sur la carte fonctionne normalement (chargement du morceau)
+- [ ] Pagination ‹ › → popup réinitialisé, pas d'info fantôme de la page précédente
+- [ ] Grille vidée (nouvelle recherche / ✕) → aucun popup résiduel dans le DOM
+
 ---
 
 ## 18. Auto crossfade [x]
@@ -1060,6 +1100,7 @@ Règles pour l'alignement vertical et espacement :
 | 19 | 18 | Auto crossfade | 🟢 Faible (config + UI checkbox) | ✅ |
 | 20 | 19 | Documentation | 🟢 Faible | ✅ |
 | 21 | 17 | Repli/déploiement résultats recherche | 🟢 Faible (JS) | ✅ |
+| 22 | 17.6 | Popups info hover résultats recherche | 🟢 Faible (HTML/CSS/JS) | ⬜ |
 
 ---
 

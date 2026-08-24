@@ -53,6 +53,18 @@ const FFMPEG_TIMEOUT_MS = 60000;
 const RE_ANTIBOT = /sign in to confirm|not a bot|botguard|po[-_]?token/i;
 const RE_VIDEOID = /^[a-zA-Z0-9_-]{6,15}$/;
 
+// Cookies navigateur : certaines vidéos YouTube exigent une session
+// (playability LOGIN_REQUIRED) même avec le client VISIONOS de la nightly.
+// yt-dlp lit les cookies du navigateur indiqué. Défaut : chrome (celui de
+// l'utilisateur). Désactiver : YTDLP_COOKIES_BROWSER=none.
+//   ex : YTDLP_COOKIES_BROWSER=safari  (ou firefox, edge, brave…)
+const YTDLP_COOKIES_BROWSER = process.env.YTDLP_COOKIES_BROWSER || 'chrome';
+
+// Échec d'extraction des cookies NAVIGATEUR (Chrome fermé, trousseau bloqué,
+// base verrouillée…) — distinct de l'anti-bot vidéo. Dans ce cas on retente
+// l'extraction SANS --cookies-from-browser (certaines vidéos passent quand même).
+const RE_COOKIES_ERR = /unable to (extract|retrieve|read).*cookie|could not find.*cookie|failed to decrypt|keyring|keychain|trousseau|not found in (chrome|safari|firefox|edge|brave|opera|arc)/i;
+
 let ffmpegAvailable = null;
 
 // Chemin du MP3 en cache pour un videoId.
@@ -103,76 +115,197 @@ function fetchMeta(videoId) {
 // Dédup : évite 2 `yt-dlp -x` pour le même videoId (double-clic, decks A+B).
 const extracting = new Map();
 
+// Cache mémoire des descriptions (videoId → { desc, ok, fetchedAt }).
+// - ok=true : description valide, TTL 24 h
+// - ok=false : échec récent (vidéo indisponible/anti-bot) → on NE relance
+//   PAS yt-dlp pendant 30 min (évite de saturer le serveur au survol).
+const descCache = new Map();
+const DESC_OK_TTL_MS = 24 * 3600 * 1000;     // 24 h
+const DESC_ERR_TTL_MS = 30 * 60 * 1000;      // 30 min pour un échec
+const DESC_TIMEOUT_MS = 25000;               // yt-dlp description, max 25 s
+
+// Dédup en vol + sérialisation : un seul yt-dlp description à la fois.
+const descFetching = new Map();   // videoId → Promise (dédup par vidéo)
+let descQueue = Promise.resolve(); // chaîne globale → pas de rafale parallèle
+
+function fetchVideoDescription(videoId) {
+  const cached = descCache.get(videoId);
+  if (cached) {
+    const ttl = cached.ok ? DESC_OK_TTL_MS : DESC_ERR_TTL_MS;
+    if ((Date.now() - cached.fetchedAt) < ttl) {
+      if (!cached.ok) {
+        // Échec récent : renvoie l'erreur immédiatement, sans relancer yt-dlp.
+        const e = new Error(cached.message || 'Description indisponible.');
+        e.code = cached.code || 'extract';
+        return Promise.reject(e);
+      }
+      return Promise.resolve(cached.desc);
+    }
+  }
+  // Dédup : la même vidéo en cours d'extraction partage la promesse.
+  if (descFetching.has(videoId)) return descFetching.get(videoId);
+
+  // Sérialisation : attend la fin de l'extraction précédente.
+  const p = descQueue.then(() => runDescExtract(videoId));
+  descQueue = p.catch(() => {}); // une erreur ne casse pas la chaîne
+  descFetching.set(videoId, p);
+  // ⚠ consommer la promesse dérivée (unhandledRejection sinon)
+  p.finally(() => descFetching.delete(videoId)).catch(() => {});
+  return p;
+}
+
+// Un seul essai yt-dlp --skip-download --print description.
+function runDescExtract(videoId) {
+  return new Promise((resolve, reject) => {
+    const watchUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(videoId);
+    const args = [
+      '--skip-download',
+      '--no-warnings',
+      '--no-playlist',
+      '--no-cache-dir',
+      '--print', 'description',
+      watchUrl,
+    ];
+    if (YTDLP_COOKIES_BROWSER && YTDLP_COOKIES_BROWSER !== 'none') {
+      args.splice(0, 0, '--cookies-from-browser', YTDLP_COOKIES_BROWSER);
+    }
+    const opts = { maxBuffer: 2 * 1024 * 1024, timeout: DESC_TIMEOUT_MS };
+
+    execFile(YTDLP_BIN, args, opts, (err, stdout, stderr) => {
+      const combined = String(stderr || '') + '\n' + String(stdout || '');
+      if (RE_ANTIBOT.test(combined)) {
+        const e = new Error('YouTube exige une vérification anti-bot.');
+        e.code = 'antibot';
+        descCache.set(videoId, { ok: false, message: e.message, code: 'antibot', fetchedAt: Date.now() });
+        return reject(e);
+      }
+      if (err) {
+        const e = new Error('yt-dlp description a échoué.');
+        e.code = 'extract';
+        descCache.set(videoId, { ok: false, message: e.message, code: 'extract', fetchedAt: Date.now() });
+        return reject(e);
+      }
+      const desc = String(stdout || '').trim();
+      descCache.set(videoId, { desc: desc, ok: !!desc, message: desc ? '' : 'Aucune description.', code: 'extract', fetchedAt: Date.now() });
+      resolve(desc);
+    });
+  });
+}
+
 // Télécharge + extrait l'audio d'une vidéo vers cache/audio/<id>.mp3.
 // C'est le SEUL appel yt-dlp du serveur. yt-dlp -x gère lui-même le
 // téléchargement complet et l'extraction ffmpeg. Renvoie le chemin du MP3.
+// Stratégie : 1er essai AVEC cookies navigateur (contourne LOGIN_REQUIRED),
+// retry SANS cookies si l'extraction des cookies elle-même échoue.
 function extractAudio(videoId) {
-  if (hasCached(videoId)) return Promise.resolve(cachePathFor(videoId));
+  if (hasCached(videoId)) {
+    console.log('[extract] ♻ cache disque pour ' + videoId + ' (' + cachePathFor(videoId) + ')');
+    return Promise.resolve(cachePathFor(videoId));
+  }
 
   let pending = extracting.get(videoId);
   if (!pending) {
-    pending = new Promise((resolve, reject) => {
-      const watchUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(videoId);
-      const outTmpl = path.join(CACHE_DIR, videoId + '.%(ext)s');
-      const args = [
-        '-x',                       // extract audio (téléchargement + ffmpeg)
-        '--audio-format', 'mp3',    // MP3 lisible par <audio> partout
-        '--audio-quality', '5',     // ~64-96 kbps, ~5 Mo / 4 min
-        '--embed-metadata',         // tags ID3 (title, artist, album, date, genre…) dans le MP3
-        '--no-warnings',
-        '--no-playlist',
-        '--no-cache-dir',
-        '-o', outTmpl,
-        watchUrl,
-      ];
-      const opts = { maxBuffer: 8 * 1024 * 1024, timeout: YTDLP_BIN_TIMEOUT_MS };
-
-      execFile(YTDLP_BIN, args, opts, (err, stdout, stderr) => {
-        const combined = String(stderr || '') + '\n' + String(stdout || '');
-        if (RE_ANTIBOT.test(combined)) {
-          const e = new Error('YouTube exige une vérification anti-bot.');
-          e.code = 'antibot';
-          return reject(e);
-        }
-        if (err) {
-          if (/private video|video unavailable|not exist|been removed|not available in your country/i.test(combined)) {
-            const e = new Error('Vidéo indisponible.');
-            e.code = 'notfound';
-            return reject(e);
-          }
-          if (/ffmpeg|avconv/i.test(combined) && ffmpegAvailable === false) {
-            const e = new Error('ffmpeg est requis pour l\'extraction audio mais n\'est pas trouvé.');
-            e.code = 'no-ffmpeg';
-            return reject(e);
-          }
-          const e = new Error('yt-dlp -x a échoué : ' + (err.message || combined.slice(0, 200)));
-          e.code = 'extract';
-          return reject(e);
-        }
-        // yt-dlp écrit <id>.mp3. Si absent, cherche un autre format
-        // (m4a/opus) qu'il aurait pu produire — le <audio> les lit aussi.
-        if (!hasCached(videoId)) {
-          const re = new RegExp('^' + videoId + '\\.(mp3|m4a|opus|webm|aac)$');
-          let found = null;
-          try {
-            for (const f of fs.readdirSync(CACHE_DIR)) {
-              if (re.test(f)) { found = path.join(CACHE_DIR, f); break; }
-            }
-          } catch (_) {}
-          if (!found) {
-            const e = new Error('yt-dlp a terminé mais aucun fichier audio trouvé dans le cache.');
-            e.code = 'extract';
-            return reject(e);
-          }
-          return settleExtracted(videoId, found, resolve);
-        }
-        settleExtracted(videoId, cachePathFor(videoId), resolve);
-      });
+    console.log('[extract] ▶ début extraction ' + videoId);
+    pending = runExtract(videoId, true).catch((err) => {
+      if (RE_COOKIES_ERR.test(err.message || '')) {
+        console.warn('[extract] ↻ cookies navigateur indisponibles (' + err.message + ') → retry sans cookies');
+        return runExtract(videoId, false);
+      }
+      throw err;
     });
-    pending.finally(() => extracting.delete(videoId));
+    // ⚠ La promesse dérivée de finally() doit avoir SON propre gestionnaire
+    // de rejet : quand extractAudio rejette (ex. anti-bot), cette copie
+    // dérivée rejette AUSSI sans être consommée → unhandledRejection →
+    // Node (≥ 15) tue le processus, alors que les handlers /api/audio
+    // avaient pourtant catché l'erreur. Le .catch() consomme la copie sans
+    // changer `pending` (l'erreur reste propagée aux handlers API).
+    pending.finally(() => extracting.delete(videoId)).catch(() => {});
     extracting.set(videoId, pending);
   }
   return pending;
+}
+
+// Un seul essai yt-dlp -x (avec ou sans cookies). Logs détaillés pour
+// chaque issue. Résout avec le chemin du fichier extrait.
+function runExtract(videoId, withCookies) {
+  return new Promise((resolve, reject) => {
+    const watchUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(videoId);
+    const outTmpl = path.join(CACHE_DIR, videoId + '.%(ext)s');
+    const args = [
+      '-x',                       // extract audio (téléchargement + ffmpeg)
+      '--audio-format', 'mp3',    // MP3 lisible par <audio> partout
+      '--audio-quality', '5',     // ~64-96 kbps, ~5 Mo / 4 min
+      '--embed-metadata',         // tags ID3 (title, artist, album, date, genre…) dans le MP3
+      '--no-warnings',
+      '--no-playlist',
+      '--no-cache-dir',
+      '-o', outTmpl,
+      watchUrl,
+    ];
+    if (withCookies && YTDLP_COOKIES_BROWSER && YTDLP_COOKIES_BROWSER !== 'none') {
+      args.splice(args.indexOf('-x') + 1, 0, '--cookies-from-browser', YTDLP_COOKIES_BROWSER);
+    }
+    const opts = { maxBuffer: 8 * 1024 * 1024, timeout: YTDLP_BIN_TIMEOUT_MS };
+
+    execFile(YTDLP_BIN, args, opts, (err, stdout, stderr) => {
+      const combined = String(stderr || '') + '\n' + String(stdout || '');
+      if (RE_ANTIBOT.test(combined)) {
+        const e = new Error('YouTube exige une vérification anti-bot.');
+        e.code = 'antibot';
+        // Log détaillé : la sortie yt-dlp permet de diagnostiquer (LOGIN_REQUIRED,
+        // cookies requis, IP bloquée…) sans relancer à la main.
+        console.error('[extract] ✗ ANTI-BOT ' + videoId + ' — ' + combined.trim().split('\n').slice(-8).join(' | '));
+        return reject(e);
+      }
+      if (err) {
+        if (/private video|video unavailable|not exist|been removed|not available in your country/i.test(combined)) {
+          const e = new Error('Vidéo indisponible.');
+          e.code = 'notfound';
+          console.error('[extract] ✗ INTROUVABLE ' + videoId + ' — ' + combined.trim().split('\n').slice(-5).join(' | '));
+          return reject(e);
+        }
+        if (/ffmpeg|avconv/i.test(combined) && ffmpegAvailable === false) {
+          const e = new Error('ffmpeg est requis pour l\'extraction audio mais n\'est pas trouvé.');
+          e.code = 'no-ffmpeg';
+          console.error('[extract] ✗ FFMPEG ABSENT ' + videoId);
+          return reject(e);
+        }
+        const e = new Error('yt-dlp -x a échoué : ' + (err.message || combined.slice(0, 200)));
+        e.code = 'extract';
+        console.error('[extract] ✗ ÉCHEC ' + videoId + ' — ' + combined.trim().split('\n').slice(-5).join(' | '));
+        return reject(e);
+      }
+      // yt-dlp écrit <id>.mp3. Si absent, cherche un autre format
+      // (m4a/opus) qu'il aurait pu produire — le <audio> les lit aussi.
+      if (!hasCached(videoId)) {
+        const re = new RegExp('^' + videoId + '\\.(mp3|m4a|opus|webm|aac)$');
+        let found = null;
+        try {
+          for (const f of fs.readdirSync(CACHE_DIR)) {
+            if (re.test(f)) { found = path.join(CACHE_DIR, f); break; }
+          }
+        } catch (_) {}
+        if (!found) {
+          const e = new Error('yt-dlp a terminé mais aucun fichier audio trouvé dans le cache.');
+          e.code = 'extract';
+          console.error('[extract] ✗ AUCUN FICHIER ' + videoId + ' — ' + combined.trim().split('\n').slice(-5).join(' | '));
+          return reject(e);
+        }
+        console.log('[extract] ✓ succès ' + videoId + ' → ' + path.basename(found) + ' (' + fmtBytes(fs.statSync(found).size) + ')');
+        return settleExtracted(videoId, found, resolve);
+      }
+      const size = fs.statSync(cachePathFor(videoId)).size;
+      console.log('[extract] ✓ succès ' + videoId + ' → ' + path.basename(cachePathFor(videoId)) + ' (' + fmtBytes(size) + ')');
+      settleExtracted(videoId, cachePathFor(videoId), resolve);
+    });
+  });
+}
+
+// Taille lisible (octets → Ko/Mo).
+function fmtBytes(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' Mo';
+  if (n >= 1024) return (n / 1024).toFixed(0) + ' Ko';
+  return n + ' o';
 }
 
 // ===== Post-extraction : pochette YouTube (APIC) dans le MP3 =====
@@ -326,8 +459,32 @@ app.get('/api/streams/:id', async (req, res) => {
       videoStreams: [],
     });
   } catch (err) {
+    const code = err.code === 'notfound' ? 404 : 502;
+    console.error('[api] ✗ /api/streams/' + id + ' → HTTP ' + code + ' (' + (err.code || 'extract') + ') : ' + err.message);
     if (err.code === 'notfound') return res.status(404).json({ error: err.message, code: 'notfound' });
     return res.status(502).json({ error: err.message || 'Extraction échouée.', code: err.code || 'extract' });
+  }
+});
+
+// --- GET /api/description/:id ---
+// Description YouTube complète (celle du "more"/détails) via yt-dlp
+// --skip-download --print description. Cache 24 h. Utilisée par le popup
+// hover des résultats de recherche. Same-origin → fiable (Piped ne l'est pas).
+app.get('/api/description/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!RE_VIDEOID.test(id)) return res.status(400).json({ error: 'videoId invalide.' });
+
+  try {
+    const desc = await fetchVideoDescription(id);
+    res.json({ id: id, description: desc });
+  } catch (err) {
+    // Silencieux : les échecs de description sont fréquents et bénins
+    // (vidéo sans description, anti-bot occasionnel) — inutile de les
+    // logguer. Le client affiche juste "pas de description".
+    const code = err.code === 'antibot' ? 451 : 502;
+    if (!res.headersSent) {
+      res.status(code).json({ error: err.message || 'Description indisponible.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
+    }
   }
 });
 
@@ -343,12 +500,14 @@ app.get('/api/audio/:id', async (req, res) => {
     res.setHeader('Content-Type', mimeForExt(extOf(file)));
     res.sendFile(file, function (err) {
       if (err && !res.headersSent) {
+        console.error('[api] ✗ /api/audio/' + id + ' → sendFile: ' + err.message);
         res.status(500).json({ error: 'Fichier audio indisponible.' });
       }
     });
   } catch (err) {
+    const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' ? 503 : 502));
+    console.error('[api] ✗ /api/audio/' + id + ' → HTTP ' + code + ' (' + (err.code || 'extract') + ') : ' + err.message);
     if (!res.headersSent) {
-      const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' ? 503 : 502));
       res.status(code).json({ error: err.message || 'Extraction audio échouée.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
     }
   }
@@ -381,12 +540,14 @@ app.get('/api/download/:id', async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="' + asciiSafe + '"; filename*=UTF-8\'\'' + encodeURIComponent(filename));
     res.sendFile(file, function (err) {
       if (err && !res.headersSent) {
+        console.error('[api] ✗ /api/download/' + id + ' → sendFile: ' + err.message);
         res.status(500).json({ error: 'Fichier audio indisponible.' });
       }
     });
   } catch (err) {
+    const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' ? 503 : 502));
+    console.error('[api] ✗ /api/download/' + id + ' → HTTP ' + code + ' (' + (err.code || 'extract') + ') : ' + err.message);
     if (!res.headersSent) {
-      const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' ? 503 : 502));
       res.status(code).json({ error: err.message || 'Extraction audio échouée.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
     }
   }
@@ -424,8 +585,32 @@ checkFfmpeg().then((fv) => {
       console.log('    Installez ffmpeg : https://ffmpeg.org/download.html');
     }
     console.log('  Cache audio : ' + CACHE_DIR);
+    if (YTDLP_COOKIES_BROWSER && YTDLP_COOKIES_BROWSER !== 'none') {
+      console.log('  ✓ cookies ' + YTDLP_COOKIES_BROWSER + ' (--cookies-from-browser ' + YTDLP_COOKIES_BROWSER + ') — contourne LOGIN_REQUIRED');
+    } else {
+      console.log('  ⚠ cookies navigateur désactivés — les vidéos LOGIN_REQUIRED échoueront (451).');
+      console.log('    Pour les activer : YTDLP_COOKIES_BROWSER=chrome|safari|firefox…');
+    }
     console.log('  (yt-dlp est appelé paresseusement au 1er chargement audio.)');
     console.log('  Ctrl+C pour arrêter.');
     console.log('');
   });
+});
+
+// ===== Filet de sécurité global =====
+// Le serveur ne doit JAMAIS mourir à cause d'une erreur DNS/yt-dlp/anti-bot :
+// chaque route API a déjà son try/catch, mais on couvre les cas résiduels
+// (promesse dérivée oubliée, callback async non bordé…). On loggue et on
+// continue. Sans ces handlers, Node ≥ 15 tue le processus sur la moindre
+// rejection non consommée — et l'app entière tombe.
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] ⚠ unhandledRejection interceptée (serveur maintenu) :',
+    reason instanceof Error ? reason.message : String(reason));
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[server] ⚠ uncaughtException interceptée (serveur maintenu) :',
+    err && err.message ? err.message : String(err));
+  // Note : on ne re-lance pas volontairement ; l'état peut être dégradé sur
+  // cette requête, mais le serveur reste en vie pour les suivantes.
 });

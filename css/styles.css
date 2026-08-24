@@ -648,6 +648,98 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   white-space: nowrap;
 }
 
+/* Badge LIVE (stream) dans une carte résultat */
+.search-result-live {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #f87171;
+  letter-spacing: 0.02em;
+}
+.search-result-is-live { border-color: rgba(248, 113, 113, 0.45); }
+
+/* ===== Popup d'info au survol d'un résultat ===== */
+.search-result-popup {
+  position: fixed;
+  z-index: 1000;
+  max-width: 420px;
+  min-width: 200px;
+  background: #1a1f29;
+  border: 1px solid #3b82f6;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  padding: 10px 12px;
+  pointer-events: none; /* jamais bloquant pour le survol/les clics */
+  opacity: 1;
+  transition: opacity 0.1s ease;
+}
+.search-result-popup[hidden] { display: none; }
+.popup-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 0.72rem;
+  color: #9ca3af;
+  margin-bottom: 6px;
+}
+.popup-views { color: #cbd5e1; }
+.popup-date { color: #9ca3af; }
+.popup-live-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.popup-desc {
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+  display: -webkit-box;
+  -webkit-line-clamp: 20;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.popup-desc-loading { color: #6b7280; font-style: italic; }
+/* Tactile : pas de hover → pas de popup */
+@media (hover: none) {
+  .search-result-popup { display: none; }
+}
+
+/* ===== Bandeau de confirmation live stream ===== */
+.search-result-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: #2a1a1a;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: #fecaca;
+  z-index: 3;
+}
+.search-result-confirm[hidden] { display: none; }
+.confirm-icon { font-size: 0.9rem; }
+.confirm-text { flex: 1 1 auto; min-width: 200px; }
+.confirm-btn {
+  padding: 4px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.confirm-yes { background: #ef4444; color: #fff; }
+.confirm-yes:hover { background: #dc2626; }
+.confirm-no { background: #1f2430; color: #9ca3af; border-color: #374151; }
+.confirm-no:hover { background: #272d3b; color: #e5e7eb; }
+
 /* Lecteur */
 .deck-player {
   flex: 1 1 auto;

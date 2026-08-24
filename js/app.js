@@ -463,6 +463,9 @@
       var validId = SEARCH && typeof SEARCH.extractVideoId === 'function'
         ? SEARCH.extractVideoId(stored)
         : null;
+      // Défense supplémentaire contre les anciennes valeurs corrompues
+      // (ex. la requête "groundation" enregistrée comme videoId).
+      if (validId && /^[a-z]+$/.test(validId)) validId = null;
       if (validId) return validId;
       if (stored) localStorage.removeItem(key);
     } catch (e) { /* ignore */ }
@@ -1860,8 +1863,8 @@
     Mixer.init(state.players);
 
     // Restaurer les derniers videoIds depuis localStorage, fallback sur les vidéos de test
-    var videoIdA = getPersistedVideoId('A') || CFG.TEST_VIDEO_A;
-    var videoIdB = getPersistedVideoId('B') || CFG.TEST_VIDEO_B;
+      const videoIdA = getPersistedVideoId('A') || CFG.TEST_VIDEO_A;
+      const videoIdB = getPersistedVideoId('B') || CFG.TEST_VIDEO_B;
     createDeckPlayer('A', videoIdA);
     createDeckPlayer('B', videoIdB);
 

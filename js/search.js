@@ -33,6 +33,29 @@
 
   // ===== Helpers =====
 
+  // Formate le nombre de vues (1 234 567 → "1,2 M vues")
+  function formatViews(n) {
+    n = Number(n) || 0;
+    if (n >= 1e6) return (n / 1e6).toFixed(1).replace('.', ',') + ' M vues';
+    if (n >= 1e3) return (n / 1e3).toFixed(0).replace('.', ',') + ' k vues';
+    return n + ' vues';
+  }
+
+  // Timestamp (secondes) → "il y a X mois / X jours / X heures"
+  function formatUploadedDate(ts) {
+    if (!ts) return '';
+    const d = new Date(Number(ts) * 1000);
+    if (isNaN(d.getTime())) return '';
+    const now = Date.now();
+    const diff = Math.max(0, Math.floor((now - d.getTime()) / 1000));
+    if (diff < 60) return 'à l\'instant';
+    if (diff < 3600) return 'il y a ' + Math.floor(diff / 60) + ' min';
+    if (diff < 86400) return 'il y a ' + Math.floor(diff / 3600) + ' h';
+    if (diff < 2592000) return 'il y a ' + Math.floor(diff / 86400) + ' jours';
+    if (diff < 31536000) return 'il y a ' + Math.floor(diff / 2592000) + ' mois';
+    return 'il y a ' + Math.floor(diff / 31536000) + ' ans';
+  }
+
   // Convertit une durée en secondes vers "M:SS" ou "H:MM:SS"
   function secondsToDuration(total) {
     const s = parseInt(total, 10);
@@ -72,13 +95,18 @@
   // Extrait un videoId depuis une URL YouTube ou un ID brut.
   // Un ID YouTube brut fait exactement 11 caractères ; une chaîne plus courte
   // (ex. « africando ») reste donc une requête de recherche.
+  // ⚠ Piège : un mot de recherche peut faire EXACTEMENT 11 caractères
+  // (ex. « groundation »). Un ID réel est tiré d'un alphabet 64 caractères
+  // (majuscules + minuscules + chiffres + -_) : la probabilité qu'il soit
+  // composé uniquement de minuscules est quasi nulle (~0,04 %). On rejette
+  // donc les chaînes 100 % minuscules — c'est une requête, pas un ID.
   function extractVideoId(input) {
     if (!input) return null;
     const s = String(input).trim();
     if (!s) return null;
 
-    // ID brut YouTube (11 caractères alphanumériques, tirets, underscores).
-    if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
+    // ID brut YouTube (11 caractères, MAIS pas un simple mot tout minuscules).
+    if (/^[a-zA-Z0-9_-]{11}$/.test(s) && !/^[a-z]+$/.test(s)) return s;
 
     // youtu.be/<id>
     let m = /youtu\.be\/([a-zA-Z0-9_-]{11})(?:[?&#/]|$)/.exec(s);
@@ -91,6 +119,18 @@
     if (m) return m[1];
 
     return null;
+  }
+
+  function extractResultVideoId(item) {
+    if (!item) return '';
+    // extractVideoId applique déjà le rejet des mots tout-minuscules :
+    // on passe par lui pour TOUTES les sources (pas de raccourci regex).
+    const candidates = [item.videoId, item.id, item.url];
+    for (let i = 0; i < candidates.length; i++) {
+      const id = extractVideoId(candidates[i]);
+      if (id) return id;
+    }
+    return '';
   }
 
   // Lit la clé API depuis localStorage
@@ -136,13 +176,20 @@
   function buildResultEl(deck, video, onSelect, onMarkPlayed) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'search-result';
+    btn.className = 'search-result' + (video.isLive ? ' search-result-is-live' : '');
     btn.dataset.videoId = video.id;
-    btn.setAttribute('aria-label', 'Charger ' + video.title);
 
     const thumbs = video.thumbnails || {};
     const thumb = thumbs.medium || thumbs.high || thumbs.default || {};
     const thumbUrl = safeImgUrl(thumb.url);
+
+    // aria-label enrichi (titre + uploader + durée + vues + live)
+    let ariaLabel = video.title;
+    if (video.uploaderName) ariaLabel += ' — ' + video.uploaderName;
+    if (video.isLive) ariaLabel += ' [EN DIRECT]';
+    else if (video.duration) ariaLabel += ' (' + video.duration + ')';
+    if (video.views) ariaLabel += ' — ' + formatViews(video.views);
+    btn.setAttribute('aria-label', 'Charger ' + ariaLabel);
 
     let html = '';
     if (thumbUrl) {
@@ -155,36 +202,327 @@
     if (video.uploaderName) {
       html += '<span class="search-result-uploader">' + escapeHtml(video.uploaderName) + '</span>';
     }
-    if (video.duration) {
+    if (video.isLive) {
+      html += '<span class="search-result-live">🔴 EN DIRECT</span>';
+    } else if (video.duration) {
       html += '<span class="search-result-duration">' + escapeHtml(video.duration) + '</span>';
     }
     html += '</div>';
 
     btn.innerHTML = html;
+
+    // Hover avec debounce 500 ms : évite les rafales de requêtes
+    // /api/description/yt-dlp quand on survole rapidement la grille.
+    btn.addEventListener('pointerenter', () => {
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => showPopup(video, btn), 500);
+    });
+    btn.addEventListener('pointerleave', () => {
+      clearTimeout(hoverTimer);
+      hoverTimer = null;
+      hidePopup();
+    });
+    // Focus clavier : immédiat (pas de rafale possible)
+    btn.addEventListener('focus', () => showPopup(video, btn));
+    btn.addEventListener('blur', hidePopup);
+
+    // Clic → sélection, avec confirmation si live stream
     btn.addEventListener('click', function () {
-      // 1. Effectue la sélection (pour le tracking web et l'état de la liste des résultats)
-      onSelect(video.id);
-      // 2. Met à jour le lecteur principal avec les métadonnées (résolution du bug)
-      //    On utilise ici les données du jeu de données (video) pour passer les infos.
-      var info = {
-        title: video.title,
-        uploader: video.uploaderName,
-        thumbnailUrl: safeImgUrl(video.thumbnails.medium?.url),
-        modeLabel: 'Search Result'
-      };
-      if (typeof updateNowPlaying === 'function') {
-        updateNowPlaying(deck, info);
+      if (video.isLive) {
+        showStreamConfirm(deck, btn, video, onSelect, onMarkPlayed);
+        return;
       }
-      // 3. Met à jour le badge "En cours"
-      if (typeof onMarkPlayed === 'function') onMarkPlayed(video.id);
+      commitSelect(deck, btn, video, onSelect, onMarkPlayed);
     });
     return btn;
+  }
+
+  // Appelé par le clic sur un résultat confirmé (stream ou non)
+  function commitSelect(deck, btn, video, onSelect, onMarkPlayed) {
+    // Garde-fou final : seul un véritable ID YouTube (11 caractères, pas un
+    // mot tout-minuscules comme "groundation") peut atteindre le lecteur.
+    if (!extractVideoId(String(video.id || ''))) {
+      return;
+    }
+    // 1. Effectue la sélection (pour le tracking web et l'état de la liste des résultats)
+    onSelect(video.id);
+    // 2. Met à jour le lecteur principal avec les métadonnées
+    var info = {
+      title: video.title,
+      uploader: video.uploaderName,
+      thumbnailUrl: safeImgUrl(video.thumbnails.medium?.url),
+      modeLabel: 'Search Result'
+    };
+    if (typeof updateNowPlaying === 'function') {
+      updateNowPlaying(deck, info);
+    }
+    // 3. Met à jour le badge "En cours"
+    if (typeof onMarkPlayed === 'function') onMarkPlayed(video.id);
+  }
+
+  // ===== Popup d'info partagé (1 par panneau) =====
+
+  let popupEl = null;       // élément DOM unique réutilisé pour ce panneau
+  let popupScrollCleanup = null; // fonction de désabonnement au scroll
+  let popupDescCtrl = null;     // AbortController du fetch description en cours
+  let popupCurrentId = null;    // videoId affiché dans le popup courant
+  let hoverTimer = null;        // timeout du debounce hover (500 ms)
+
+  function ensurePopup() {
+    if (!popupEl || !popupEl.parentNode) {
+      popupEl = document.createElement('div');
+      popupEl.className = 'search-result-popup';
+      popupEl.setAttribute('role', 'tooltip');
+      popupEl.hidden = true;
+      // On l'attache au body pour éviter les conflits d'overflow/position
+      document.body.appendChild(popupEl);
+    }
+    return popupEl;
+  }
+
+  function populatePopup(video) {
+    const el = ensurePopup();
+    const viewsStr = video.views ? formatViews(video.views) : '';
+    const dateStr = video.uploadedDate || formatUploadedDate(video.uploaded);
+
+    // Pas de doublon avec la carte (vignette/titre/uploader/durée) : on
+    // n'affiche que les infos ABSENTES de la carte (vues, date, LIVE) +
+    // la description complète YouTube (celle du "more" / "détails").
+    let liveBadge = '';
+    if (video.isLive) {
+      liveBadge = '<span class="popup-live-badge">🔴 EN DIRECT</span>';
+    }
+
+    let desc = '';
+    if (descCache.has(video.id)) {
+      const cached = descCache.get(video.id);
+      if (cached) desc = '<div class="popup-desc">' + escapeHtml(cached) + '</div>';
+      // cache à '' → aucune description → pas de section
+    } else {
+      desc = '<div class="popup-desc popup-desc-loading">Description…</div>';
+    }
+
+    el.innerHTML = ''
+      + '<div class="popup-head">'
+      + (viewsStr ? '<span class="popup-views">' + escapeHtml(viewsStr) + '</span>' : '')
+      + (dateStr ? '<span class="popup-date">' + escapeHtml(dateStr) + '</span>' : '')
+      + liveBadge
+      + '</div>'
+      + desc;
+    return el;
+  }
+
+  // Remplit la description dans le popup courant, ou retire le placeholder.
+  function updatePopupDescription(text, el) {
+    if (!el) return;
+    const placeholder = el.querySelector('.popup-desc-loading');
+    if (!text) {
+      if (placeholder) placeholder.remove(); // pas de description → on n'affiche rien
+      return;
+    }
+    const desc = document.createElement('div');
+    desc.className = 'popup-desc';
+    desc.textContent = text;
+    if (placeholder) placeholder.replaceWith(desc);
+    else el.appendChild(desc);
+  }
+
+  // Nettoie le HTML de la description Piped → texte brut lisible
+  function cleanDescription(html) {
+    if (!html) return '';
+    const tmp = document.createElement('div');
+    tmp.innerHTML = String(html);
+    let text = tmp.textContent || '';
+    text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    if (text.length > 1500) text = text.slice(0, 1500).trimEnd() + '…';
+    return text;
+  }
+
+  // Cache mémoire des descriptions par videoId (évite les re-fetchs)
+  const descCache = new Map();
+
+  // Description YouTube complète (celle qu'on voit sous "more" / "détails").
+  // 1) Backend local /api/description/:id (yt-dlp --print description, même
+  //    origine, fiable — cache 24 h côté serveur). Prioritaire.
+  // 2) YouTube Data API (part=snippet) si une clé est configurée.
+  // 3) Fallback : Piped /streams/{videoId} (cascade instances).
+  // Renvoie '' si indisponible (le popup n'affiche alors aucune section).
+  async function fetchDescription(videoId, signal) {
+    if (descCache.has(videoId)) return descCache.get(videoId);
+
+    // 1) Backend local (same-origin, yt-dlp sur l'IP de l'utilisateur,
+    //    fiable — pas de 500 errors comme Piped)
+    try {
+      const res = await fetchWithTimeout('/api/description/' + encodeURIComponent(videoId), 15000, signal);
+      if (res.ok) {
+        const data = await res.json();
+        const desc = data && data.description;
+        if (desc) {
+          descCache.set(videoId, desc);
+          return desc;
+        }
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+      // 4xx/5xx → fallback
+    }
+
+    // 2) YouTube Data API
+    const apiKey = getApiKey();
+    if (apiKey) {
+      try {
+        const url = API_BASE + '/videos?part=snippet&id=' + encodeURIComponent(videoId)
+          + '&key=' + encodeURIComponent(apiKey);
+        const res = await fetchWithTimeout(url, 8000, signal);
+        if (res.ok) {
+          const data = await res.json();
+          const item = data && data.items && data.items[0];
+          const desc = item && item.snippet && cleanDescription(item.snippet.description);
+          if (desc) { descCache.set(videoId, desc); return desc; }
+        }
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw e;
+        // clé invalide / quota / réseau → on tente Piped
+      }
+    }
+
+    // 3) Fallback Piped
+    const instances = PIPED_INSTANCES || [];
+    for (let i = 0; i < instances.length; i++) {
+      const inst = instances[i];
+      try {
+        const url = 'https://' + inst + '/streams/' + encodeURIComponent(videoId);
+        const res = await fetchWithTimeout(url, Math.min(PIPED_INSTANCE_TIMEOUT_MS, 6000), signal);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const desc = cleanDescription(data.description);
+        if (desc) {
+          descCache.set(videoId, desc);
+          return desc;
+        }
+        throw new Error('pas de description');
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw e;
+        // instance suivante
+      }
+    }
+    descCache.set(videoId, '');
+    return '';
+  }
+
+  function showPopup(video, cardEl) {
+    const el = populatePopup(video);
+    popupCurrentId = video.id;
+    // Mesure avant positionnement
+    el.hidden = false;
+    const pw = el.offsetWidth;
+    const ph = el.offsetHeight;
+    const cr = cardEl.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Position : à droite de la carte, ou à gauche si débordement
+    let left = cr.right + 8;
+    if (left + pw > vw - 8) left = cr.left - pw - 8;
+    // En dernier recours : centré sur la carte
+    if (left < 8) left = Math.max(8, (cr.left + cr.right - pw) / 2);
+    // Vertical : aligné sur le haut de la carte, ou remonté si débordement
+    let top = cr.top;
+    if (top + ph > vh - 8) top = vh - ph - 8;
+    if (top < 8) top = 8;
+
+    el.style.left = Math.round(left) + 'px';
+    el.style.top = Math.round(top) + 'px';
+
+    // Fermer au scroll (position fixe → décalage sinon)
+    if (popupScrollCleanup) popupScrollCleanup();
+    const onScroll = () => { hidePopup(); };
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    popupScrollCleanup = () => window.removeEventListener('scroll', onScroll, { capture: true });
+
+    // Description : cachée si déjà en cache, sinon fetch Piped (le popup
+    // peut changer de carte pendant le fetch → on vérifie l'id au retour).
+    // Timeout 3 s : si le fetch est long (yt-dlp ~11 s, Piped cascade ~20 s),
+    // on ne laisse pas le placeholder "Description…" visible indéfiniment.
+    if (!descCache.has(video.id)) {
+      if (popupDescCtrl) { try { popupDescCtrl.abort(); } catch (_) {} }
+      popupDescCtrl = new AbortController();
+      const currentId = video.id;
+
+      // Timeout de sécurité : retire le placeholder après 3 s
+      const descTimeout = setTimeout(() => {
+        if (popupEl && !popupEl.hidden && popupCurrentId === currentId) {
+          const pl = popupEl.querySelector('.popup-desc-loading');
+          if (pl) pl.remove();
+        }
+      }, 3000);
+
+      fetchDescription(currentId, popupDescCtrl.signal)
+        .then((text) => {
+          clearTimeout(descTimeout);
+          if (popupEl && !popupEl.hidden && popupCurrentId === currentId) {
+            updatePopupDescription(text, popupEl);
+          }
+        })
+        .catch(() => { clearTimeout(descTimeout); /* abort : popup déjà fermé */ });
+    }
+  }
+
+  function hidePopup() {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+    if (popupEl) popupEl.hidden = true;
+    if (popupScrollCleanup) { popupScrollCleanup(); popupScrollCleanup = null; }
+    if (popupDescCtrl) { try { popupDescCtrl.abort(); } catch (_) {} popupDescCtrl = null; }
+    popupCurrentId = null;
+  }
+
+  // ===== Confirmation live stream =====
+
+  let confirmEl = null; // bandeau de confirmation partagé
+
+  function ensureConfirm() {
+    if (!confirmEl || !confirmEl.parentNode) {
+      confirmEl = document.createElement('div');
+      confirmEl.className = 'search-result-confirm';
+      confirmEl.setAttribute('role', 'alertdialog');
+      confirmEl.hidden = true;
+      panelEl.parentElement.insertAdjacentElement('afterbegin', confirmEl);
+    }
+    return confirmEl;
+  }
+
+  function showStreamConfirm(deck, btn, video, onSelect, onMarkPlayed) {
+    const el = ensureConfirm();
+    el.innerHTML = ''
+      + '<span class="confirm-icon">🔴</span>'
+      + '<span class="confirm-text">Live stream — le chargement peut être long ou indéfini. Charger quand même ?</span>'
+      + '<button class="confirm-btn confirm-yes" type="button">Charger</button>'
+      + '<button class="confirm-btn confirm-no" type="button">Annuler</button>';
+
+    el.querySelector('.confirm-no').addEventListener('click', function () {
+      el.hidden = true;
+    });
+    el.querySelector('.confirm-yes').addEventListener('click', function () {
+      el.hidden = true;
+      commitSelect(deck, btn, video, onSelect, onMarkPlayed);
+    });
+    el.hidden = false;
+  }
+
+  // Nettoie popup + confirm si le panneau est vidé (nouvelle recherche, ✕, pagination)
+  function cleanupOverlays() {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
+    hidePopup();
+    if (confirmEl) confirmEl.hidden = true;
   }
 
   // Rendu du panneau selon l'état UI (data-state sur .deck-results)
   function renderPanel(panelEl, state, payload) {
     panelEl.dataset.state = state;
     panelEl.innerHTML = '';
+    cleanupOverlays(); // popup + bandeau de confirmation ne doivent pas survivre au vidage
 
     switch (state) {
       case UI_STATE.IDLE:
@@ -319,19 +657,29 @@
     const data = await res.json();
     const items = (data && data.items) || [];
     const videos = items.map(function (it) {
-      const id = extractVideoId(it.url) || '';
+      const id = extractResultVideoId(it);
       // La vignette passe souvent par un proxy Piped (proxy.<instance>/vi/ID/...).
       // On garde l'URL telle quelle (safeImgUrl validera le https://).
+      // `duration === 0` (ou `isLive` vrai) = live stream : à signaler dans
+      // l'UI (badge + popup) et à confirmer avant chargement (un live n'a pas
+      // de fin — l'extraction serveur téléchargerait indéfiniment).
+      const isLive = !!(it.isLive) || Number(it.duration) === 0;
       return {
         id: id,
         title: it.title || 'Sans titre',
         uploaderName: it.uploaderName || '',
+        uploaderAvatar: it.uploaderAvatar || '',
+        views: Number(it.views) || 0,
+        uploaded: Number(it.uploaded) || 0,       // timestamp secondes
+        uploadedDate: it.uploadedDate || '',      // texte déjà formaté par Piped
+        isLive: isLive,
         thumbnails: {
           medium: it.thumbnail ? { url: it.thumbnail } : null,
           high: it.thumbnail ? { url: it.thumbnail } : null,
           default: it.thumbnail ? { url: it.thumbnail } : null,
         },
         duration: secondsToDuration(it.duration),
+        durationSec: Number(it.duration) || 0,
       };
     }).filter(function (v) { return !!v.id; });
     // Token de page suivante (null sur la dernière page)
@@ -665,11 +1013,21 @@
             .filter(function (i) { return i.id && i.id.videoId; })
             .map(function (i) {
               const id = i.id.videoId;
+              const snip = (i.snippet) || {};
+              const isLive = snip.liveBroadcastContent === 'live'
+                || snip.liveBroadcastContent === 'upcoming';
               return {
                 id: id,
-                title: (i.snippet && i.snippet.title) || 'Sans titre',
-                thumbnails: (i.snippet && i.snippet.thumbnails) || {},
+                title: snip.title || 'Sans titre',
+                uploaderName: snip.channelTitle || '',
+                uploaderAvatar: '',
+                views: 0, // non fourni par /search (uniquement /videos stats)
+                uploaded: snip.publishedAt ? Math.floor(new Date(snip.publishedAt).getTime() / 1000) : 0,
+                uploadedDate: '',
+                isLive: isLive,
+                thumbnails: snip.thumbnails || {},
                 duration: durations[id] || '',
+                durationSec: 0,
               };
             });
         } else {
