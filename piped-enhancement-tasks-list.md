@@ -994,7 +994,33 @@ Règles pour l'alignement vertical et espacement :
 - [ ] 2 flux audio simultanés + 2 canvas waveform à 60fps → vérifier le CPU/latence
 - [ ] Si saccades → réduire `fftSize` à 1024, limiter le FPS à 30, ou dessiner le waveform à une fréquence inférieure au spectre
 
-### 17.6 Popups d'information au survol des résultats de recherche [ ]
+### 17.6 Popups d'information au survol des résultats de recherche [x]
+
+**Implémentation terminée** dans `js/search.js` et `css/styles.css`.
+
+- [x] Popup unique partagé par panneau, positionné en `fixed` dans `body`, avec anti-débordement aux bords de la fenêtre.
+- [x] Déclenchement après 500 ms de survol ; fermeture immédiate au clic en dehors.
+- [x] Maintien du popup pendant 4 s après la sortie de la carte ; survol du popup = délai annulé pour permettre la sélection et la copie de la description.
+- [x] Popup interactif (`pointer-events: auto`, `user-select: text`) ; le clic dans le popup ne le ferme pas.
+- [x] Contenu sans doublon avec la carte : vues, date de publication validée et description YouTube complète (tracklist, liens, crédits), sans répéter vignette/titre/uploader/durée.
+- [x] Description récupérée par priorité : `/api/description/:id` local (`yt-dlp --print description`, cache serveur 24 h), YouTube Data API si clé disponible, puis cascade Piped.
+- [x] Cache frontend et annulation des requêtes avec `AbortController` ; cache négatif serveur 30 min en cas d'échec ; extraction des descriptions sérialisée pour ne jamais lancer plusieurs `yt-dlp` simultanément.
+- [x] Description nettoyée et limitée à 1500 caractères / 20 lignes dans l'interface.
+- [x] Dates Piped normalisées (secondes/millisecondes), valeurs `-1` rejetées ; date exacte affichée pour les vidéos anciennes.
+- [x] Badge `🔴 EN DIRECT` et confirmation avant chargement des live streams.
+- [x] Icône YouTube compacte (~18×13 px) dans chaque carte ; l'ID est uniquement dans son tooltip/label et le clic ouvre YouTube dans un nouvel onglet après confirmation, sans sélectionner le morceau.
+- [x] Validation stricte des IDs vidéo : les mots de recherche tout-minuscules de 11 caractères (ex. `groundation`) sont rejetés lors de la normalisation, de la sélection et de la restauration au démarrage.
+
+**Tests validés :**
+- [x] Hover, focus clavier, fermeture au clic extérieur et maintien pour copie.
+- [x] Pagination et vidage de grille sans popup résiduel.
+- [x] Dates valides et timestamps aberrants.
+- [x] Live stream avec confirmation.
+- [x] Lien YouTube compact avec confirmation et nouvel onglet.
+
+> **Note de maintenance :** les anciennes sous-sections détaillées ci-dessous
+> décrivent le plan initial avant implémentation. Les cases cochées et la liste
+> de validation ci-dessus constituent désormais l'état de référence.
 
 **Objectif** : afficher une info-bulle (tooltip) riche au survol (hover) de chaque élément des résultats de recherche, pour donner à l'utilisateur plus de contexte sur un morceau **avant** de le charger dans un deck. Complète la section 17 (repli/déploiement) et le rendu existant des résultats.
 
@@ -1100,7 +1126,7 @@ Règles pour l'alignement vertical et espacement :
 | 19 | 18 | Auto crossfade | 🟢 Faible (config + UI checkbox) | ✅ |
 | 20 | 19 | Documentation | 🟢 Faible | ✅ |
 | 21 | 17 | Repli/déploiement résultats recherche | 🟢 Faible (JS) | ✅ |
-| 22 | 17.6 | Popups info hover résultats recherche | 🟢 Faible (HTML/CSS/JS) | ⬜ |
+| 22 | 17.6 | Popups info hover résultats recherche | 🟢 Faible (HTML/CSS/JS) | ✅ |
 
 ---
 
