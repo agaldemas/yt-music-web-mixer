@@ -1121,6 +1121,19 @@ Règles pour l'alignement vertical et espacement :
 
 ---
 
+## 19.2 Métadonnées popup → cache disque + enrichissement MP3 (FIXÉ [x])
+
+> 📌 **2026-08-25** — demande utilisateur : éviter les requêtes répétées upstream (chaque info récupérée UNE fois puis servie depuis le cache) et embarquer les infos du popup DANS le MP3 sauvé, dans la limite ~3 ko. Enquête d'abord : le cache disque MP3 existait déjà (`extractAudio` ne relance yt-dlp que si le fichier manque → pas de re-extraction "queue-leu-leu"), mais la description restait re-fetchée à chaque popup (cache mémoire serveur uniquement, perdu au redémarrage).
+
+- [x] **`/api/meta/:id` (nouveau)** : métadonnées enrichies (titre, uploader, durée, vues, date ISO, description) avec **cache disque** `cache/meta/<id>.json` (TTL 24 h, négatif 30 min, sérialisation + dédup en vol). 1re génération : oEmbed (rapide, ~0,15 s) + `yt-dlp --skip-download` pour vues/date/description (pas de téléchargement audio). Ensuite : lecture disque directe, **ZÉRO requête upstream** (~30 ms vérifié).
+- [x] **`/api/streams/:id` enrichi** : renvoie désormais `views`, `uploadDate`, `description` (best-effort, jamais bloquant) → le client n'a plus à refaire `/api/description/:id` quand l'entrée cache les contient.
+- [x] **MP3 du cache enrichi** : commentaire ID3 (COMM) `YTWM:{"id","title","uploader","duration","uploadDate"}` — **sans le nombre de vues** (décision utilisateur : inutile dans un fichier audio), sans thumbnail (déjà en APIC). Réécriture **binaire** du tag ID3 (ré-encodage zéro, `parseId3v2`/`setCommentJson`) : la **pochette APIC est conservée telle quelle** (un passage ffmpeg `-map 0:a` l'aurait droppée). Garde-fou taille ≤ 3 ko.
+- [x] **Enrichissement en tâche de fond** : au 1er `/api/audio/:id` d'un MP3 déjà en cache sans marqueur `YTWM:`, le serveur répond avec le fichier actuel puis l'enrichit en arrière-plan (idempotent via `hasMetaStamp`). mtime du cache inchangé → **aucune re-extraction**.
+- [x] **Frontend** : `buildStreamEntry` (`js/piped-streams.js`) propage `views`/`uploadDate`/`uploadDateLabel` (formateur français `formatFrenchDate` exporté)/`description` ; `js/search.js` affiche vues/date/description du popup **depuis l'entrée cache** → **zéro requête réseau** au survol une fois le morceau chargé. `fetchDescription` consulte le cache PipedStreams avant tout fetch.
+- [x] **Tests** : `/api/meta` — 2e appel ~30 ms, réponse identique (diff 0) ; MP3 enrichi sur un morceau déjà en cache — APIC 11 681 o conservée, COMM 149 o avec JSON valide, durée fichier inchangée (230,77 s), `ffprobe` lit `TAG:YTWM`. Serveur arrêté après validation.
+
+---
+
 ## 20. Plan d'implémentation (ordre suggéré)
 
 | Phase | Section | Description | Risque | Statut |
@@ -1148,6 +1161,7 @@ Règles pour l'alignement vertical et espacement :
 | 21 | 17 | Repli/déploiement résultats recherche | 🟢 Faible (JS) | ✅ |
 | 22 | 17.6 | Popups info hover résultats recherche | 🟢 Faible (HTML/CSS/JS) | ✅ |
 | 23 | 19.1 | Bandeau now-playing enrichi (bouton YouTube ▶ + popup description « ! ») | 🟢 Faible (deck-controls.js + CSS) | ✅ |
+| 24 | 19.2 | Métadonnées popup → cache disque (/api/meta + /api/streams enrichi) + enrichissement MP3 (COMM YTWM ≤ 3 ko, APIC conservée) | 🟢 Faible (server.js + piped-streams.js + search.js) | ✅ |
 
 ---
 
