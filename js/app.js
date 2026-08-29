@@ -29,7 +29,10 @@
   // État global
   const state = {
     players: { A: null, B: null },       // wrappers lecteur (Piped ou IFrame)
-    playerType: { A: 'piped', B: 'piped' }, // 'piped' | 'local' | 'iframe' (type du wrapper courant)
+    playerType: { A: 'piped', B: 'piped' }, // compat legacy: backend courant
+    backendMode: { A: 'iframe', B: 'iframe' }, // 'piped' | 'iframe'
+    sourceKind: { A: 'youtube', B: 'youtube' }, // 'youtube' | 'local'
+    pendingVideoId: { A: '', B: '' },
     ready: { A: false, B: false },
     muted: { A: false, B: false },
     videoIds: { A: '', B: '' },
@@ -38,6 +41,7 @@
     playerMode: CFG.PLAYER_MODE_DEFAULT, // 'auto' | 'piped' | 'iframe' (préférence persistée)
     resolvedMode: 'iframe',              // 'piped' | 'iframe' (mode réellement actif)
     pipedAvailable: false,               // Piped reachable au dernier test
+    audioAvailable: false,                // backend local audio réellement prêt
     visualizers: { A: null, B: null, master: null }, // instances Visualizer par voie + master
     bpmRafId: null,                      // boucle de rafraîchissement des badges BPM
     // Cue points & boucles (phase 10) — mode Piped uniquement
@@ -369,7 +373,15 @@
     var modeLabel = (state.resolvedMode === 'piped') ? 'DJ · DSP' : 'YT IFrame';
     var info = { title: '', uploader: '', thumbnailUrl: '', modeLabel: modeLabel, id: videoId };
 
-    if (state.playerType[deck] === 'piped') {
+    if (state.sourceKind[deck] === 'local') {
+      var player = state.players[deck];
+      if (player) {
+        info.title = player.lastLocalTitle || 'Fichier local';
+        info.uploader = player.lastLocalArtist || '';
+        info.thumbnailUrl = player.lastLocalCover || FALLBACK_THUMB;
+        info.modeLabel = 'Fichier local' + (player.lastLocalFileName ? ' (' + player.lastLocalFileName + ')' : '');
+      }
+    } else if (state.backendMode[deck] === 'piped') {
       var entry = PipedStreams && videoId ? PipedStreams.getCachedStream(videoId) : null;
       if (entry) {
         info.title = entry.title || videoId || '—';
@@ -378,17 +390,6 @@
       } else {
         info.title = videoId ? ('Chargement… ' + videoId) : '—';
         info.thumbnailUrl = thumbnailForVideoId(videoId);
-      }
-    } else if (state.playerType[deck] === 'local') {
-      var player = state.players[deck];
-      if (player) {
-        info.title = player.lastLocalTitle || videoId || '—';
-        info.uploader = player.lastLocalArtist || '';
-        info.thumbnailUrl = player.lastLocalCover || FALLBACK_THUMB;
-        info.modeLabel = 'Fichier local' + (player.lastLocalFileName ? ' (' + player.lastLocalFileName + ')' : '');
-      } else {
-        info.title = videoId || '—';
-        info.thumbnailUrl = FALLBACK_THUMB;
       }
     } else {
       var player = state.players[deck];
@@ -496,15 +497,20 @@
   // Le mode 'auto' démarre en Piped si playable, sinon en IFrame (sûr).
   function probePiped() {
     if (!PipedStreams) return Promise.resolve({ reachable: false, playable: false });
-    return PipedStreams.fetchStreamInfo(CFG.TEST_VIDEO_A)
-      .then(function (entry) {
-        return { reachable: true, playable: !!(entry && entry.bestAudio) };
-      })
-      .catch(function (err) {
-        // Anti-bot sur la vidéo de test : instance reachable, vidéo bloquée.
-        if (err && err.isAntiBot) return { reachable: true, playable: false };
-        return { reachable: false, playable: false };
+    var localHealth = (window.LocalAPI && window.LocalAPI.getHealth)
+      ? window.LocalAPI.getHealth()
+      : Promise.resolve({ ok: false, ready: false, capabilities: { audio: false } });
+    return localHealth.then(function (health) {
+      state.audioAvailable = !!(health && health.capabilities && health.capabilities.audio);
+      if (state.audioAvailable) return { reachable: true, playable: true, local: true };
+      // Le probe public est volontairement explicite; il n'est plus utilisé au boot auto.
+      return PipedStreams.fetchStreamInfo(CFG.TEST_VIDEO_A).then(function (entry) {
+        return { reachable: true, playable: !!(entry && entry.bestAudio), local: false };
+      }).catch(function (err) {
+        if (err && err.isAntiBot) return { reachable: true, playable: false, local: false };
+        return { reachable: false, playable: false, local: false };
       });
+    });
   }
 
   // Applique la classe de mode sur <body> (hooks CSS pour l'UI DJ future).
@@ -649,11 +655,13 @@
   function teardownPlayer(deck) {
     var p = state.players[deck];
     if (p) {
-      try { if (typeof p.pauseVideo === 'function') p.pauseVideo(); } catch (e) { /* ignore */ }
+      try { if (typeof p.pauseVideo === 'function') p.pauseVideo(); } catch (e) {}
     }
-    if (state.playerType[deck] === 'piped') {
+    var backend = state.backendMode[deck] || state.playerType[deck];
+    if (backend === 'piped') {
       if (AudioEngine && AudioEngine.hasDeck(deck)) AudioEngine.destroyDeckChain(deck);
-      if (p && typeof p._getAudioElement === 'function') {
+      if (p && typeof p.dispose === 'function') { try { p.dispose(); } catch (e) {} }
+      else if (p && typeof p._getAudioElement === 'function') {
         var audio = p._getAudioElement();
         if (audio && audio.parentNode) audio.parentNode.removeChild(audio);
       }
@@ -663,6 +671,8 @@
     }
     state.players[deck] = null;
     state.ready[deck] = false;
+    state.pendingVideoId[deck] = '';
+    state.sourceKind[deck] = 'youtube';
   }
 
   // Crée le lecteur d'une voie selon le mode résolu. `restore` (optionnel)
@@ -678,14 +688,22 @@
       : null;
     const playerElId = 'player-' + deck;
     const usePiped = (state.resolvedMode === 'piped');
-    state.playerType[deck] = usePiped ? 'piped' : 'iframe';
+    state.backendMode[deck] = usePiped ? 'piped' : 'iframe';
+    state.playerType[deck] = state.backendMode[deck];
     if (videoId) state.videoIds[deck] = videoId;
 
     // Callbacks communs aux deux backends (interface unifiée).
     const callbacks = {
       onReady: function () {
         state.ready[deck] = true;
+        state.backendMode[deck] = usePiped ? 'piped' : 'iframe';
+        state.playerType[deck] = state.backendMode[deck];
         const player = state.players[deck];
+        if (state.pendingVideoId[deck] && player) {
+          var pendingId = state.pendingVideoId[deck];
+          state.pendingVideoId[deck] = '';
+          if (typeof player.loadVideoById === 'function') player.loadVideoById(pendingId);
+        }
         // Ré-appliquer l'état mute courant (préservé au-delà du wrapper).
         if (state.muted[deck]) {
           if (player && typeof player.mute === 'function') player.mute();
@@ -756,7 +774,8 @@
   // vidéo + position + lecture. Aucun mode hybride : les deux decks suivent.
   // Retourne true si la bascule a réussi, false si elle a été abandonnée
   // (Piped injoignable → on reste en IFrame avec un message clair).
-  async function switchResolvedMode(target) {
+  async function switchResolvedMode(target, options) {
+    options = options || {};
     if (target !== 'piped' && target !== 'iframe') return false;
     if (target === state.resolvedMode) return true;
 
@@ -764,7 +783,7 @@
     // ont pu tomber depuis le boot). Sinon, bascule abandonnée + message.
     // Un anti-bot sur la vidéo de test ne bloque pas (l'instance est vivante ;
     // la vidéo choisie par l'utilisateur peut très bien passer).
-    if (target === 'piped') {
+    if (target === 'piped' && !options.localOnly) {
       var pr = await probePiped();
       state.pipedAvailable = pr.reachable;
       updateModeButton();
@@ -824,22 +843,6 @@
       // Si une boucle était active avant la bascule IFrame, on la relance.
       if (state.loopActive.A || state.loopActive.B) startLoopWatch();
     }
-    // Cue/loop (phase 10) : ne fonctionne qu'en mode Piped (loop précis sur
-    // <audio>). En IFrame, on désactive toute boucle active et on arrête la
-    // surveillance. Les marqueurs restent en mémoire (et localStorage) pour
-    // un retour éventuel en Piped, mais ils ne sont pas appliqués.
-    if (target === 'iframe') {
-      state.loopActive.A = false; state.loopActive.B = false;
-      updateCueLoopUI('A'); updateCueLoopUI('B');
-      stopLoopWatch();
-    } else {
-      // Retour en Piped : on rafraîchit l'UI (marqueurs restaurés depuis le
-      // localStorage). On ne réactive pas la boucle automatiquement (une
-      // boucle auto-active au reload serait surprenante).
-      ['A', 'B'].forEach(function (deck) { updateCueLoopUI(deck); });
-      // Si une boucle était active avant la bascule IFrame, on la relance.
-      if (state.loopActive.A || state.loopActive.B) startLoopWatch();
-    }
     // Le badge de mode (Piped/IFrame) change immédiatement à la bascule : on
     // rafraîchit le now-playing tout de suite (les métadonnées détaillées
     // arriveront au onReady du nouveau lecteur).
@@ -868,9 +871,8 @@
     const player = state.players[deck];
     if (!player) return;
 
-    if (!state.ready[deck]) {
-      // Lecteur pas encore prêt : on stocke pour appliquer après onReady
-      // (c'est rare car createPlayer attend l'API ready, mais defensif)
+    if (!state.ready[deck] && state.backendMode[deck] !== 'piped') {
+      state.pendingVideoId[deck] = videoId;
       return;
     }
 
@@ -878,7 +880,9 @@
     // demande explicitement la lecture à la prochaine frame "canplay" via
     // le mécanisme prévu par audio-player (_pendingPlayRequested). En mode
     // IFrame, loadVideoById joue nativement.
-    if (state.playerType[deck] === 'piped' && '_pendingPlayRequested' in player) {
+    state.sourceKind[deck] = 'youtube';
+    state.backendMode[deck] = state.playerType[deck] = (state.backendMode[deck] || state.playerType[deck]);
+    if (player && state.backendMode[deck] === 'piped' && '_pendingPlayRequested' in player) {
       player._pendingPlayRequested = true;
     }
     player.loadVideoById(videoId);
@@ -1815,18 +1819,12 @@
     wireSettingsModeSelect();
     wireFallbackAlert();
     wireSyncBpmButton();
-    wireSyncBpmButton();
-    // Scratch : la platine est activée au boot si on démarre en Piped (géré
-    // plus bas après résolution du mode). En IFrame, on n'active pas (le
-    // buffer audio est inaccessible).
-    // Scratch : la platine est activée au boot si on démarre en Piped (géré
-    // plus bas après résolution du mode). En IFrame, on n'active pas (le
-    // buffer audio est inaccessible).
+    // Scratch : activé au boot uniquement si le mode résolu est Piped.
 
     // L'API IFrame est chargée en arrière-plan (utile si l'utilisateur
     // bascule en IFrame, ou si le mode résolu est IFrame).
     window.YTWrapper.init(function (apiErrorMessage) {
-      showGlobalError(apiErrorMessage);
+      if (state.resolvedMode === 'iframe') showGlobalError(apiErrorMessage);
     });
 
     // Lecture du mode persisté + résolution.
@@ -1834,12 +1832,10 @@
     var resolved = state.playerMode;
 
     if (resolved === 'auto') {
-      const pr = await probePiped();
-      state.pipedAvailable = pr.reachable;
-      // Vidéo de test bloquée (anti-bot) → on démarre en IFrame (plus sûr :
-      // les vidéos de test y jouent). Le bouton reste actif (Piped reachable)
-      // pour tenter d'autres titres.
-      resolved = pr.playable ? 'piped' : 'iframe';
+      var health = await ((window.LocalAPI && window.LocalAPI.getHealth) ? window.LocalAPI.getHealth() : Promise.resolve(null));
+      state.audioAvailable = !!(health && health.capabilities && health.capabilities.audio);
+      state.pipedAvailable = state.audioAvailable || !!(CFG.PIPED_INSTANCES && CFG.PIPED_INSTANCES.length);
+      resolved = state.audioAvailable ? 'piped' : 'iframe';
     } else if (resolved === 'piped') {
       // Mode Piped forcé : si Piped n'est pas reachable au boot, repli IFrame.
       const pr = await probePiped();
@@ -1863,8 +1859,9 @@
     Mixer.init(state.players);
 
     // Restaurer les derniers videoIds depuis localStorage, fallback sur les vidéos de test
-      const videoIdA = getPersistedVideoId('A') || CFG.TEST_VIDEO_A;
-      const videoIdB = getPersistedVideoId('B') || CFG.TEST_VIDEO_B;
+      const demo = new URLSearchParams(window.location.search).get('demo') === '1';
+      const videoIdA = getPersistedVideoId('A') || (demo ? CFG.TEST_VIDEO_A : '');
+      const videoIdB = getPersistedVideoId('B') || (demo ? CFG.TEST_VIDEO_B : '');
     createDeckPlayer('A', videoIdA);
     createDeckPlayer('B', videoIdB);
 
@@ -1889,10 +1886,22 @@
   window.state = state;
   // Exposé pour que bpm-detector.js puisse reporter le pitch résultant d'un
   // sync BPM vers le slider de l'UI (applyPitch est défini dans la closure).
-  window.YTMixerApp = { applyPitch: applyPitch };
-  // Exposé pour que bpm-detector.js puisse reporter le pitch résultant d'un
-  // sync BPM vers le slider de l'UI (applyPitch est défini dans la closure).
-  window.YTMixerApp = { applyPitch: applyPitch };
+  async function loadLocalFileOnDeck(deck, file) {
+    if (state.resolvedMode !== 'piped') {
+      const switched = await switchResolvedMode('piped', { localOnly: true });
+      if (!switched) throw new Error('Impossible d’activer le moteur audio local.');
+    }
+    const player = state.players[deck];
+    if (!player || typeof player.loadLocalFile !== 'function') throw new Error('Lecteur audio local indisponible.');
+    state.sourceKind[deck] = 'local';
+    state.videoIds[deck] = '';
+    persistVideoId(deck, null);
+    const result = await player.loadLocalFile(file);
+    updateNowPlaying(deck);
+    return result;
+  }
+
+  window.YTMixerApp = { applyPitch: applyPitch, loadLocalFile: loadLocalFileOnDeck, switchResolvedMode: switchResolvedMode };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

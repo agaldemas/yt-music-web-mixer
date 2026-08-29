@@ -209,6 +209,10 @@
     const deckGain = ctx.createGain();
     deckGain.gain.value = 0.5;
 
+    // Mute indépendant du crossfader et du volume natif de l'élément audio.
+    const muteGain = ctx.createGain();
+    muteGain.gain.value = 1.0;
+
     // Trim de voie (gain individuel, 16.6). Placé AVANT le deckGain pour
     // ne pas interférer avec le crossfader : il compense le volume entre les
     // deux voies (0 dB = neutre, ~+2 dB par cran). Rampping identique.
@@ -239,7 +243,8 @@
 
     // Branche audio (trim de voie → niveau dépendant du crossfader + master).
     djFilter.connect(deckTrim);
-    deckTrim.connect(deckGain);
+    deckTrim.connect(muteGain);
+    muteGain.connect(deckGain);
     deckGain.connect(masterGain);
 
     // Tap pre-fader : l'analyser voit le signal post-EQ/filtre mais AVANT
@@ -263,6 +268,7 @@
       highShelf: highShelf,
       djFilter: djFilter,
       deckTrim: deckTrim,
+      muteGain: muteGain,
       deckGain: deckGain,
       analyser: analyser,
       scratchRate: 0,        // dernier rate POSÉ (pour accumulateOffset en arrière)
@@ -300,6 +306,7 @@
       chain.highShelf.disconnect();
       chain.djFilter.disconnect();
       chain.deckTrim.disconnect();
+      chain.muteGain.disconnect();
       chain.deckGain.disconnect();
       chain.analyser.disconnect();
     } catch (e) {
@@ -379,6 +386,12 @@
     const clamped = Math.max(-EQ_RANGE_DB, Math.min(EQ_RANGE_DB, Number(gainDb) || 0));
     const linear = Math.pow(10, clamped / 20);
     chain.deckTrim.gain.setTargetAtTime(linear, ctx.currentTime, RAMP_TC);
+  }
+
+  function setMuted(deckId, muted) {
+    const chain = chains[deckId];
+    if (!chain || !ctx) return;
+    chain.muteGain.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, RAMP_TC);
   }
 
   // ===== Pitch / Tempo (phase 7) =====
@@ -910,7 +923,7 @@
     if (!chain) throw new Error('loadDeckBufferFromBlob: deck absent');
     if (chain.scratchBuffer) return Promise.resolve(chain.scratchBuffer);
 
-    var copy = arrayBuffer.slice(0);
+    var copy = arrayBuffer;
     var _t0 = performance.now();
     console.debug('%c[scratch:' + deckId + '] loadDeckBufferFromBlob START — '
       + (copy.byteLength / 1024 / 1024).toFixed(2) + ' Mo (tee, pas de re-fetch)', 'color:#e80');
@@ -975,6 +988,7 @@
     applyMasterVolume: applyMasterVolume,
     setEQ: setEQ,
     setDeckTrim: setDeckTrim,
+    setMuted: setMuted,
     setDjFilter: setDjFilter,
     setPitch: setPitch,
     getPitch: getPitch,

@@ -34,10 +34,8 @@
   // (yt-dlp absent, 503, anti-bot, réseau), on retombe sur la cascade Piped.
 
   function localBackendAvailable() {
-    try {
-      const p = window.location && window.location.protocol;
-      return p === 'http:' || p === 'https:';
-    } catch (_) { return false; }
+    try { return !!(window.LocalAPI && window.LocalAPI.available && window.LocalAPI.available()); }
+    catch (_) { return false; }
   }
 
   // ===== Helpers =====
@@ -81,7 +79,8 @@
       if (signal.aborted) ctrl.abort();
       else signal.addEventListener('abort', function () { ctrl.abort(); });
     }
-    return fetch(url, {
+    var fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
+    return fetcher(url, {
       signal: ctrl.signal,
       headers: { 'Accept': 'application/json' },
     }).finally(function () { clearTimeout(timer); });
@@ -267,7 +266,7 @@
       e.code = -1;
       throw e;
     }
-    if (!data || !data.audioStreams) {
+    if (!data || data.audioAvailable === false || !Array.isArray(data.audioStreams) || !data.audioStreams.length) {
       const e = new Error('Backend local : aucun flux pour ' + videoId);
       e.code = -2;
       throw e;
@@ -455,6 +454,7 @@
       title: title,
       duration: duration,
       durationSeconds: Number(data.duration) || 0,
+      scratchEligible: (Number(data.duration) || 0) > 0 && (Number(data.duration) || 0) <= (CFG.SCRATCH_MAX_DURATION_SEC || 600),
       uploader: uploader,
       thumbnailUrl: thumbnailUrl,
       audioStreams: audioStreams,

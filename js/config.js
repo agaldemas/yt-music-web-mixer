@@ -53,6 +53,8 @@ window.YT_CONFIG = {
   // Le gain sert à compenser le volume entre les 2 voies AVANT le crossfader.
   GAIN_RANGE_DB: 10,
   GAIN_DEFAULT_DB: 0,
+  // Scratch PCM complet uniquement pour les pistes de 10 minutes maximum.`r`n  SCRATCH_MAX_DURATION_SEC: 10 * 60,
+  // Limite produit du mode DJ local.`r`n  MAX_TRACK_DURATION_SEC: 30 * 60,
   // playerVars minimum vital. `origin` est ajouté au runtime par youtube.js
   // uniquement quand on est en http(s) ; en file:// il déclenche l'erreur 153.
   PLAYER_VARS: {
