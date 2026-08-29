@@ -56,14 +56,14 @@ Double-cliquez sur `index.html` pour l'ouvrir en `file://`. Les lecteurs YouTube
 
 ### 2. (Recommandé) Démarrer le serveur Express local
 
-Le serveur Express est la manière recommandée d'utiliser l'application. Il sert le frontend et fournit l'extraction locale `yt-dlp` nécessaire au **mode DJ**. Installez Node.js, exécutez `npm install`, vérifiez que `yt-dlp` est installé, puis lancez :
+Le serveur Express est la manière recommandée d'utiliser l'application. Il écoute uniquement sur `127.0.0.1`, sert une liste blanche d'assets et protège les routes d'extraction par un jeton de session en mémoire. Installez Node.js 22.12+ ou 24 LTS, `yt-dlp` et `ffmpeg`, puis lancez :
 
 ```bash
 npm install
 npm start
 ```
 
-Ouvrez ensuite <http://localhost:5400> dans votre navigateur. Sans `yt-dlp`, le frontend reste accessible, mais le mode DJ retombe sur Piped/IFrame.
+Ouvrez ensuite <http://127.0.0.1:5400>. Sans `yt-dlp` ou `ffmpeg`, le mode `auto` démarre proprement en IFrame, sans lancer d'extraction audio. L'import de fichiers locaux reste disponible et active automatiquement le moteur Web Audio.
 
 > 🎛️ **Fonctionnement du mode DJ (extraction + cache disque)** — au lieu de retransmettre les URLs fragiles du CDN YouTube (bloquées en 403 sur les Range ouverts et bridées à ~30 Ko/s), le serveur **télécharge l'audio une seule fois** via `yt-dlp -x` (qui gère le throttling/les signatures YouTube en interne), l'extrait en MP3 avec **ffmpeg**, et le met en cache sur disque (`cache/audio/<videoId>.mp3`). Le client streame alors ce fichier local avec support natif du Range HTTP (`206` sur `bytes=0-` → le tee Web Audio et le scratch fonctionnent parfaitement). Les métadonnées du morceau (titre, vignette, auteur) viennent de l'endpoint **oEmbed** de YouTube (`/api/streams/:id` répond en ~0,15 s, sans `yt-dlp`), et `yt-dlp` n'est invoqué **qu'au 1er** `/api/audio/:id` d'un morceau — le démarrage du serveur ne l'attend plus.
 >
@@ -104,7 +104,7 @@ Démarrez le serveur et ouvrez le navigateur en une seule commande :
 - macOS / Linux / WSL : `./start.sh`
 - Windows : double-cliquez sur `start.bat` (ou lancez-le dans un terminal)
 
-Les scripts démarrent le serveur Express et ouvrent automatiquement <http://localhost:5400>.
+Les scripts démarrent le serveur Express local et ouvrent automatiquement <http://127.0.0.1:5400>.
 
 ### 3. Créer et configurer une clé API YouTube Data (optionnel)
 
@@ -124,7 +124,7 @@ Dans la Google Cloud Console, ouvrez **API et services** → **Identifiants**, s
 
 - Sous **Restrictions relatives aux API**, choisissez de restreindre la clé et n'autorisez que **YouTube Data API v3**.
 - Si vous hébergez l'application sur un site web, sous **Restrictions liées aux applications**, choisissez **Sites Web** et ajoutez l'adresse de ce site.
-- Pour une utilisation locale, ajoutez `http://localhost:5400/*` si vous utilisez le script de lancement fourni ou le serveur Express. Ajoutez l'adresse et le port exacts que vous utilisez : une restriction ne contenant pas l'adresse ouverte dans le navigateur empêchera la recherche de fonctionner.
+- Pour une utilisation locale, ajoutez `http://127.0.0.1:5400/*` si vous utilisez le script de lancement fourni ou le serveur Express. Ajoutez l'adresse et le port exacts que vous utilisez : une restriction ne contenant pas l'adresse ouverte dans le navigateur empêchera la recherche de fonctionner.
 
 > Sans clé, l'app fonctionne entièrement : la recherche par mot-clé utilise automatiquement l'API publique Piped (pas de quota Google), et vous pouvez aussi coller une URL YouTube (`youtu.be/...`, `watch?v=...`) ou un ID vidéo brut. Le rate limiting de l'API officielle (quota dépassé / 429) est aussi géré proprement — le panneau affiche un avertissement plutôt qu'une erreur, et vous pouvez basculer sur la saisie URL/ID.
 >
@@ -148,11 +148,15 @@ yt-music-web-mixer/
 ├── README.md            # ce fichier
 ├── index.html           # structure : header, zone A | B, barre de mixage
 ├── server/
-│   └── server.js        # serveur Express, extraction yt-dlp, relais audio same-origin, téléchargement /api/download/:id
+│   ├── server.js        # factory Express + démarrage loopback, routes et extraction
+│   ├── task-queue.js    # file d’extraction bornée
+│   └── cache-manager.js # quota et éviction du cache audio
 ├── css/
 │   └── styles.css       # layout grille 2 colonnes + barre fixe + contrôles DJ
 └── js/
-    ├── config.js        # constantes, clé API et configuration lecteur
+    ├── config.js        # constantes, clé API et limites lecteur
+    ├── local-api.js     # session locale et fetch API authentifié
+    ├── id3.js           # parser ID3v2.3/v2.4 partagé
     ├── youtube.js       # wrapper YouTube IFrame API (fallback IFrame)
     ├── piped-streams.js # backend local prioritaire, fallback flux Piped, cache et refresh
     ├── local-load.js    # import de fichiers audio/vidéo locaux (bouton "Load local")
@@ -167,7 +171,7 @@ yt-music-web-mixer/
     └── app.js           # bootstrap, câblage événements, modes et état global
 ```
 
-**Stack** : frontend HTML + CSS + JS vanilla, avec un serveur local Node/Express optionnel. Aucun bundler ni framework frontend. `file://` convient au lecteur IFrame de base ; `http://localhost:5400` est recommandé pour la recherche, l'extraction locale et le mode DJ.
+**Stack** : frontend HTML + CSS + JS vanilla, avec un serveur local Node/Express optionnel. Aucun bundler ni framework frontend. `file://` convient au lecteur IFrame de base ; `http://127.0.0.1:5400` est recommandé pour la recherche, l'extraction locale et le mode DJ.
 
 ---
 
@@ -229,3 +233,25 @@ Tous les agents et modèles ont été pilotés et coordonnés par l'auteur, qui 
 ## 🙏 Remerciements
 
 Merci à **[RouterLab.ch](https://routerlab.ch/)** pour l'accès aux différents modèles utilisés dans ce projet.
+
+## 🔐 Sécurité, limites et maintenance
+
+- Le serveur écoute uniquement sur `127.0.0.1` et refuse les hôtes non locaux.
+- Les routes d’extraction exigent un jeton de session same-origin conservé uniquement en mémoire.
+- Les cookies navigateur sont désactivés par défaut. Pour un usage volontaire : `YTDLP_COOKIES_BROWSER=chrome` (ou autre navigateur supporté).
+- Le cache audio est limité par défaut à **2 Go ou 100 pistes**, avec éviction LRU.
+- Deux extractions maximum sont exécutées en parallèle et la file d’attente est bornée.
+- Les lives, durées inconnues et pistes de plus de **30 minutes** sont refusés en mode DJ local.
+- Le scratch PCM complet est réservé aux pistes de **10 minutes maximum**.
+- Le premier lancement utilise des decks vides. La démo est disponible avec `?demo=1`.
+
+### Vérification
+
+```bash
+npm ci
+npm run check:syntax
+npm test
+npm audit --omit=dev
+# Tests dépendant des instances publiques, explicitement opt-in :
+npm run test:network
+```

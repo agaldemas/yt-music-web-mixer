@@ -11,13 +11,13 @@ set -e
 cd "$(dirname "$0")"
 
 PORT="${PORT:-5400}"
-URL="http://localhost:${PORT}"
+URL="http://127.0.0.1:${PORT}"
 
 # 1) Dépendances : installe express si node_modules est absent.
 if [ ! -d node_modules ]; then
   echo "Installation des dépendances (npm install)…"
   if ! command -v npm >/dev/null 2>&1; then
-    echo "npm introuvable. Installez Node.js 18+ : https://nodejs.org/" >&2
+    echo "npm introuvable. Installez Node.js 22.12+ ou 24 LTS : https://nodejs.org/" >&2
     exit 1
   fi
   npm install

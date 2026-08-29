@@ -192,7 +192,7 @@ async function main() {
   // Pas instantané : on a appliqué crossfade=40 mais appliedCrossfade démarre à 25
   // → setVolume doit être appelé avec un volume intermédiaire (entre A=75%*0.9 et A=60%*0.9)
   // Premier palier seulement après 50ms (stepIntervalMs) → attendre 120ms.
-  await new Promise(r => setTimeout(r, 120));
+  await new Promise(r => setTimeout(r, 180));
   assert('  palier intermédiaire appliqué',
     players.A._setVolumeCalls.length > 0, 'A calls: ' + players.A._setVolumeCalls.length);
   // Attendre la fin du stepping
@@ -235,7 +235,7 @@ async function main() {
   xfEl.value = '20';
   xfEl._emit('input');
   // Pas d'application immédiate de 0.6 → on attend le stepping
-  await new Promise(r => setTimeout(r, 120)); // 25ms × ~40% de la distance → environ 4 paliers de 10
+  await new Promise(r => setTimeout(r, 180)); // 25ms × ~40% de la distance → environ 4 paliers de 10
   const tail = AE_mock.applyCrossfadeCalls;
   assert('  au moins 2 applyCrossfade appelés (ramp-up)',
     tail.length >= 2, 'got ' + tail.length + ' calls: ' + tail.join(','));

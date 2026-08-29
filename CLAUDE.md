@@ -36,7 +36,7 @@
    - **No Key + No Piped**: Manual URL or video ID entry per deck (no search).
    - **Never** hardcode a shared API key in source code.
 
-5. **No Build, No Bundler (Frontend).** Frontend remains HTML + vanilla JS (single `index.html` + scripts in `js/`). **Exception**: local Express backend (`server/server.js`) — Node/Express + `yt-dlp` — introduced to bypass YouTube anti-bot blocking Piped instances — see "Local Extraction Backend" below. Requires `npm install` (single dependency: `express`) and system-wide `yt-dlp`. `start.sh` / `start.bat` handle `npm install` automatically.
+5. **No Build, No Bundler (Frontend).** Frontend remains HTML + vanilla JS (single `index.html` + scripts in `js/`). **Exception**: local Express backend (`server/server.js`) — Node/Express + `yt-dlp` — introduced to bypass YouTube anti-bot blocking Piped instances — see "Local Extraction Backend" below. Requires `npm install`, Node.js 22.12+ or 24 LTS, plus system-wide `yt-dlp` and `ffmpeg` for local YouTube extraction. `start.sh` / `start.bat` handle `npm install` automatically.
 
 6. **Serve the App.** App opens in `file://` (YouTube IFrame players — minimum vital requirement), but search and Piped/Web Audio modes require a local server. **Recommended server is now the Express backend** (`start.sh` / `start.bat` → `node server/server.js` on port 5400), serving frontend as static AND local extraction. In `file://`, backend local is disabled (`/api/*` doesn't exist) and app falls back to Piped cascade (often blocked by anti-bot) then IFrame. ES modules may be blocked in `file://` — use classic scripts (`<script src="js/app.js">`).
 
@@ -229,7 +229,7 @@ On startup, server checks yt-dlp (`yt-dlp --version`); if absent, serves fronten
 ## 📜 Code Conventions
 
 - Vanilla JS, **no external dependencies** (no React, no jQuery). **Exception**: `server/server.js` (Node/Express backend) depends on `express` (declared in `package.json`).
-- **Local Backend**: `server/server.js` (Node/Express + yt-dlp). Port **5400** (`process.env.PORT`). API exposes `/api/streams/:id` (extraction JSON), `/api/audio/:id` (same-origin relay with Range + expiration handling) and `/api/health`. URL cache is in-memory only (never on disk). App remains usable without this server: `piped-streams.js` falls back to Piped then IFrame.
+- **Local Backend**: `server/server.js` (Node/Express + yt-dlp), port **5400** (`process.env.PORT`). API exposes `/api/session`, `/api/health`, `/api/ready`, `/api/streams/:id`, `/api/meta/:id`, `/api/audio/:id`, and `/api/download/:id`. Expensive routes require `X-Local-Token`; the disk audio cache is bounded. The app remains usable without this server: `piped-streams.js` falls back to Piped then IFrame.
 - `camelCase` for variables, `UPPER_SNAKE` for constants.
 - Single global state in `app.js` (`state` object), modules receive dependencies as parameters (no circular imports).
 - Short comments in French, English variable names.
@@ -267,3 +267,11 @@ On startup, server checks yt-dlp (`yt-dlp --version`); if absent, serves fronten
 - **Detected BPM is approximate** (±2-3 BPM). Transitions, builds and breaks can falsify detection. Beatmatch not perfect.
 - **Persistence limited**: if browser clears cache or user in private mode, saved data (`localStorage`) lost. This is normal.
 - **`localStorage` in mobile WebView**: may be purged by system (iOS especially). Do not guarantee persistence in mobile browsing.
+
+## Local backend security invariants (August 2026)
+
+- Loopback-only listener (`127.0.0.1`); do not restore `0.0.0.0`.
+- Never replace the static allowlist with `express.static(ROOT)`.
+- No wildcard CORS on `/api`; keep `X-Local-Token` in memory only.
+- `createApp()` must remain importable without starting the server; `startServer()` is the entry-point operation.
+- Browser cookies are opt-in, cache/extraction work is bounded, DJ tracks are limited to 30 minutes, and full scratch to 10 minutes.

@@ -9,14 +9,14 @@ REM Piped publiques. App + API sont same-origin -> le Web Audio DSP fonctionne.
 setlocal
 
 set PORT=5400
-set URL=http://localhost:%PORT%
+set URL=http://127.0.0.1:%PORT%
 
 REM 1) Dependances : installe express si node_modules est absent.
 if not exist node_modules (
   echo Installation des dependances (npm install)...
   call npm install
   if errorlevel 1 (
-    echo npm a echoue. Installez Node.js 18+ : https://nodejs.org/
+    echo npm a echoue. Installez Node.js 22.12+ ou 24 LTS : https://nodejs.org/
     pause
     exit /b 1
   )
