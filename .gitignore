@@ -31,3 +31,4 @@ cache/
 *.tmp
 # ne pas publier
 .env
+.codegraph/
