@@ -539,12 +539,27 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   text-align: left;
   font-family: inherit;
   font-size: 0.8rem;
-  cursor: pointer;
   transition: background 0.12s, border-color 0.12s;
   min-width: 0;
 }
 .search-result:hover { background: #272d3b; border-color: #3b82f6; }
-.search-result:focus { outline: none; border-color: #3b82f6; }
+.search-result-select {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.search-result-select:focus { outline: none; }
+.search-result:focus-within { border-color: #3b82f6; }
 .search-result-youtube-link {
   flex: 0 0 18px;
   align-self: center;
