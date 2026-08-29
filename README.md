@@ -161,6 +161,12 @@ yt-music-web-mixer/
 
 ---
 
+## 📐 Program Structure
+
+![Program Structure](program-structure.jpeg)
+
+---
+
 ## 🎛️ Usage
 
 1. Start the Express server for the full experience, then in **deck A**, search for or paste a track → select it → it loads into player A (sound is enabled automatically).

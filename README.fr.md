@@ -171,6 +171,12 @@ yt-music-web-mixer/
 
 ---
 
+## 📐 Structure Programme
+
+![Structure Programme](program-structure.jpeg)
+
+---
+
 ## 🎛️ Utilisation
 
 1. Démarrez le serveur Express pour l'expérience complète, puis dans la **voie A**, recherchez ou collez un morceau → sélectionnez-le → il se charge dans le lecteur A (le son est activé automatiquement).
