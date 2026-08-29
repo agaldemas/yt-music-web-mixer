@@ -40,7 +40,10 @@
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
+const { TaskQueue } = require('./task-queue');
+const { createCacheManager } = require('./cache-manager');
 
 let express;
 try {
@@ -52,6 +55,7 @@ try {
 
 const ROOT = path.join(__dirname, '..');
 const PORT = Number(process.env.PORT) || 5400;
+const HOST = process.env.HOST || '127.0.0.1';
 const CACHE_DIR = path.join(__dirname, '..', 'cache', 'audio');
 try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch (_) {}
 
@@ -59,6 +63,12 @@ try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch (_) {}
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
 const YTDLP_BIN_TIMEOUT_MS = 120000;   // -x peut être lent (téléchargement complet)
 const FFMPEG_TIMEOUT_MS = 60000;
+const MAX_TRACK_DURATION_SEC = Math.max(60, Number(process.env.MAX_TRACK_DURATION_SEC) || 30 * 60);
+const CACHE_MAX_BYTES = Math.max(1024 * 1024, Number(process.env.CACHE_MAX_BYTES) || 2 * 1024 * 1024 * 1024);
+const CACHE_MAX_ENTRIES = Math.max(1, Number(process.env.CACHE_MAX_ENTRIES) || 100);
+const EXTRACT_CONCURRENCY = Math.max(1, Number(process.env.EXTRACT_CONCURRENCY) || 2);
+const EXTRACT_MAX_PENDING = Math.max(1, Number(process.env.EXTRACT_MAX_PENDING) || 16);
+const LOCAL_TOKEN = crypto.randomBytes(32).toString('hex');
 
 // Détecte le blocage anti-bot YouTube dans la sortie yt-dlp.
 const RE_ANTIBOT = /sign in to confirm|not a bot|botguard|po[-_]?token/i;
@@ -69,7 +79,7 @@ const RE_VIDEOID = /^[a-zA-Z0-9_-]{6,15}$/;
 // yt-dlp lit les cookies du navigateur indiqué. Défaut : chrome (celui de
 // l'utilisateur). Désactiver : YTDLP_COOKIES_BROWSER=none.
 //   ex : YTDLP_COOKIES_BROWSER=safari  (ou firefox, edge, brave…)
-const YTDLP_COOKIES_BROWSER = process.env.YTDLP_COOKIES_BROWSER || 'chrome';
+const YTDLP_COOKIES_BROWSER = process.env.YTDLP_COOKIES_BROWSER || 'none';
 
 // Échec d'extraction des cookies NAVIGATEUR (Chrome fermé, trousseau bloqué,
 // base verrouillée…) — distinct de l'anti-bot vidéo. Dans ce cas on retente
@@ -77,6 +87,10 @@ const YTDLP_COOKIES_BROWSER = process.env.YTDLP_COOKIES_BROWSER || 'chrome';
 const RE_COOKIES_ERR = /unable to (extract|retrieve|read).*cookie|could not find.*cookie|failed to decrypt|keyring|keychain|trousseau|not found in (chrome|safari|firefox|edge|brave|opera|arc)/i;
 
 let ffmpegAvailable = null;
+let ytdlpAvailable = null;
+let httpServer = null;
+const extractQueue = new TaskQueue({ concurrency: EXTRACT_CONCURRENCY, maxPending: EXTRACT_MAX_PENDING });
+const cacheManager = createCacheManager({ dir: CACHE_DIR, maxBytes: CACHE_MAX_BYTES, maxEntries: CACHE_MAX_ENTRIES });
 
 // Chemin du MP3 en cache pour un videoId.
 function cachePathFor(videoId) { return path.join(CACHE_DIR, videoId + '.mp3'); }
@@ -382,7 +396,25 @@ function extractAudio(videoId) {
   let pending = extracting.get(videoId);
   if (!pending) {
     console.log('[extract] ▶ début extraction ' + videoId);
-    pending = runExtract(videoId, true).catch((err) => {
+    pending = extractQueue.add(async () => {
+      if (!ffmpegAvailable || !ytdlpAvailable) {
+        const e = new Error('Extraction audio indisponible : yt-dlp et ffmpeg sont requis.');
+        e.code = !ytdlpAvailable ? 'no-yt-dlp' : 'no-ffmpeg';
+        throw e;
+      }
+      const info = await fetchMetaEnriched(videoId);
+      if (!info.duration || info.duration <= 0) {
+        const e = new Error('Les lives et les vidéos sans durée ne sont pas supportés en mode DJ.');
+        e.code = 'live-not-supported';
+        throw e;
+      }
+      if (info.duration > MAX_TRACK_DURATION_SEC) {
+        const e = new Error('Cette piste dépasse la limite de ' + Math.round(MAX_TRACK_DURATION_SEC / 60) + ' minutes.');
+        e.code = 'track-too-long';
+        throw e;
+      }
+      return runExtract(videoId, true);
+    }).then((file) => cacheManager.prune([file]).then(() => file)).catch((err) => {
       if (RE_COOKIES_ERR.test(err.message || '')) {
         console.warn('[extract] ↻ cookies navigateur indisponibles (' + err.message + ') → retry sans cookies');
         return runExtract(videoId, false);
@@ -502,8 +534,9 @@ function runFfmpeg(args) {
 function embedThumbnail(mp3Path, videoId) {
   return new Promise((resolve) => {
     const thumbUrl = 'https://i.ytimg.com/vi/' + encodeURIComponent(videoId) + '/hqdefault.jpg';
-    const thumbPath = path.join(CACHE_DIR, videoId + '.jpg');
-    const tmpPath = path.join(CACHE_DIR, videoId + '.cover.mp3');
+    const opId = crypto.randomBytes(6).toString('hex');
+    const thumbPath = path.join(CACHE_DIR, videoId + '.' + opId + '.jpg');
+    const tmpPath = path.join(CACHE_DIR, videoId + '.' + opId + '.cover.mp3');
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 5000);
     fetch(thumbUrl, { signal: ctrl.signal })
@@ -578,8 +611,13 @@ function embedPopupMeta(mp3Path, videoId) {
           duration: Number(meta.duration) || 0,
           uploadDate: meta.uploadDate || '',
         });
-        // Garde-fou : le commentaire ID3 doit rester ≤ ~3 ko.
-        if (Buffer.byteLength(payload, 'utf8') > 3072) payload = payload.slice(0, 3072);
+        // Réduire les champs tout en conservant un JSON valide et <= 3 ko.
+        if (Buffer.byteLength(payload, 'utf8') > 3072) {
+          const compact = JSON.parse(payload);
+          compact.title = String(compact.title || '').slice(0, 240);
+          compact.uploader = String(compact.uploader || '').slice(0, 240);
+          payload = JSON.stringify(compact);
+        }
         return 'YTWM:' + payload; // préfixe détectable (stamp) : description COMM = YTWM
       })
       .then((stamped) => setCommentJson(mp3Path, stamped))
@@ -607,8 +645,9 @@ function parseId3v2(b) {
     const id = b.toString('latin1', off, off + 4);
     if (!/^[A-Z0-9]{4}$/.test(id)) break;
     let fs2 = b.readUInt32BE(off + 4);
-    if (fs2 & 0x80000000) {
-      fs2 = (b[off + 4] & 0x7f) * 0x200000 + (b[off + 5] & 0x7f) * 0x4000 + (b[off + 6] & 0x7f) * 0x80 + (b[off + 7] & 0x7f);
+    if (version >= 4) {
+      fs2 = (b[off + 4] & 0x7f) * 0x200000 + (b[off + 5] & 0x7f) * 0x4000
+        + (b[off + 6] & 0x7f) * 0x80 + (b[off + 7] & 0x7f);
     }
     const bodySize = Math.min(fs2, Math.max(0, tagEnd - off - 10));
     frames.push({ id: id, offset: off, bodySize: bodySize, body: b.slice(off + 10, off + 10 + bodySize) });
@@ -647,7 +686,7 @@ function setCommentJson(mp3Path, stampedText) {
         audioStart = parsed.tagEnd;
         frames = parsed.frames
           .filter(function (f) {
-            return !(f.id === 'COMM' || (f.id === 'TXXX' && f.body.includes('YTWM:')));
+            return !((f.id === 'COMM' || f.id === 'TXXX') && f.body.includes('YTWM:'));
           })
           .map(function (f) { return b.slice(f.offset, f.offset + 10 + f.bodySize); });
       }
@@ -682,7 +721,7 @@ function setCommentJson(mp3Path, stampedText) {
       header[8] = (bodyLen >> 7) & 0x7f;
       header[9] = bodyLen & 0x7f;
       const out = Buffer.concat([header].concat(frames, [b.slice(audioStart)]));
-      const tmp = mp3Path + '.meta.mp3';
+      const tmp = mp3Path + '.' + crypto.randomBytes(6).toString('hex') + '.meta.mp3';
       fs.writeFileSync(tmp, out);
       fs.renameSync(tmp, mp3Path);
       resolve();
@@ -724,20 +763,39 @@ function buildDownloadFilename(title, artist, ext) {
 }
 
 // ===== App Express =====
+function createApp() {
 const app = express();
 app.disable('x-powered-by');
 
-// CORS permissif sur les routes API (utile si l'app est ouverte depuis un
-// autre port / file:// ; inoffensif en same-origin).
-function corsApi(req, res, next) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Range');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
+app.use(function validateLocalHost(req, res, next) {
+  const host = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '');
+  if (host !== 'localhost' && host !== '127.0.0.1' && host !== '[::1]') return res.sendStatus(421);
+  next();
+});
+
+// Backend same-origin, protégé par un jeton de session gardé en mémoire.
+function requireLocalToken(req, res, next) {
+  if (req.path === '/health' || req.path === '/ready' || req.path === '/session') return next();
+  if (req.get('X-Local-Token') !== LOCAL_TOKEN) {
+    return res.status(403).json({ error: 'Accès local non autorisé.', code: 'local-auth-required' });
+  }
   next();
 }
-app.use('/api', corsApi);
+app.use('/api', requireLocalToken);
+
+app.use(function securityHeaders(req, res, next) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'", "base-uri 'self'", "object-src 'none'",
+    "script-src 'self' https://www.youtube.com https://s.ytimg.com", "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https://*.ytimg.com https://*.googleusercontent.com https://*.private.coffee",
+    "media-src 'self' blob: https:", "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
+    "connect-src 'self' https://www.youtube.com https://*.private.coffee", "form-action 'self'"
+  ].join('; '));
+  next();
+});
 
 // ===== Logging des requêtes (console) =====
 app.use(function (req, res, next) {
@@ -755,8 +813,33 @@ app.use(function (req, res, next) {
 // --- GET /api/health ---
 // État du serveur. PAS de yt-dlp ici (son --version met ~8s et bloquerait).
 // yt-dlp sera testé au 1er /api/audio/:id — s'il manque, le client verra un 502.
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true, port: PORT, ffmpeg: ffmpegAvailable, cache: 'disk' });
+app.get('/api/session', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ token: LOCAL_TOKEN });
+});
+
+function capabilitySnapshot() {
+  const audio = !!ffmpegAvailable && !!ytdlpAvailable;
+  return {
+    ok: true, ready: audio, port: PORT, host: HOST,
+    capabilities: { metadata: true, audio: audio },
+    dependencies: {
+      ytDlp: !!ytdlpAvailable, ytDlpVersion: typeof ytdlpAvailable === 'string' ? ytdlpAvailable : null,
+      ffmpeg: !!ffmpegAvailable, ffmpegVersion: typeof ffmpegAvailable === 'string' ? ffmpegAvailable : null,
+    },
+    queue: extractQueue.stats(),
+  };
+}
+
+app.get('/api/health', async (req, res) => {
+  const snapshot = capabilitySnapshot();
+  snapshot.cache = Object.assign({ kind: 'disk' }, await cacheManager.stats());
+  res.json(snapshot);
+});
+
+app.get('/api/ready', (req, res) => {
+  const snapshot = capabilitySnapshot();
+  res.status(snapshot.ready ? 200 : 503).json(snapshot);
 });
 
 // --- GET /api/streams/:id ---
@@ -769,26 +852,23 @@ app.get('/api/streams/:id', async (req, res) => {
   try {
     const meta = await fetchMeta(id);
 
-    // Métadonnées enrichies (best-effort, jamais bloquant) : vues, date ISO,
-    // description. Servies au frontend pour le popup — le client n'a plus à
-    // refaire /api/description quand l'entrée cache les contient.
-    let enriched = {};
-    try {
-      enriched = await fetchMetaEnriched(id);
-    } catch (_) { /* cache disque absent/échec → on sert juste oEmbed */ }
+    let enriched = readMetaCache(id) || {};
+    if (enriched.error) enriched = {};
+    if (!enriched.id) void fetchMetaEnriched(id).catch(() => {});
 
     res.json({
       title: meta.title,
-      duration: meta.duration,
+      duration: Number(enriched.duration) || Number(meta.duration) || 0,
       thumbnailUrl: meta.thumbnailUrl,
       uploader: meta.uploader,
       proxyUrl: '',
       views: enriched.views || 0,
       uploadDate: enriched.uploadDate || '',
       description: enriched.description || '',
-      audioStreams: [
+      audioAvailable: !!(ffmpegAvailable && ytdlpAvailable),
+      audioStreams: (ffmpegAvailable && ytdlpAvailable) ? [
         { url: '/api/audio/' + id, format: 'MP3', bitrate: 96, mimeType: 'audio/mpeg', videoOnly: false },
-      ],
+      ] : [],
       videoStreams: [],
     });
   } catch (err) {
@@ -860,7 +940,7 @@ app.get('/api/audio/:id', async (req, res) => {
       }
     });
   } catch (err) {
-    const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' ? 503 : 502));
+    const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' || err.code === 'no-yt-dlp' ? 503 : (err.code === 'queue-full' ? 429 : (err.code === 'track-too-long' || err.code === 'live-not-supported' ? 422 : 502))));
     console.error('[api] ✗ /api/audio/' + id + ' → HTTP ' + code + ' (' + (err.code || 'extract') + ') : ' + err.message);
     if (!res.headersSent) {
       res.status(code).json({ error: err.message || 'Extraction audio échouée.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
@@ -900,7 +980,7 @@ app.get('/api/download/:id', async (req, res) => {
       }
     });
   } catch (err) {
-    const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' ? 503 : 502));
+    const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' || err.code === 'no-yt-dlp' ? 503 : (err.code === 'queue-full' ? 429 : (err.code === 'track-too-long' || err.code === 'live-not-supported' ? 422 : 502))));
     console.error('[api] ✗ /api/download/' + id + ' → HTTP ' + code + ' (' + (err.code || 'extract') + ') : ' + err.message);
     if (!res.headersSent) {
       res.status(code).json({ error: err.message || 'Extraction audio échouée.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
@@ -908,64 +988,84 @@ app.get('/api/download/:id', async (req, res) => {
   }
 });
 
-// --- Frontend statique (depuis la racine du projet) ---
-app.use(express.static(ROOT, { extensions: ['html'] }));
-// Le cache n'est PAS servi en statique (déjà exposé via /api/audio de façon contrôlée).
-app.use('/cache', (req, res) => res.status(403).end());
+// --- Frontend statique allowlisté ---
+app.get('/', (req, res) => res.sendFile(path.join(ROOT, 'index.html')));
+app.use('/css', express.static(path.join(ROOT, 'css')));
+app.use('/js', express.static(path.join(ROOT, 'js')));
+app.get('/favicon.ico', (req, res) => res.sendFile(path.join(ROOT, 'favicon.ico')));
+app.get('/audio-file.png', (req, res) => res.sendFile(path.join(ROOT, 'audio-file.png')));
+app.use((req, res) => res.sendStatus(404));
+
+
+  return app;
+}
+
+
 
 // ===== Démarrage =====
 // On ne teste QUE ffmpeg (rapide). yt-dlp est testé paresseusement au 1er
 // /api/audio/:id (son --version met ~8s, on ne le met pas sur la voie critique).
-function checkFfmpeg() {
+function checkExecutable(bin, args, timeout) {
   return new Promise((resolve) => {
-    execFile('ffmpeg', ['-version'], { timeout: FFMPEG_TIMEOUT_MS }, (err, stdout) => {
+    execFile(bin, args, { timeout: timeout }, (err, stdout) => {
       if (err) return resolve(false);
-      const m = /^ffmpeg version (\S+)/.exec(String(stdout));
+      const text = String(stdout || '').trim();
+      const m = /(?:version\s+)?(\S+)/i.exec(text);
       resolve(m ? m[1] : true);
     });
   });
 }
+function checkFfmpeg() { return checkExecutable('ffmpeg', ['-version'], FFMPEG_TIMEOUT_MS); }
+function checkYtdlp() { return checkExecutable(YTDLP_BIN, ['--version'], 10000); }
 
-checkFfmpeg().then((fv) => {
-  ffmpegAvailable = fv;
-  app.listen(PORT, () => {
-    console.log('');
-    console.log('  YT Music Web Mixer — serveur local');
-    console.log('  → http://localhost:' + PORT);
-    console.log('');
-    if (ffmpegAvailable) {
-      console.log('  ✓ ffmpeg détecté' + (typeof fv === 'string' ? ' (v' + fv + ')' : '') + ' — extraction audio active.');
-    } else {
-      console.log('  ⚠ ffmpeg INTROUVABLE — l\'extraction audio échouera.');
-      console.log('    Installez ffmpeg : https://ffmpeg.org/download.html');
-    }
-    console.log('  Cache audio : ' + CACHE_DIR);
-    if (YTDLP_COOKIES_BROWSER && YTDLP_COOKIES_BROWSER !== 'none') {
-      console.log('  ✓ cookies ' + YTDLP_COOKIES_BROWSER + ' (--cookies-from-browser ' + YTDLP_COOKIES_BROWSER + ') — contourne LOGIN_REQUIRED');
-    } else {
-      console.log('  ⚠ cookies navigateur désactivés — les vidéos LOGIN_REQUIRED échoueront (451).');
-      console.log('    Pour les activer : YTDLP_COOKIES_BROWSER=chrome|safari|firefox…');
-    }
-    console.log('  (yt-dlp est appelé paresseusement au 1er chargement audio.)');
-    console.log('  Ctrl+C pour arrêter.');
-    console.log('');
+async function startServer() {
+  const values = await Promise.all([checkFfmpeg(), checkYtdlp()]);
+  ffmpegAvailable = values[0];
+  ytdlpAvailable = values[1];
+  const app = createApp();
+  await cacheManager.cleanupTemps().catch(() => {});
+  return new Promise((resolve, reject) => {
+    httpServer = app.listen(PORT, HOST, () => {
+      console.log('');
+      console.log('  YT Music Web Mixer — serveur local');
+      console.log('  → http://' + HOST + ':' + PORT);
+      console.log('');
+      if (ffmpegAvailable) console.log('  ✓ ffmpeg détecté — extraction audio active.');
+      else console.log('  ⚠ ffmpeg INTROUVABLE — le mode DJ local est désactivé.');
+      console.log('  Cache audio : ' + CACHE_DIR);
+      console.log('  Cookies navigateur : ' + (YTDLP_COOKIES_BROWSER === 'none' ? 'désactivés (défaut sûr)' : YTDLP_COOKIES_BROWSER));
+      console.log('  yt-dlp : ' + (ytdlpAvailable ? 'détecté' : 'INTROUVABLE') + '.');
+      console.log('  Limite piste DJ : ' + Math.round(MAX_TRACK_DURATION_SEC / 60) + ' min.');
+      console.log('  Ctrl+C pour arrêter.');
+      console.log('');
+      resolve(httpServer);
+    });
+    httpServer.once('error', reject);
   });
-});
+}
 
-// ===== Filet de sécurité global =====
-// Le serveur ne doit JAMAIS mourir à cause d'une erreur DNS/yt-dlp/anti-bot :
-// chaque route API a déjà son try/catch, mais on couvre les cas résiduels
-// (promesse dérivée oubliée, callback async non bordé…). On loggue et on
-// continue. Sans ces handlers, Node ≥ 15 tue le processus sur la moindre
-// rejection non consommée — et l'app entière tombe.
-process.on('unhandledRejection', (reason) => {
-  console.error('[server] ⚠ unhandledRejection interceptée (serveur maintenu) :',
-    reason instanceof Error ? reason.message : String(reason));
-});
+let handlersInstalled = false;
+function installProcessHandlers() {
+  if (handlersInstalled) return;
+  handlersInstalled = true;
+  process.on('unhandledRejection', (reason) => {
+    console.error('[server] ✗ unhandledRejection :', reason instanceof Error ? reason.stack : String(reason));
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('[server] ✗ uncaughtException :', err && err.stack ? err.stack : String(err));
+    if (httpServer) {
+      httpServer.close(() => process.exit(1));
+      setTimeout(() => process.exit(1), 5000).unref();
+    } else process.exit(1);
+  });
+}
 
-process.on('uncaughtException', (err) => {
-  console.error('[server] ⚠ uncaughtException interceptée (serveur maintenu) :',
-    err && err.message ? err.message : String(err));
-  // Note : on ne re-lance pas volontairement ; l'état peut être dégradé sur
-  // cette requête, mais le serveur reste en vie pour les suivantes.
-});
+if (require.main === module) {
+  installProcessHandlers();
+  startServer().catch((err) => {
+    console.error('[server] démarrage impossible :', err && err.stack ? err.stack : String(err));
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { createApp, startServer };
