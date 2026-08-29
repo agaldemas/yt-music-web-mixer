@@ -211,7 +211,9 @@ async function main() {
   assert('lowShelf → midPeak', chainA.lowShelf._connections.includes(chainA.midPeak));
   assert('midPeak → highShelf', chainA.midPeak._connections.includes(chainA.highShelf));
   assert('highShelf → djFilter', chainA.highShelf._connections.includes(chainA.djFilter));
-  assert('djFilter → deckGain', chainA.djFilter._connections.includes(chainA.deckGain));
+  assert('djFilter → deckTrim', chainA.djFilter._connections.includes(chainA.deckTrim));
+  assert('deckTrim → muteGain', chainA.deckTrim._connections.includes(chainA.muteGain));
+  assert('muteGain → deckGain', chainA.muteGain._connections.includes(chainA.deckGain));
   assert('djFilter → analyser (tap pre-fader)', chainA.djFilter._connections.includes(chainA.analyser));
   assert('deckGain → masterGain', chainA.deckGain._connections.includes(masterGain));
 

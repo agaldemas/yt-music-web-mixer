@@ -325,7 +325,7 @@
     if (id && !c._npDescText && !c._npDescFailed) {
       if (body) body.textContent = 'Description…';
       el.classList.add('np-desc-visible');
-      fetch('/api/description/' + encodeURIComponent(id))
+      ((window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch)('/api/description/' + encodeURIComponent(id))
         .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
         .then(function (data) {
           if (data && data.description) {

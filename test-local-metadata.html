@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Test Métadonnées Locales - YT Music Web Mixer</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    .deck { border: 1px solid #ccc; padding: 10px; margin: 10px 0; display: inline-block; vertical-align: top; min-width: 300px;}
+    .np { background: #f5f5f5; padding: 10px; border-radius: 4px; margin-bottom: 10px; }
+    .np-thumb { width: 200px; height: 113px; object-fit: cover; display: block; margin-bottom: 5px; }
+    .np-title { font-weight: bold; margin-bottom: 3px; }
+    .np-meta { font-size: 12px; color: #666; }
+    input[type="file"] { margin-top: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Test Métadonnées Locales</h1>
+  
+  <div class="deck" data-deck="A">
+    <h2>Deck A</h2>
+    <div class="np">
+      <img id="thumb-a" class="np-thumb" style="display:none;">
+      <div id="title-a" class="np-title"></div>
+      <div id="meta-a" class="np-meta"></div>
+    </div>
+    <button onclick="loadLocal('A')">Charger un fichier local</button>
+    <input type="file" id="file-input-A" accept="audio/*">
+  </div>
+
+  <script>
+    // Simulation simplifiée pour tester l'affichage des métadonnées
+    function loadLocal(deckId) {
+      var fileInput = document.getElementById('file-input-' + deckId);
+      if (!fileInput.files.length) {
+        alert('Veuillez sélectionner un fichier audio');
+        return;
+      }
+      
+      var file = fileInput.files[0];
+      var reader = new FileReader();
+      
+      reader.onload = function(e) {
+        var buf = e.target.result; // ArrayBuffer
+        
+        // Extraire le titre (nom du fichier sans extension)
+        var title = file.name.replace(/\.[^/.]+$/, '');
+        
+        // Pour la démo, on simule une vignette avec un placeholder
+        var thumbUrl = null; // Dans le vrai code, cela serait issu de extractCoverImage()
+        
+        // Afficher les métadonnées
+        document.getElementById('title-' + deckId).textContent = title || '—';
+        document.getElementById('meta-' + deckId).textContent = deckId === 'A' ? 'Fichier local · DSP' : 'Fichier local';
+        document.querySelector('.np-thumb[data-deck="' + deckId + '"]').style.display = thumbUrl ? 'block' : 'none';
+        
+        if (thumbUrl) {
+          var thumbImg = document.querySelector('.np-thumb[data-deck="' + deckId + '"]');
+          thumbImg.src = thumbUrl;
+          thumbImg.style.display = 'block';
+        }
+      };
+      
+      reader.readAsArrayBuffer(file);
+    }
+
+    // Câbler l'input file sur le bouton
+    var inputA = document.getElementById('file-input-A');
+    if (inputA) {
+      inputA.addEventListener('change', function() {
+        loadLocal('A');
+      });
+    }
+  </script>
+</body>
+</html>

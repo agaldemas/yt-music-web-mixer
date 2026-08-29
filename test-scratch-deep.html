@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Test snap-back approfondi</title>
+<style>body{font:13px monospace;background:#111;color:#eee;padding:12px}pre{background:#000;padding:10px;border:1px solid #444;max-height:80vh;overflow:auto}button{padding:10px;background:#222;color:#eee;border:1px solid #555;cursor:pointer;margin:10px 0}#status{font-weight:bold}</style>
+</head>
+<body>
+<h1>Test snap-back approfondi</h1>
+<button id="startBtn">▶ START</button>
+<p id="status">en attente...</p>
+<pre id="log"></pre>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function main() {
+  const status = document.getElementById('status');
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+
+  try {
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+
+    const masterGain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    const sourceMuteGain = ctx.createGain();
+    sourceMuteGain.gain.value = 1.0;
+    const scratchGain = ctx.createGain();
+    const resp = await fetch('./Mandjou_QDIUL6T5GQU.mp3');
+    const scratchBuffer = await ctx.decodeAudioData(await resp.arrayBuffer());
+
+    const source = ctx.createMediaElementSource(audio);
+    source.connect(sourceMuteGain);
+    sourceMuteGain.connect(scratchGain);
+    scratchGain.connect(masterGain);
+    masterGain.connect(analyser);
+    masterGain.connect(ctx.destination);
+    masterGain.gain.value = 1.0;
+
+    const TEST_OFFSET = 10;
+    const TEST_LEN = 2.0;
+
+    // Capture détaillée (40 samples = ~800ms)
+    function captureDetailed() {
+      return new Promise(async (resolve) => {
+        const samples = [];
+        const start = Date.now();
+        while (Date.now() - start < TEST_LEN * 1000) {
+          const buf = new Uint8Array(analyser.fftSize);
+          analyser.getByteTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = (buf[i] - 128) / 128;
+            sum += v * v;
+          }
+          samples.push(Math.sqrt(sum / buf.length));
+          await sleep(20);
+        }
+        resolve(samples);
+      });
+    }
+
+    // RÉFÉRENCE
+    log('\n=== RÉFÉRENCE ===');
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    await audio.play();
+    const refSamples = await captureDetailed();
+    const refStr = refSamples.slice(0, 40).map(s => s.toFixed(3)).join(',');
+    log('[ref] first 40 RMS:', refStr);
+    audio.pause();
+
+    // STRAT V3
+    log('\n=== STRAT V3 ===');
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    sourceMuteGain.disconnect();
+    const sn = ctx.createBufferSource();
+    sn.buffer = scratchBuffer;
+    sn.playbackRate.value = 0;
+    sn.connect(scratchGain);
+    sn.start(0, TEST_OFFSET);
+    scratchGain.gain.value = 1;
+    await sleep(500);
+    sourceMuteGain.gain.value = 0;
+    scratchGain.gain.value = 0;
+    sn.stop();
+    sn.disconnect();
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    sourceMuteGain.connect(scratchGain);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    await audio.play();
+    const stratSamples = await captureDetailed();
+    const stratStr = stratSamples.slice(0, 40).map(s => s.toFixed(3)).join(',');
+    log('[V3] first 40 RMS:', stratStr);
+    audio.pause();
+
+    // COMPARAISON samples par samples
+    log('\n=== COMPARAISON DELTA (par sample) ===');
+    let totalDelta = 0;
+    let maxDelta = 0;
+    let maxDeltaAt = 0;
+    for (let i = 0; i < Math.min(refSamples.length, stratSamples.length); i++) {
+      const d = Math.abs(refSamples[i] - stratSamples[i]);
+      if (d > maxDelta) { maxDelta = d; maxDeltaAt = i; }
+      totalDelta += d;
+    }
+    log('totalDelta=', totalDelta.toFixed(3));
+    log('maxDelta=', maxDelta.toFixed(3), 'at sample #', maxDeltaAt, '(', (maxDeltaAt * 20), 'ms)');
+    log('ref sample #' + maxDeltaAt + ':', refSamples[maxDeltaAt].toFixed(3));
+    log('strat sample #' + maxDeltaAt + ':', stratSamples[maxDeltaAt].toFixed(3));
+
+    // Si maxDelta > 0.1 sur les 10 premiers samples, c'est un vrai snap-back audible
+    let earlyDelta = 0;
+    for (let i = 0; i < 10; i++) {
+      earlyDelta += Math.abs(refSamples[i] - stratSamples[i]);
+    }
+    log('earlyDelta (10 premiers samples) =', earlyDelta.toFixed(3),
+        earlyDelta > 0.5 ? '⚠️ SNAP-BACK' : '✓ OK');
+
+    status.textContent = 'TERMINE';
+  } catch (err) {
+    status.textContent = 'ERREUR: ' + err.message;
+    log('ERREUR:', err.message, err.stack);
+  }
+}
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').style.display = 'none';
+  document.getElementById('status').textContent = 'en cours...';
+  main();
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Test release scratch — simulation fidèle engage/disengage</title>
+<style>
+  body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #eee; }
+  h1 { color: #4f4; }
+  .test { margin: 10px 0; padding: 10px; border: 1px solid #444; border-radius: 4px; }
+  .pass { border-color: #4f4; background: #142814; }
+  .fail { border-color: #f44; background: #281414; }
+  pre { white-space: pre-wrap; margin: 5px 0; }
+  #progress { font-weight: bold; margin: 20px 0; }
+  button { padding: 10px 20px; margin: 5px; background: #48f; color: white; border: none; border-radius: 4px; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Test release scratch — engage/disengage avec Web Audio</h1>
+<p>Reproduit fidèlement ce que fait <code>audio-engine.engageScratch</code> +
+<code>audio-engine.disengageScratch</code> : disconnect du MediaElementSource pendant
+~1s (durée typique d'un scratch), puis reconnect + seek + resume.</p>
+
+<p>Si le bug existe, ce test échouera. S'il passe, le bug est ailleurs (UI ou scratch.js).</p>
+
+<p>
+  <input type="file" id="filepicker" accept="audio/mpeg,audio/mp3">
+  <button id="run" disabled>Lancer les tests</button>
+</p>
+
+<div id="progress">Sélectionne d'abord le MP3.</div>
+<div id="results"></div>
+
+<script>
+window.SCRATCH_TEST = { pass: 0, fail: 0 };
+
+function assert(cond, msg) {
+  if (cond) { SCRATCH_TEST.pass++; return '<span style="color:#4f4">✓ PASS</span> ' + msg; }
+  else      { SCRATCH_TEST.fail++; return '<span style="color:#f44">✗ FAIL</span> ' + msg; }
+}
+
+function makeResult(name, html) {
+  var cls = html.indexOf('FAIL') !== -1 ? 'fail' : 'pass';
+  var div = document.createElement('div');
+  div.className = 'test ' + cls;
+  div.innerHTML = '<h3>' + name + '</h3>' + html;
+  document.getElementById('results').appendChild(div);
+}
+
+function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+// Crée un <audio> + chaîne Web Audio (MediaElementSource → Gain → destination).
+// C'est exactement la topologie de audio-engine.createDeckChain.
+function setupDeck(file) {
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(file);
+    var audio = new Audio();
+    audio.preload = 'auto';
+    audio.src = url;
+
+    audio.addEventListener('loadedmetadata', function () {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var source = ctx.createMediaElementSource(audio);
+      var scratchGain = ctx.createGain();
+      scratchGain.gain.value = 1;
+      source.connect(scratchGain);
+      scratchGain.connect(ctx.destination);
+
+      resolve({
+        ctx: ctx,
+        audio: audio,
+        source: source,
+        scratchGain: scratchGain,
+      });
+    });
+    audio.addEventListener('error', function () {
+      reject(new Error('audio load error'));
+    });
+  });
+}
+
+// Simule fidèlement audio-engine.engageScratch : disconnect du MediaElementSource.
+// Pendant ce temps, l'audio continue à jouer (mais en silence car déconnecté).
+function engageScratch(deck) {
+  try { deck.source.disconnect(); } catch (e) {}
+}
+
+// Simule fidèlement audio-engine.disengageScratch : la stratégie actuelle
+// (telle qu'elle est dans audio-engine.js après nos dernières modifs).
+function disengageScratch(deck, target, wasPlaying) {
+  var audio = deck.audio;
+  var ctx = deck.ctx;
+  var scratchGain = deck.scratchGain;
+  var source = deck.source;
+
+  // 1. Mute scratchGain
+  try {
+    scratchGain.gain.cancelScheduledValues(ctx.currentTime);
+    scratchGain.gain.value = 0;
+  } catch (e) {}
+
+  // 2. audio.pause() + audio.load() + currentTime = target
+  try { audio.pause(); } catch (e) {}
+  try { audio.load(); } catch (e) {}
+  try { audio.currentTime = target; } catch (e) {}
+
+  // 3. Reconnect MediaElementSource → scratchGain
+  try { source.connect(scratchGain); } catch (e) {}
+
+  // 4. Resume si wasPlaying
+  if (wasPlaying) {
+    setTimeout(function () {
+      audio.play().catch(function () {});
+    }, 60);
+  }
+
+  // 5. Démute scratchGain après le "buffer drain"
+  setTimeout(function () {
+    try {
+      scratchGain.gain.cancelScheduledValues(0);
+      scratchGain.gain.value = 1;
+    } catch (e) {}
+  }, 400);
+}
+
+// === TESTS ===
+
+async function testPauseBeforeScratch(deck) {
+  var audio = deck.audio;
+  var html = '';
+
+  audio.currentTime = 10;
+  audio.pause();
+  await wait(100);
+
+  var startTime = audio.currentTime;
+  var target = 11.5; // scratch simulé de +1.5s
+  var wasPlaying = false;
+
+  html += '<pre>AVANT scratch : paused=true, currentTime=' + startTime.toFixed(3) + '</pre>';
+  html += '<pre>Simule scratch (disconnect) pendant 1s</pre>';
+
+  engageScratch(deck);
+  await wait(1000); // durée typique d'un scratch
+  html += '<pre>Pendant scratch : audio.currentTime (silencieux) = ' + audio.currentTime.toFixed(3) + '</pre>';
+
+  disengageScratch(deck, target, wasPlaying);
+
+  // Vérifie après 600ms (le temps du 400ms drain + 200ms de marge)
+  await wait(600);
+
+  var actual = audio.currentTime;
+  var delta = Math.abs(actual - target);
+
+  html += '<pre>APRÈS release (600ms) :</pre>';
+  html += '<pre>  audio.currentTime = ' + actual.toFixed(3) + ' (cible=' + target.toFixed(3) + ', Δ=' + delta.toFixed(3) + ')</pre>';
+  html += '<pre>  audio.paused = ' + audio.paused + '</pre>';
+  html += assert(delta < 0.1, 'Position ≈ position FINALE du scratch (pas le DÉBUT)');
+  html += assert(audio.paused === true, 'Audio reste en pause');
+
+  makeResult('Test 1 — Pause avant scratch (10s → 11.5s)', html);
+}
+
+async function testPlayBeforeScratch(deck) {
+  var audio = deck.audio;
+  var html = '';
+
+  audio.currentTime = 20;
+  audio.pause();
+  await wait(50);
+  await audio.play();
+  await wait(300);
+
+  var startTime = audio.currentTime;
+  var target = 22; // scratch simulé de +2s
+  var wasPlaying = true;
+
+  html += '<pre>AVANT scratch : paused=false, currentTime=' + startTime.toFixed(3) + '</pre>';
+
+  engageScratch(deck);
+  await wait(1000);
+
+  disengageScratch(deck, target, wasPlaying);
+  await wait(800); // 400ms drain + 60ms resume + lecture
+
+  var actual = audio.currentTime;
+
+  html += '<pre>APRÈS release (800ms) :</pre>';
+  html += '<pre>  audio.currentTime = ' + actual.toFixed(3) + ' (cible ≥ ' + target.toFixed(3) + ')</pre>';
+  html += '<pre>  audio.paused = ' + audio.paused + '</pre>';
+  html += assert(actual >= target - 0.2, 'Position après release ≥ cible (en lecture, a continué d\'avancer)');
+  html += assert(audio.paused === false, 'Audio reste en lecture');
+
+  makeResult('Test 2 — Lecture avant scratch (20s → 22s)', html);
+}
+
+async function testScratchBackward(deck) {
+  var audio = deck.audio;
+  var html = '';
+
+  audio.currentTime = 30;
+  audio.pause();
+  await wait(100);
+
+  var target = 28; // scratch arrière de 2s
+  var wasPlaying = false;
+
+  html += '<pre>AVANT scratch : paused=true, currentTime=30.000</pre>';
+
+  engageScratch(deck);
+  await wait(1000);
+
+  disengageScratch(deck, target, wasPlaying);
+  await wait(600);
+
+  var actual = audio.currentTime;
+
+  html += '<pre>APRÈS release (600ms) :</pre>';
+  html += '<pre>  audio.currentTime = ' + actual.toFixed(3) + ' (cible=28.000)</pre>';
+  html += '<pre>  audio.paused = ' + audio.paused + '</pre>';
+  html += assert(Math.abs(actual - 28) < 0.1, 'Position ≈ 28s (scratch arrière)');
+  html += assert(audio.paused === true, 'Audio reste en pause');
+
+  makeResult('Test 3 — Scratch arrière (30s → 28s)', html);
+}
+
+async function testSequentialScratches(deck) {
+  var audio = deck.audio;
+  var html = '';
+  html += '<pre>--- 3 scratches enchaînés (vérif drift) ---</pre>';
+
+  var positions = [
+    { start: 5,  delta: 2,   wasPlaying: false },
+    { start: 15, delta: -3,  wasPlaying: false },
+    { start: 25, delta: 1.5, wasPlaying: false },
+  ];
+
+  for (var i = 0; i < positions.length; i++) {
+    var p = positions[i];
+    audio.currentTime = p.start;
+    audio.pause();
+    await wait(80);
+
+    var target = p.start + p.delta;
+
+    engageScratch(deck);
+    await wait(1000);
+    disengageScratch(deck, target, p.wasPlaying);
+    await wait(600);
+
+    var actual = audio.currentTime;
+    var ok = Math.abs(actual - target) < 0.1;
+    html += '<pre>Scratch ' + (i+1) + ' : ' + p.start.toFixed(2) + 's + ' + p.delta.toFixed(2) + 's = ' + target.toFixed(2) + 's → actuel=' + actual.toFixed(3) + (ok ? ' ✓' : ' ✗ retour à ' + p.start.toFixed(2) + 's ?') + '</pre>';
+    html += assert(ok, 'Scratch ' + (i+1) + ' : repositionnement correct');
+  }
+
+  makeResult('Test 4 — 3 scratches enchaînés', html);
+}
+
+document.getElementById('filepicker').addEventListener('change', function (e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  document.getElementById('progress').textContent = 'MP3 chargé : ' + file.name + ' — clique sur Lancer les tests';
+  document.getElementById('run').disabled = false;
+  SCRATCH_TEST.file = file;
+});
+
+document.getElementById('run').addEventListener('click', async function () {
+  document.getElementById('results').innerHTML = '';
+  SCRATCH_TEST.pass = 0;
+  SCRATCH_TEST.fail = 0;
+
+  var file = SCRATCH_TEST.file;
+  if (!file) {
+    document.getElementById('progress').innerHTML = '<span style="color:#f44">Sélectionne d\'abord le MP3</span>';
+    return;
+  }
+
+  document.getElementById('progress').textContent = 'Chargement...';
+
+  try {
+    var deck = await setupDeck(file);
+    document.getElementById('progress').textContent = 'Tests en cours... (durée MP3: ' + deck.audio.duration.toFixed(2) + 's)';
+
+    if (deck.audio.duration < 35) {
+      document.getElementById('progress').innerHTML = '<span style="color:#f44">MP3 trop court (besoin ≥ 35s)</span>';
+      return;
+    }
+
+    await testPauseBeforeScratch(deck);
+    await testPlayBeforeScratch(deck);
+    await testScratchBackward(deck);
+    await testSequentialScratches(deck);
+
+    document.getElementById('progress').innerHTML =
+      'Terminé : <span style="color:#4f4">' + SCRATCH_TEST.pass + '</span> pass, '
+      + '<span style="color:#f44">' + SCRATCH_TEST.fail + '</span> fail';
+  } catch (err) {
+    document.getElementById('progress').innerHTML =
+      '<span style="color:#f44">Erreur: ' + err.message + '</span>';
+  }
+});
+</script>
+</body>
+</html>

@@ -6,13 +6,15 @@
   "type": "commonjs",
   "main": "server/server.js",
   "scripts": {
-    "start": "node server/server.js"
+    "start": "node server/server.js",
+    "test": "node tests/run-all.js",
+    "test:network": "node tests/run-network.js",
+    "check:syntax": "node tests/check-syntax.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": "^22.12.0 || ^24.0.0"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "youtubei.js": "^18.0.0"
+    "express": "^4.21.2"
   }
 }

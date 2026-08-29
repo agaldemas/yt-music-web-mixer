@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Test réel : snap-back fixé par sourceMuteGain ?</title>
+<style>body{font:13px monospace;background:#111;color:#eee;padding:12px}pre{background:#000;padding:10px;border:1px solid #444;max-height:80vh;overflow:auto}button{padding:10px;background:#222;color:#eee;border:1px solid #555;cursor:pointer;margin:10px 0}#status{font-weight:bold}</style>
+</head>
+<body>
+<h1>Test snap-back réel — vrai Chrome, vrai MP3, vrai AudioEngine.disengageScratch</h1>
+<p>Compare un play normal à TEST_OFFSET=10s (référence) contre un play après un scratch court de 500ms avec disengageScratch à target=12s. Si les premiers samples RMS sont similaires entre ref et test, le snap-back est FIXÉ. Si le test entend l'audio de la position 10s puis un saut, c'est cassé.</p>
+<button id="startBtn">▶ START</button>
+<p id="status">en attente...</p>
+<pre id="log"></pre>
+<script src="js/config.js"></script>
+<script src="js/audio-engine.js"></script>
+<script src="js/scratch.js"></script>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function captureRMS(analyser, durationMs) {
+  const samples = [];
+  const start = Date.now();
+  while (Date.now() - start < durationMs) {
+    const buf = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = (buf[i] - 128) / 128;
+      sum += v * v;
+    }
+    samples.push(Math.sqrt(sum / buf.length));
+    await sleep(20);
+  }
+  return samples;
+}
+
+async function main() {
+  const status = document.getElementById('status');
+  status.textContent = 'en cours...';
+
+  try {
+    const AE = window.AudioEngine;
+    await AE.resume();
+
+    // === Setup audio élément ===
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+    log('✓ audio.canplay, duration=' + audio.duration.toFixed(1) + 's');
+
+    // === Décode buffer scratch (MP3 complet) ===
+    log('--- Décodage MP3 en AudioBuffer ---');
+    const t0 = performance.now();
+    const mp3Resp = await fetch('./Mandjou_QDIUL6T5GQU.mp3');
+    const mp3Buf = await mp3Resp.arrayBuffer();
+    const scratchBuffer = await AE.getContext().decodeAudioData(mp3Buf);
+    log('✓ buffer scratch décodé en ' + (performance.now() - t0).toFixed(0) + 'ms (duration=' + scratchBuffer.duration.toFixed(1) + 's)');
+
+    // === Setup chaîne audio réelle via createDeckChain ===
+    AE.createDeckChain('TEST', audio);
+    const chain = AE.hasDeck('TEST') ? {} : null;
+    // Injecte le buffer scratch dans la chaîne (chemin privé via _test_inject)
+    AE.loadDeckBufferFromBlob('TEST', (await (await fetch('./Mandjou_QDIUL6T5GQU.mp3')).arrayBuffer()));
+    log('✓ chain créée, buffer injecté');
+
+    const analyser = AE.getAnalyser('TEST');
+    log('✓ analyser prêt, fftSize=' + analyser.fftSize);
+
+    // === Référence : play à 10s sans scratch ===
+    const REF_OFFSET = 10;
+    const REF_LEN_MS = 1200;
+    log('\n=== RÉFÉRENCE : play à ' + REF_OFFSET + 's, capture ' + REF_LEN_MS + 'ms ===');
+    audio.pause();
+    audio.currentTime = REF_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    await audio.play();
+    const refSamples = await captureRMS(analyser, REF_LEN_MS);
+    const refFirst10 = refSamples.slice(0, 10).map(s => s.toFixed(3)).join(',');
+    log('[ref] 10 premiers samples RMS: ' + refFirst10);
+    audio.pause();
+
+    // === TEST : scratch 500ms + disengageScratch à target=12s ===
+    log('\n=== TEST : engage → wait 500ms → disengageScratch(target=12, wasPlaying=true) ===');
+    audio.pause();
+    audio.currentTime = REF_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    await audio.play();
+    log('[test] pre-engage: audio.currentTime=' + audio.currentTime.toFixed(2)
+        + '  paused=' + audio.paused);
+
+    await AE.engageScratch('TEST');
+    log('[test] engage OK, isScratchEngaged=' + AE.isScratchEngaged('TEST'));
+    await sleep(500);
+    log('[test] 500ms scratch écoulées');
+
+    AE.disengageScratch('TEST', 12, true);
+    log('[test] disengage appelé, target=12, wasPlaying=true');
+    // Attend le drain interne (800ms) + marge
+    await sleep(1000);
+    log('[test] post-disengage: audio.currentTime=' + audio.currentTime.toFixed(2)
+        + '  paused=' + audio.paused);
+
+    const testSamples = await captureRMS(analyser, REF_LEN_MS);
+    const testFirst10 = testSamples.slice(0, 10).map(s => s.toFixed(3)).join(',');
+    log('[test] 10 premiers samples RMS: ' + testFirst10);
+
+    // === Comparaison ===
+    log('\n=== COMPARAISON ===');
+    let delta = 0;
+    for (let i = 0; i < Math.min(refSamples.length, testSamples.length); i++) {
+      delta += Math.abs(refSamples[i] - testSamples[i]);
+    }
+    const earlyDelta = refSamples.slice(0, 10)
+      .map((v, i) => Math.abs(v - testSamples[i]))
+      .reduce((a, b) => a + b, 0);
+    log('delta total (somme |ref-test| sur ' + Math.min(refSamples.length, testSamples.length) + ' samples) = ' + delta.toFixed(3));
+    log('delta sur 10 premiers samples = ' + earlyDelta.toFixed(3)
+        + (earlyDelta > 0.5 ? '  ⚠️ SNAP-BACK détecté !' : '  ✓ Pas de snap-back'));
+
+    // Position finale
+    log('\n=== POSITION FINALE ===');
+    log('audio.currentTime = ' + audio.currentTime.toFixed(2) + 's (target=12s)');
+    log('→ ' + (Math.abs(audio.currentTime - 12) < 0.3
+        ? '✓ Position correcte (proche de 12s)'
+        : '✗ Position incorrecte (snap-back audible)'));
+
+    status.textContent = 'TERMINE — delta total=' + delta.toFixed(3) + ', early=' + earlyDelta.toFixed(3);
+  } catch (err) {
+    status.textContent = 'ERREUR';
+    log('ERREUR:', err.message, err.stack);
+  }
+}
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').style.display = 'none';
+  main();
+};
+</script>
+</body>
+</html>

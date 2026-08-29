@@ -61,7 +61,7 @@ npm install
 npm start
 ```
 
-Open <http://localhost:5400> in your browser. Without `yt-dlp`, the frontend still starts, but DJ mode falls back to Piped/IFrame.
+Open <http://127.0.0.1:5400>. Without `yt-dlp` or `ffmpeg`, auto mode starts cleanly in IFrame mode without triggering audio extraction. Local file import remains available and activates the Web Audio engine automatically.
 
 > 🎛️ **How DJ mode works now (file-cache extraction)** — instead of relaying YouTube's fragile CDN URLs (which get blocked by 403 on open Range requests and throttled to ~30 KB/s), the server **downloads the full audio once** via `yt-dlp -x` (which handles YouTube's throttling/signatures internally), extracts it to an MP3 with **ffmpeg**, and caches it on disk (`cache/audio/<videoId>.mp3`). The client then streams this local file with native HTTP Range support (`206` on `bytes=0-` → the Web Audio tee and scratch work flawlessly). Track metadata (title, thumbnail, uploader) comes from YouTube's fast **oEmbed** endpoint (`/api/streams/:id` answers in ~0.15 s, no `yt-dlp` involved), and `yt-dlp` is **only** invoked on the first `/api/audio/:id` of a track — the server boot no longer waits on it.
 >
@@ -102,7 +102,7 @@ Start the server and open the browser in a single command:
 - macOS / Linux / WSL: `./start.sh`
 - Windows: double-click `start.bat` (or run it in a terminal)
 
-The scripts start the Express server and open <http://localhost:5400> automatically.
+The scripts start the loopback-only Express server and open <http://127.0.0.1:5400> automatically.
 
 ### 3. Configure the YouTube Data API key (optional)
 
@@ -122,7 +122,7 @@ In Google Cloud Console, open **APIs & Services** → **Credentials**, select th
 
 - Under **API restrictions**, select **Restrict key** and allow only **YouTube Data API v3**.
 - If you host the app on a website, under **Application restrictions** choose **Websites** and add that site's address.
-- For local use, add `http://localhost:5400/*` if you use the included launch script or the Express server. Add the exact address and port you actually use. Restrictions that omit the address in use will make search fail.
+- For local use, add `http://127.0.0.1:5400/*` if you use the included launch script or the Express server. Add the exact address and port you actually use. Restrictions that omit the address in use will make search fail.
 
 > Without a key, the app works fully: keyword search automatically uses the public Piped API (no Google quota), and you can also paste a YouTube URL (`youtu.be/...`, `watch?v=...`) or a raw video ID. Rate-limiting of the official API (quota exceeded / 429) is also handled gracefully — the panel shows a warning instead of an error, and you can fall back to URL/ID entry.
 >
@@ -138,11 +138,15 @@ yt-music-web-mixer/
 ├── README.md            # this file
 ├── index.html           # structure: header, A | B zone, mixer bar
 ├── server/
-│   └── server.js        # Express server, yt-dlp extraction and same-origin audio relay
+│   ├── server.js        # Express factory/startup, protected routes and extraction
+│   ├── task-queue.js    # bounded extraction queue
+│   └── cache-manager.js # audio cache quota and eviction
 ├── css/
 │   └── styles.css       # 2-column grid layout + fixed bottom bar + DJ controls
 └── js/
-    ├── config.js        # constants, API key and player configuration
+    ├── config.js        # constants, API key and media limits
+    ├── local-api.js     # in-memory local session and authenticated API fetch
+    ├── id3.js           # shared ID3v2.3/v2.4 parser
     ├── youtube.js       # YouTube IFrame API wrapper (IFrame fallback)
     ├── piped-streams.js # local backend first, Piped stream fallback, cache and refresh
     ├── local-load.js    # local audio/video file import (knowledge "Load local" buttons, ID3 metadata extraction)
@@ -157,7 +161,7 @@ yt-music-web-mixer/
     └── app.js           # bootstrap, event wiring, mode and global state
 ```
 
-**Stack**: HTML + CSS + vanilla JS frontend, with an optional Node/Express local server. No bundler and no frontend framework. `file://` is suitable for the basic IFrame player; `http://localhost:5400` is recommended for search, local extraction and DJ mode.
+**Stack**: HTML + CSS + vanilla JS frontend, with an optional Node/Express local server. No bundler and no frontend framework. `file://` is suitable for the basic IFrame player; `http://127.0.0.1:5400` is recommended for search, local extraction and DJ mode.
 
 ---
 
@@ -226,3 +230,25 @@ All agents and models were piloted and coordinated by the author, who defined th
 ## 🙏 Thanks
 
 Thanks to **[RouterLab.ch](https://routerlab.ch/)** for providing access to the various models used in this project.
+
+## 🔐 Security, limits, and maintenance
+
+- The server listens only on `127.0.0.1` and rejects non-local Host headers.
+- Extraction routes require a same-origin session token kept only in memory.
+- Browser-cookie access is disabled by default. Opt in explicitly with `YTDLP_COOKIES_BROWSER=chrome` (or another supported browser).
+- The audio cache defaults to **2 GB or 100 tracks**, with LRU eviction.
+- At most two extractions run concurrently and the waiting queue is bounded.
+- Lives, unknown durations, and tracks over **30 minutes** are rejected by the local DJ backend.
+- Full PCM scratch is limited to tracks up to **10 minutes**.
+- First launch uses empty decks. The explicit demo is available with `?demo=1`.
+
+### Verification
+
+```bash
+npm ci
+npm run check:syntax
+npm test
+npm audit --omit=dev
+# Public-network checks are opt-in:
+npm run test:network
+```

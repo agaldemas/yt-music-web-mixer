@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Auto-test snap-back</title>
+<style>body{font:13px monospace;background:#111;color:#eee;padding:12px}pre{background:#000;padding:10px;border:1px solid #444;max-height:80vh;overflow:auto}button{padding:10px;background:#222;color:#eee;border:1px solid #555;cursor:pointer;margin:10px 0}#status{font-weight:bold}</style>
+</head>
+<body>
+<h1>Auto-test snap-back</h1>
+<button id="startBtn">▶ START (unlock audio + lance le test)</button>
+<p id="status">en attente du clic...</p>
+<pre id="log"></pre>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function main() {
+  const status = document.getElementById('status');
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  log('AudioContext created, state=', ctx.state);
+  await ctx.resume();
+  log('AudioContext resumed, state=', ctx.state);
+
+  try {
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+    log('MP3 prêt, duration=', audio.duration.toFixed(2), 's');
+
+    const masterGain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    const sourceMuteGain = ctx.createGain();
+    sourceMuteGain.gain.value = 1.0;
+    const scratchGain = ctx.createGain();
+
+    const resp = await fetch('./Mandjou_QDIUL6T5GQU.mp3');
+    const arr = await resp.arrayBuffer();
+    const scratchBuffer = await ctx.decodeAudioData(arr);
+    log('scratchBuffer décodé, duration=', scratchBuffer.duration.toFixed(2), 's');
+
+    const source = ctx.createMediaElementSource(audio);
+    source.connect(sourceMuteGain);
+    sourceMuteGain.connect(scratchGain);
+    scratchGain.connect(masterGain);
+    masterGain.connect(analyser);
+    masterGain.connect(ctx.destination);
+    masterGain.gain.value = 1.0;
+
+    log('\n=== SCÉNARIO 1 : wasPlaying=false (audio en pause) ===');
+    audio.currentTime = 5;
+    audio.pause();
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    log('[init] currentTime=', audio.currentTime.toFixed(2), 'paused=', audio.paused);
+
+    const scratchOffset = audio.currentTime;
+    sourceMuteGain.disconnect();
+    log('[engage] sourceMuteGain.disconnect(), scratchOffset=', scratchOffset.toFixed(2));
+    const scratchNode = ctx.createBufferSource();
+    scratchNode.buffer = scratchBuffer;
+    scratchNode.playbackRate.value = 0;
+    scratchNode.connect(scratchGain);
+    scratchNode.start(0, scratchOffset);
+    scratchGain.gain.value = 1;
+    log('[engage] scratchNode.start(0,', scratchOffset.toFixed(2), ')');
+    await sleep(300);
+
+    let newOffset = scratchOffset + 3;
+    scratchNode.stop();
+    scratchNode.disconnect();
+    const scratchNode2 = ctx.createBufferSource();
+    scratchNode2.buffer = scratchBuffer;
+    scratchNode2.playbackRate.value = 0;
+    scratchNode2.connect(scratchGain);
+    scratchNode2.start(0, newOffset);
+    log('[mouvement] scratchOffset =', newOffset.toFixed(2));
+    await sleep(200);
+
+    const rmsScratch = measureRms(analyser);
+    log('[avant disengage] rms=', rmsScratch.toFixed(4), '(scratchNode doit jouer)');
+
+    // DISENGAGE : pause + seek + wait seeked + reconnect
+    log('\n[DISENGAGE]');
+    sourceMuteGain.gain.value = 0;
+    scratchGain.gain.value = 0;
+    scratchNode2.onended = null;
+    scratchNode2.stop();
+    scratchNode2.disconnect();
+    audio.pause();
+    audio.currentTime = newOffset;
+    log('[disengage] audio.currentTime =', newOffset.toFixed(2));
+
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    log('[disengage] seeked fired');
+    sourceMuteGain.connect(scratchGain);
+    log('[disengage] reconnect MES');
+    await sleep(500);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+
+    log('[PLAY] audio.play()');
+    await audio.play();
+    await sleep(300);
+    const rmsAfterPlay = measureRms(analyser);
+    log('[play +300ms] rms=', rmsAfterPlay.toFixed(4),
+        'currentTime=', audio.currentTime.toFixed(2));
+    await sleep(500);
+    const rmsAfterPlay2 = measureRms(analyser);
+    log('[play +800ms] rms=', rmsAfterPlay2.toFixed(4),
+        'currentTime=', audio.currentTime.toFixed(2));
+
+    // === SCÉNARIO 2 : on tente de mesurer ce que le MES produit en reconnectant
+    // un MediaStreamDestinationNode pour visualiser la sortie sans haut-parleur
+    log('\n=== Test: capture la sortie audio via MediaStreamDestination ===');
+    audio.pause();
+    await sleep(100);
+    audio.currentTime = 20; // seek à 20s pour comparer avec ce qui sort
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    log('[setup] audio.currentTime=20s');
+    await audio.play();
+    await sleep(500);
+    const rmsAt20 = measureRms(analyser);
+    log('[play @20s +500ms] rms=', rmsAt20.toFixed(4),
+        'currentTime=', audio.currentTime.toFixed(2),
+        '(devrait être différent de ce qu\'on entendait après disengage)');
+
+    // Maintenant on compare avec le même setup SANS avoir scratché
+    // Pour ça, on remet l'audio à 20s et on re-mesure
+    audio.pause();
+    audio.currentTime = 20;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    log('\n[reference @20s sans scratch] currentTime=', audio.currentTime.toFixed(2));
+    await audio.play();
+    await sleep(500);
+    const rmsRef = measureRms(analyser);
+    log('[reference play @20s +500ms] rms=', rmsRef.toFixed(4),
+        'currentTime=', audio.currentTime.toFixed(2));
+
+    status.textContent = 'TERMINE';
+  } catch (err) {
+    status.textContent = 'ERREUR: ' + err.message;
+    log('ERREUR:', err.message, err.stack);
+  }
+}
+
+function measureRms(analyser) {
+  const buf = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = (buf[i] - 128) / 128;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / buf.length);
+}
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').style.display = 'none';
+  document.getElementById('status').textContent = 'démarrage...';
+  main();
+};
+</script>
+</body>
+</html>

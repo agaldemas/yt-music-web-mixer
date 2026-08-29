@@ -41,7 +41,7 @@ Voir `piped-enhancement-tasks-list.md` pour le plan de migration, et `tasks-list
    - **Fallback sans clé (Piped)** : la recherche utilise l'API publique Piped (`/search?q=…&filter=videos`), CORS activé, pas de clé Google, pas de quota. Plusieurs instances Piped sont essayées en cascade pour la fiabilité. Un bouton de bascule permet de forcer Piped même si une clé API est configurée (préserve le quota Google).
    - **Fallback sans clé ni Piped** : saisie manuelle d'une URL YouTube ou d'un ID vidéo dans chaque voie (pas de recherche).
    - **Ne jamais** embarquer une clé partagée dans le code source.
-5. **Pas de build, pas de bundler (frontend).** Le frontend reste HTML + JS vanilla (une page `index.html` + des scripts en `js/`). **Exception : le serveur local `server/server.js`** (Node/Express + `yt-dlp`) a été introduit pour contourner l'anti-bot YouTube qui bloque les instances Piped publiques — voir "Backend d'extraction local" ci-dessous. Ce serveur exige `npm install` (une seule dépendance : `express`) et `yt-dlp` installé sur le système. Les `start.sh` / `start.bat` gèrent l'`npm install` automatiquement.
+5. **Pas de build, pas de bundler (frontend).** Le frontend reste HTML + JS vanilla (une page `index.html` + des scripts en `js/`). **Exception : le serveur local `server/server.js`** (Node/Express + `yt-dlp`) a été introduit pour contourner l'anti-bot YouTube qui bloque les instances Piped publiques — voir "Backend d'extraction local" ci-dessous. Ce serveur exige `npm install`, Node.js 22.12+ ou 24 LTS, ainsi que `yt-dlp` et `ffmpeg` pour l’extraction YouTube locale. Les `start.sh` / `start.bat` gèrent l'`npm install` automatiquement.
 6. **Servir l'app.** L'app s'ouvre en `file://` (lecteurs YouTube IFrame minimum vital), mais la recherche et surtout le mode Piped/Web Audio nécessitent un serveur local. **Le serveur recommandé est désormais le backend Express** (`start.sh` / `start.bat` → `node server/server.js` sur le port 5400), qui sert le frontend en statique ET l'extraction locale. En `file://`, le backend local est désactivé (`/api/*` n'existe pas) et l'app retombe sur la cascade Piped (souvent bloquée par l'anti-bot) puis IFrame. Les modules ES peuvent être bloqués en `file://` — on utilise des scripts classiques (`<script src="js/app.js">`).
 
 ### Contraintes spécifiques au mode Piped / Web Audio API
@@ -227,7 +227,7 @@ Côté frontend, `piped-streams.js` essaie le backend local **en premier** (`/ap
 ## Conventions de code
 
 - JS vanilla, **pas de dépendances externes côté frontend** (pas de React, pas de jQuery). **Exception : `server/server.js`** (backend Node/Express) dépend de `express` (déclaré dans `package.json`).
-- **Backend local** : `server/server.js` (Node/Express + yt-dlp). Port **5400** (`process.env.PORT`). L'API expose `/api/streams/:id` (extraction JSON), `/api/audio/:id` (relais same-origin avec Range et ré-extraction sur expiration) et `/api/health`. Le cache d'URL est en mémoire uniquement (jamais sur disque). L'app reste utilisable sans ce serveur : `piped-streams.js` retombe sur Piped puis IFrame.
+- **Backend local** : `server/server.js` (Node/Express + yt-dlp), port **5400** (`process.env.PORT`). L'API expose `/api/session`, `/api/health`, `/api/ready`, `/api/streams/:id`, `/api/meta/:id`, `/api/audio/:id` et `/api/download/:id`. Les routes coûteuses exigent `X-Local-Token`; le cache audio sur disque est borné. L'app reste utilisable sans ce serveur : `piped-streams.js` retombe sur Piped puis IFrame.
 - Noms en `camelCase`, constantes en `UPPER_SNAKE`.
 - Un seul état global dans `app.js` (objet `state`), les modules reçoivent leurs dépendances en paramètre (pas d'import circulaire).
 - Commentaires courts en français, noms de variables en anglais.
@@ -265,3 +265,11 @@ Côté frontend, `piped-streams.js` essaie le backend local **en premier** (`/ap
 - **Le BPM détecté est approximatif** (±2-3 BPM). Les transitions, builds et breaks peuvent fausser la détection. Le beatmatch n'est pas parfait.
 - **La persistance est limitée :** en navigation privée ou après vidage du cache, les données sauvegardées (`localStorage`) sont perdues.
 - **`localStorage` en WebView mobile** : peut être purgé par le système (iOS notamment). Ne pas garantir la persistance en navigation mobile.
+
+## Invariants de sécurité du backend local (août 2026)
+
+- Écoute loopback uniquement (`127.0.0.1`) ; ne pas rétablir `0.0.0.0`.
+- Ne jamais remplacer l’allowlist statique par `express.static(ROOT)`.
+- Aucun CORS `*` sur les routes `/api` ; conserver le jeton `X-Local-Token` en mémoire.
+- `createApp()` doit rester importable sans démarrer le serveur ; `startServer()` est réservé au point d’entrée.
+- Cookies navigateur opt-in, cache/extractions bornés, pistes DJ limitées à 30 minutes et scratch à 10 minutes.

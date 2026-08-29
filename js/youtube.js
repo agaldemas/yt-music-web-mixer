@@ -13,6 +13,7 @@
   var _ready = false;
   var _queue = [];
   var _onApiError = null;
+  var _loading = false;
 
   var ERROR_MESSAGES = {
     2: 'Paramètre de vidéo invalide.',
@@ -30,6 +31,8 @@
       return;
     }
 
+    if (_loading) return;
+    _loading = true;
     var tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
     tag.onerror = function () {
@@ -86,6 +89,7 @@
     var p = {
       _yt: null,
       _ready: false,
+      _disposed: false,
       loadVideoById: function (id) { if (this._ready) this._yt.loadVideoById(id); },
       cueVideoById: function (id) { if (this._ready) this._yt.cueVideoById(id); },
       playVideo: function () { if (this._ready) this._yt.playVideo(); },
@@ -97,18 +101,29 @@
       getCurrentTime: function () { return this._ready ? this._yt.getCurrentTime() : 0; },
       getDuration: function () { return this._ready ? this._yt.getDuration() : 0; },
       getPlayerState: function () { return this._ready ? this._yt.getPlayerState() : -1; },
+      dispose: function () {
+        if (this._disposed) return;
+        this._disposed = true;
+        this._ready = false;
+        if (this._yt && typeof this._yt.destroy === 'function') {
+          try { this._yt.destroy(); } catch (_) {}
+        }
+        this._yt = null;
+      },
     };
 
     function build() {
+      if (p._disposed) return;
       p._yt = new window.YT.Player(elementId, {
         videoId: videoId,
         playerVars: playerVars,
         events: {
           onReady: function (e) {
+            if (p._disposed) { try { e.target.destroy(); } catch (_) {} return; }
             p._ready = true;
             onReady(e);
           },
-          onStateChange: onStateChange,
+          onStateChange: function (event) { if (!p._disposed) onStateChange(event); },
           onError: function (e) {
             var code = (e && e.data) || 0;
             onError({

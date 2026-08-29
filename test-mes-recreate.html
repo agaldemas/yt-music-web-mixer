@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Test MES recreate after disconnect</title>
+<style>
+  body { font: 14px monospace; padding: 16px; background: #111; color: #eee; }
+  button { padding: 8px 14px; margin: 4px; background: #222; color: #eee; border: 1px solid #555; cursor: pointer; }
+  button:hover { background: #333; }
+  pre { background: #000; padding: 12px; border: 1px solid #444; overflow: auto; max-height: 60vh; }
+  .ok { color: #6c6; }
+  .bad { color: #f66; }
+  .warn { color: #fc6; }
+</style>
+</head>
+<body>
+<h1>Test : peut-on recréer un MediaElementSource après disconnect ?</h1>
+<p>Ce test charge le MP3 local, crée un MES, le disconnect, puis essaie d'en créer un nouveau sur le MÊME élément audio.</p>
+<button id="run">Lancer le test</button>
+<pre id="log"></pre>
+<script>
+const log = (...args) => {
+  const el = document.getElementById('log');
+  el.textContent += args.join(' ') + '\n';
+  console.log(...args);
+};
+const ok = (...a) => log('%c✓', 'color:#6c6', ...a);
+const bad = (...a) => log('%c✗', 'color:#f66', ...a);
+const warn = (...a) => log('%c⚠', 'color:#fc6', ...a);
+const head = (s) => log('\n=== ' + s + ' ===');
+
+document.getElementById('run').onclick = async () => {
+  document.getElementById('log').textContent = '';
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    log('AudioContext créé, state=', ctx.state);
+    if (ctx.state === 'suspended') await ctx.resume();
+
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+    log('MP3 chargé, duration=', audio.duration.toFixed(2));
+
+    // On va jouer un bout, mesurer ce qu'on entend
+    const dest = ctx.createGain();
+    dest.gain.value = 0.0; // on n'entend pas, on observe juste les AnalyserNode
+    dest.connect(ctx.destination);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    dest.connect(analyser);
+
+    // === TEST 1 : MES créé une première fois ===
+    head('TEST 1 : 1er createMediaElementSource');
+    const mes1 = ctx.createMediaElementSource(audio);
+    mes1.connect(dest);
+    ok('mes1 créé');
+    log('mes1.connect(dest) OK');
+
+    // Lecture
+    audio.currentTime = 5;
+    await audio.play();
+    await new Promise(r => setTimeout(r, 500));
+    log('après 500ms : audio.currentTime=', audio.currentTime.toFixed(2),
+        ' analyser.rms=', computeRms(analyser).toFixed(4));
+
+    // === TEST 2 : disconnect mes1, puis createMediaElementSource à nouveau ===
+    head('TEST 2 : disconnect mes1 puis re-créer un MES');
+    mes1.disconnect();
+    ok('mes1.disconnect() OK');
+    try {
+      const mes2 = ctx.createMediaElementSource(audio);
+      ok('mes2 créé sans erreur ! Chrome permet le recreate après disconnect.');
+      mes2.connect(dest);
+      log('mes2.connect(dest) OK');
+
+      // Re-seek pour vérifier qu'on entend bien depuis la bonne position
+      audio.pause();
+      audio.currentTime = 10;
+      await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+      log('seek to 10, audio.currentTime=', audio.currentTime.toFixed(2));
+      await audio.play();
+      await new Promise(r => setTimeout(r, 300));
+      log('après 300ms play : audio.currentTime=', audio.currentTime.toFixed(2));
+    } catch (e) {
+      bad('createMediaElementSource a throwé :', e.name, e.message);
+      warn('Chrome suit la spec : un MES par élément pour toute sa vie.');
+      warn('Conclusion : impossible de recréer le MES. Il faut une autre stratégie.');
+    }
+
+    // === TEST 3 : mesurer ce que produit le MES après un seek pendant disconnect ===
+    head('TEST 3 : MES disconnect → audio.currentTime=X → reconnect → on entend quoi ?');
+    audio.pause();
+    audio.currentTime = 5;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    log('seek to 5 (mes2 connecté)');
+
+    // mes2.disconnect()
+    if (typeof mes2 !== 'undefined') {
+      mes2.disconnect();
+      log('mes2.disconnect()');
+    } else {
+      log('mes1.disconnect()');
+    }
+    await audio.play();
+    await new Promise(r => setTimeout(r, 2000));
+    log('après 2s de lecture sans MES : audio.currentTime=', audio.currentTime.toFixed(2));
+
+    // Reconnecter mes2 (ou mes1) - mesure la position effective entendue
+    const targetConnect = (typeof mes2 !== 'undefined') ? mes2 : mes1;
+    targetConnect.connect(dest);
+    log('reconnect au dest, on va mesurer pendant 1s');
+
+    const positions = [];
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      const rms = computeRms(analyser);
+      positions.push({ t: audio.currentTime.toFixed(2), rms: rms.toFixed(4) });
+    }
+    log('mesures après reconnect :');
+    positions.forEach(p => log('  currentTime=', p.t, ' rms=', p.rms));
+
+    audio.pause();
+  } catch (err) {
+    bad('Erreur fatale :', err.message);
+    console.error(err);
+  }
+};
+
+function computeRms(analyser) {
+  const buf = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = (buf[i] - 128) / 128;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / buf.length);
+}
+</script>
+</body>
+</html>

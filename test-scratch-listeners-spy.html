@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Test direct snap-back</title>
+<style>body{font:13px monospace;background:#111;color:#eee;padding:12px}pre{background:#000;padding:10px;border:1px solid #444;max-height:80vh;overflow:auto}button{padding:10px;background:#222;color:#eee;border:1px solid #555;cursor:pointer;margin:10px 0}#status{font-weight:bold}</style>
+</head>
+<body>
+<h1>Test minimaliste snap-back (sans app.js)</h1>
+<p>Reproduit l'engage et disengage en appelant directement AudioEngine, avec un espion sur audio.currentTime pour voir qui écrit la position après le disengage.</p>
+<button id="startBtn">▶ START</button>
+<p id="status">en attente...</p>
+<pre id="log"></pre>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const t0 = performance.now();
+
+async function main() {
+  const status = document.getElementById('status');
+  status.textContent = 'en cours...';
+
+  try {
+    // Crée un <audio> + chaîne minimale
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+    log(`[0ms] audio canplay, duration=${audio.duration.toFixed(1)}s`);
+
+    // === PATCH setter currentTime ===
+    let _curTime = 0;
+    Object.defineProperty(audio, 'currentTime', {
+      get() { return _curTime; },
+      set(v) {
+        const t = (performance.now() - t0).toFixed(0);
+        const stack = new Error().stack.split('\n').slice(2, 5).map(s => s.trim()).join(' ← ');
+        log(`[${t}ms] *** audio.currentTime SETTER = ${v.toFixed(3)} (was ${_curTime.toFixed(3)})  ← ${stack}`);
+        _curTime = v;
+      },
+      configurable: true,
+    });
+    // === PATCH autres méthodes audio ===
+    ['pause','play','load'].forEach(name => {
+      const orig = audio[name].bind(audio);
+      audio[name] = function (...args) {
+        const t = (performance.now() - t0).toFixed(0);
+        const stack = new Error().stack.split('\n').slice(2, 4).map(s => s.trim()).join(' ← ');
+        log(`[${t}ms] *** audio.${name}() ← ${stack}`);
+        return orig(...args);
+      };
+    });
+
+    log('\n=== Setup AudioEngine ===');
+    const AE = window.AudioEngine;
+    await AE.resume();
+
+    AE.createDeckChain('TEST', audio);
+    const mp3 = await (await fetch('./Mandjou_QDIUL6T5GQU.mp3')).arrayBuffer();
+    await AE.loadDeckBufferFromBlob('TEST', mp3);
+    log('✓ deck créé');
+
+    log('\n=== Démo : position de départ = 30s, lecture ===');
+    audio.currentTime = 30;
+    await sleep(100);
+    await audio.play();
+    await sleep(100);
+    log(`[setup] audio.currentTime=${audio.currentTime.toFixed(2)}s, paused=${audio.paused}`);
+
+    log('\n=== ENGAGE scratch ===');
+    const engageRes = await AE.engageScratch('TEST');
+    log(`[engage] offset=${engageRes.offset.toFixed(2)}s, wasPlaying=${engageRes.wasPlaying}`);
+
+    log('\n=== MOUVEMENT (1s à rate=1) ===');
+    const ctx = AE.getContext();
+    let tStart = ctx.currentTime;
+    // On simule 1s de scratch : 30 frames de 33ms à rate=1
+    for (let i = 0; i < 30; i++) {
+      ctx.currentTime = tStart + (i + 1) * 0.033;
+      AE.setScratchRate('TEST', 1);
+      await sleep(33);
+    }
+    const pos = AE.getScratchPosition('TEST');
+    log(`[release-prep] getScratchPosition = ${pos.toFixed(2)}s (attendu ≈ 31.0)`);
+
+    log('\n=== DISENGAGE scratch ===');
+    AE.disengageScratch('TEST', pos, true);
+    log(`[disengage-target] target=${pos.toFixed(2)}s`);
+
+    // Capturer tous les writes pendant 2s
+    log('\n=== CAPTURE pendant 2s ===');
+    for (let i = 0; i < 40; i++) {
+      await sleep(50);
+    }
+
+    log(`\n=== FINAL ===`);
+    log(`audio.currentTime = ${audio.currentTime.toFixed(2)}s (target attendu = ${pos.toFixed(2)}s)`);
+    log(`paused = ${audio.paused}`);
+
+    status.textContent = 'TERMINE';
+  } catch (err) {
+    status.textContent = 'ERREUR';
+    log('ERREUR:', err.message, err.stack);
+  }
+}
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').style.display = 'none';
+  main();
+};
+</script>
+<script src="js/audio-engine.js"></script>
+</body>
+</html>

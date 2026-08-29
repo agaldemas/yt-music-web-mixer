@@ -160,6 +160,9 @@
       // Dédup : si l'utilisateur relance loadVideoById pendant qu'un download
       // est en cours, on attend la même promesse au lieu de relancer un fetch.
       loadPromise: null,
+      loadAbort: null,
+      disposed: false,
+      sourceKind: 'youtube',
       // Numéro de chargement : ignore les réponses réseau d'une ancienne
       // sélection qui arriveraient après un nouveau morceau.
       loadGeneration: 0,
@@ -199,91 +202,126 @@
       try { onStateChange({ data: newState }); } catch (e) { /* ignore */ }
     }
 
-    // ===== Download complet en une fois → Blob (lecture) + buffer scratch =====
-    //
-    // KISS : fetch().arrayBuffer() télécharge TOUT le flux en une requête HTTP,
-    // en un seul ArrayBuffer. On le partage :
-    //   - new Blob([buf], {type: mime}) → audio.src (lecture <audio>, same-origin)
-    //   - buf.slice(0) → AudioEngine.loadDeckBufferFromBlob (scratch, decodeAudioData)
-    // Pas de streaming progressif, pas de lecture en morceaux : download complet,
-    // puis lecture. Le scratch récupère le buffer déjà téléchargé (pas de 2e requête).
+    // ===== Cycle de vie unifié des chargements =====
 
-    // Révoque le précédent blob URL et annule la promesse de download en cours.
-    function resetSource() {
+    function isCurrent(generation) {
+      return !state.disposed && generation === state.loadGeneration;
+    }
+
+    function clearLocalMetadata() {
+      var playerObj = window.state && window.state.players ? window.state.players[deckId] : null;
+      if (!playerObj) return;
+      if (playerObj.lastLocalCover) {
+        try { URL.revokeObjectURL(playerObj.lastLocalCover); } catch (_) {}
+      }
+      playerObj.lastLocalTitle = '';
+      playerObj.lastLocalArtist = '';
+      playerObj.lastLocalFileName = '';
+      playerObj.lastLocalCover = null;
+    }
+
+    function resetSource(options) {
+      options = options || {};
+      if (options.abort !== false && state.loadAbort) {
+        try { state.loadAbort.abort(); } catch (_) {}
+        state.loadAbort = null;
+      }
       if (state.blobUrl) {
-        try { URL.revokeObjectURL(state.blobUrl); } catch (e) { /* ignore */ }
+        try { URL.revokeObjectURL(state.blobUrl); } catch (_) {}
         state.blobUrl = null;
       }
       state.loadPromise = null;
+      if (options.clearBuffer !== false && AudioEngine && typeof AudioEngine.clearDeckBuffer === 'function') {
+        try { AudioEngine.clearDeckBuffer(deckId); } catch (_) {}
+      }
+      if (options.detachMedia !== false) {
+        try { audio.pause(); } catch (_) {}
+        try { audio.removeAttribute('src'); audio.load(); } catch (_) {}
+      }
     }
 
-    // Télécharge l'URL en un seul ArrayBuffer (download complet, pas de morceaux).
-    // Retourne une Promise<ArrayBuffer> (dédup via state.loadPromise).
-    function loadDeckArrayBuffer(url) {
-      if (state.loadPromise) return state.loadPromise;
-      var _t0 = performance.now();
-      console.debug('%c[audio:' + deckId + '] ▼ download START — '
-        + (url.length > 80 ? url.slice(0, 80) + '…' : url), 'color:#08e');
-      var AE = window.AudioEngine;
-
-      // --- Compose la promesse scratch et l'enregistre AVANT le download ---
-      // On crée un canal résolveur : scratchResolve sera appelé quand le
-      // download termine (avec les octets). Enregistre la promesse scratch
-      // dans AudioEngine DÈS MAINTENANT → ensureBuffer() (precache/engage)
-      // la voit pendant le fetch et attend le tee au lieu de relancer un XHR
-      // parallèle (le throttle CDN tue le 2e download).
-      var scratchResolve, scratchReject;
-      var scratchPromise = new Promise(function (res, rej) {
-        scratchResolve = res; scratchReject = rej;
-      });
-      if (AE && typeof AE.setDeckBufferLoadPromise === 'function') {
-        AE.setDeckBufferLoadPromise(deckId, scratchPromise);
+    function beginLoad(id, sourceKind, pendingPlay) {
+      resetSource({ abort: true, clearBuffer: true, detachMedia: true });
+      const generation = ++state.loadGeneration;
+      const ctrl = new AbortController();
+      state.loadAbort = ctrl;
+      state.currentVideoId = id;
+      state.sourceKind = sourceKind;
+      state.lastKnownTime = 0;
+      state.refreshCount = 0;
+      state.pendingPlay = !!pendingPlay;
+      state.wasPlayingBeforeError = !!pendingPlay;
+      if (window.state) {
+        if (window.state.sourceKind) window.state.sourceKind[deckId] = sourceKind;
+        if (window.state.backendMode) window.state.backendMode[deckId] = 'piped';
       }
+      if (sourceKind !== 'local') clearLocalMetadata();
+      return { generation: generation, signal: ctrl.signal };
+    }
 
-      var full = fetch(url, { headers: { Range: 'bytes=0-' } }).then(function (res) {
-        // 200 (full) ou 206 (partial/range) : les deux sont valides. Le Range
-        // est crucial : le CDN YouTube throttle les downloads complets (200)
-        // à ~30 Ko/s, mais laisse passer les Range (206) à pleine vitesse.
+    function reportLoadError(err) {
+      if (err && err.name === 'AbortError') return;
+      const classified = PipedStreams.classifyError(err);
+      try {
+        onError({ code: 0, message: classified.message || (err && err.message) || 'Erreur du mode DJ.', originalEvent: err });
+      } catch (_) {}
+    }
+
+    function prepareScratchDecode(AE, buffer, generation, scratchEnabled) {
+      if (!scratchEnabled || !AE || typeof AE.loadDeckBufferFromBlob !== 'function') return Promise.resolve(null);
+      var promise = new Promise(function (resolve) {
+        function decodeWhenReady() {
+          audio.removeEventListener('loadedmetadata', decodeWhenReady);
+          if (!isCurrent(generation)) return resolve(null);
+          var duration = Number(audio.duration) || 0;
+          if (!duration || duration > ((window.YT_CONFIG && window.YT_CONFIG.SCRATCH_MAX_DURATION_SEC) || 600)) {
+            return resolve(null);
+          }
+          AE.loadDeckBufferFromBlob(deckId, buffer).then(resolve, function () { resolve(null); });
+        }
+        audio.addEventListener('loadedmetadata', decodeWhenReady);
+      });
+      promise.catch(function () {});
+      if (typeof AE.setDeckBufferLoadPromise === 'function') AE.setDeckBufferLoadPromise(deckId, promise);
+      return promise;
+    }
+
+    function loadDeckArrayBuffer(url, operation, scratchEnabled) {
+      const generation = operation.generation;
+      const signal = operation.signal;
+      if (!isCurrent(generation)) return Promise.resolve(null);
+      var _t0 = performance.now();
+      var AE = window.AudioEngine;
+      var fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
+      var full = fetcher(url, { headers: { Range: 'bytes=0-' }, signal: signal }).then(function (res) {
         if (!res.ok && res.status !== 206) throw new Error('download HTTP ' + res.status);
         var mime = res.headers.get('content-type') || 'audio/mpeg';
-        // arrayBuffer() : download complet en une fois, pas de streaming.
-        return res.arrayBuffer().then(function (buf) {
-          var dlMs = (performance.now() - _t0).toFixed(0);
-          var mo = (buf.byteLength / 1024 / 1024).toFixed(2);
-          console.debug('%c[audio:' + deckId + '] ▼ download ← ' + mo + ' Mo en ' + dlMs + 'ms  (mime=' + mime + ')', 'color:#08e;font-weight:bold');
-          return { buf: buf, mime: mime };
-        });
+        return res.arrayBuffer().then(function (buf) { return { buf: buf, mime: mime }; });
       }).then(function (r) {
-        // 1) Blob same-origin avec le bon type MIME → audio.src décodable.
+        if (!isCurrent(generation)) return null;
         var blob = new Blob([r.buf], { type: r.mime });
         state.blobUrl = URL.createObjectURL(blob);
+        prepareScratchDecode(AE, r.buf, generation, scratchEnabled);
         audio.src = state.blobUrl;
         audio.load();
-        // 2) Déclenche le décodage scratch : résout la promesse scratch enregistrée
-        //    ci-dessus. Les éventuels awaiters (ensureBuffer/engage) reçoivent
-        //    le buffer décodé via la même promesse — pas de re-fetch.
-        try {
-          if (AE && typeof AE.loadDeckBufferFromBlob === 'function') {
-            AE.loadDeckBufferFromBlob(deckId, r.buf.slice(0)).then(scratchResolve, scratchReject);
-          } else {
-            scratchResolve(null);
-          }
-        } catch (e) {
-          console.warn('[audio:' + deckId + '] loadDeckBufferFromBlob échec', e);
-          scratchReject(e);
+        console.debug('[audio:' + deckId + '] chargé en ' + (performance.now() - _t0).toFixed(0) + 'ms');
+        return null;
+      }).catch(function (err) {
+        if (!isCurrent(generation) || (err && err.name === 'AbortError')) return null;
+        var isLocal = /^\/api\//.test(url) || (typeof location !== 'undefined' && url.indexOf(location.origin + '/api/') === 0);
+        if (!isLocal) {
+          audio.src = url;
+          audio.load();
+          return null;
         }
-        return r.buf;
+        reportLoadError(err);
+        return null;
+      }).finally(function () {
+        if (isCurrent(generation)) {
+          state.loadPromise = null;
+          state.loadAbort = null;
+        }
       });
-      full.catch(function (err) {
-        // Fallback : streaming direct (le scratch repassera par l'ancien XHR).
-        console.warn('[audio:' + deckId + '] download échec → fallback streaming direct:', err.message);
-        resetSource();
-        audio.src = url;
-        audio.load();
-        // Libère les awaiters du tee (retomberont sur le XHR secours).
-        scratchReject(err);
-      });
-      // Dédup : on expose la promesse complète (download + branchement audio).
       state.loadPromise = full;
       return full;
     }
@@ -319,7 +357,8 @@
         if (!newUrl) {
           throw new Error('Le mode DJ n\'a pas renvoyé d\'URL audio pour ' + id);
         }
-        resetSource(); loadDeckArrayBuffer(newUrl);
+        const operation = beginLoad(id, 'youtube', state.wasPlayingBeforeError);
+        loadDeckArrayBuffer(newUrl, operation, entry.scratchEligible !== false);
         // Restaurer la position une fois le nouveau buffer prêt.
         audio.addEventListener('loadedmetadata', function once() {
           audio.removeEventListener('loadedmetadata', once);
@@ -418,46 +457,18 @@
       // loadVideoById(id) → fetch Piped → audio.src = CORS-safe → load()
       // Si autoplay/lecture en cours avant ce load, on la reprend après ready.
       loadVideoById: function (id) {
-        if (!id) return;
-        const generation = ++state.loadGeneration;
-        state.currentVideoId = id;
-        state.lastKnownTime = 0;
-        state.refreshCount = 0;
-        state.pendingPlay = (p._pendingPlayRequested === true) || (!audio.paused);
+        if (!id || state.disposed) return;
+        const shouldPlay = (p._pendingPlayRequested === true) || (!audio.paused);
         p._pendingPlayRequested = false;
-        state.wasPlayingBeforeError = !audio.paused;
-
-        PipedStreams.fetchStreamInfo(id).then(function (entry) {
-          if (generation !== state.loadGeneration || state.currentVideoId !== id) return;
+        const operation = beginLoad(id, 'youtube', shouldPlay);
+        PipedStreams.fetchStreamInfo(id, operation.signal).then(function (entry) {
+          if (!isCurrent(operation.generation)) return;
           const best = entry.bestAudio && entry.bestAudio.stream;
           const newUrl = PipedStreams.getCorsSafeUrl(entry, best);
-          if (!newUrl) {
-            try {
-              onError({ code: 0, message: 'Aucun flux audio disponible pour cette vidéo.', originalEvent: null });
-            } catch (e) { /* ignore */ }
-            return;
-          }
-          resetSource(); loadDeckArrayBuffer(newUrl);
-          audio.addEventListener('loadedmetadata', function restoreRate() {
-            audio.removeEventListener('loadedmetadata', restoreRate);
-            if (generation !== state.loadGeneration || state.currentVideoId !== id) return;
-            var AE = window.AudioEngine;
-            if (!AE || typeof AE.getPitch !== 'function') return;
-            try {
-              var saved = AE.getPitch(deckId);
-              if (saved) AE.setPitch(deckId, saved);
-            } catch (e) { /* ignore */ }
-          }, { once: true });
+          if (!newUrl) throw new Error('Aucun flux audio disponible pour cette vidéo.');
+          return loadDeckArrayBuffer(newUrl, operation, entry.scratchEligible !== false);
         }).catch(function (err) {
-          if (generation !== state.loadGeneration || state.currentVideoId !== id) return;
-          const classified = PipedStreams.classifyError(err);
-          try {
-            onError({
-              code: 0,
-              message: classified.message || 'Erreur du mode DJ.',
-              originalEvent: err,
-            });
-          } catch (e) { /* ignore */ }
+          if (isCurrent(operation.generation)) reportLoadError(err);
         });
       },
 
@@ -465,32 +476,17 @@
       // En mode Piped, la différence est uniquement sur le pendingPlay : on
       // ne lance pas la lecture même si playVideo() a été demandé avant.
       cueVideoById: function (id) {
-        if (!id) return;
-        state.currentVideoId = id;
-        state.lastKnownTime = 0;
-        state.refreshCount = 0;
-        state.wasPlayingBeforeError = false;
+        if (!id || state.disposed) return;
         p._pendingPlayRequested = false;
-
-        PipedStreams.fetchStreamInfo(id).then(function (entry) {
+        const operation = beginLoad(id, 'youtube', false);
+        PipedStreams.fetchStreamInfo(id, operation.signal).then(function (entry) {
+          if (!isCurrent(operation.generation)) return;
           const best = entry.bestAudio && entry.bestAudio.stream;
           const newUrl = PipedStreams.getCorsSafeUrl(entry, best);
-          if (!newUrl) {
-            try {
-              onError({ code: 0, message: 'Aucun flux audio disponible.', originalEvent: null });
-            } catch (e) { /* ignore */ }
-            return;
-          }
-          resetSource(); loadDeckArrayBuffer(newUrl);
+          if (!newUrl) throw new Error('Aucun flux audio disponible.');
+          return loadDeckArrayBuffer(newUrl, operation, entry.scratchEligible !== false);
         }).catch(function (err) {
-          const classified = PipedStreams.classifyError(err);
-          try {
-            onError({
-              code: 0,
-              message: classified.message || 'Erreur du mode DJ.',
-              originalEvent: err,
-            });
-          } catch (e) { /* ignore */ }
+          if (isCurrent(operation.generation)) reportLoadError(err);
         });
       },
 
@@ -529,34 +525,15 @@
       // stopperait le graphe Web Audio), on met le gain de la voie à 0
       // via AudioEngine.deckGain. On garde la même API que YTWrapper.
       mute: function () {
-        const chain = AudioEngine.hasDeck(deckId);
-        if (!chain) return;
-        // On ne mute pas via le gain master ni crossfade : on stocke
-        // l'état mute séparément et on l'applique dans applyVolumes().
-        // Pour cette implémentation de section 3, on agit directement
-        // sur deckGain en gardant en mémoire l'ancienne valeur via
-        // window.__mutedDecks (state global simple). L'intégration avec
-        // mixer.js (section 5) remplacera cette logique par un GainNode
-        // de mute dédié.
         state.muted = true;
-        // Fixe le gain de deck à 0 (mute). Le crossfader reprendra la
-        // main au prochain applyVolumes(). Cf. note en commentaire.
-        // Note : pour une vraie séparation mute/crossfade, il faudra
-        // un muteGain séparé dans audio-engine.js (voir roadmap).
-        try {
-          const chainRef = AudioEngine.getAnalyser(deckId) && AudioEngine.getContext();
-          // Accès indirect via l'AudioEngine : on tire deckGain via
-          // un accesseur interne. Pour l'instant, on agit sur l'élément
-          // audio (volume natif) en complément :
-          audio.volume = 0;
-        } catch (e) { /* ignore */ }
+        audio.volume = 1.0;
+        if (AudioEngine && typeof AudioEngine.setMuted === 'function') AudioEngine.setMuted(deckId, true);
       },
 
       unMute: function () {
         state.muted = false;
         audio.volume = 1.0;
-        // ⚠️ Le caller (app.js) appellera Mixer.applyVolumes() après
-        // unMute() pour ré-appliquer le crossfade.
+        if (AudioEngine && typeof AudioEngine.setMuted === 'function') AudioEngine.setMuted(deckId, false);
       },
 
       getCurrentTime: function () {
@@ -581,86 +558,58 @@
       // que le scratch sache qu'il n'y a pas de re-fetch Piped à faire.
       loadLocalFile: function (file) {
         if (!file) return Promise.reject(new Error('loadLocalFile: fichier manquant'));
-        // Si on reçoit une URL blob (string), on la branche directement.
         if (typeof file === 'string') {
-          resetSource();
+          const operation = beginLoad('local', 'local', false);
+          if (!isCurrent(operation.generation)) return Promise.resolve();
           audio.src = file;
           audio.load();
-          state.currentVideoId = 'local';
-          // Pas de métadonnées disponibles depuis une URL distante sans fetch
-          var playerObj = (typeof window !== 'undefined') ? window.state.players[deckId] : null;
-          if (playerObj) {
-            playerObj.lastLocalTitle = file.replace(/^[^:]+:\/\//, '').replace(/\/.*$/, '');
-            playerObj.lastLocalCover = null;
-          }
           return Promise.resolve();
         }
-        // File / Blob : lecture en mémoire (pas de fetch réseau). Même pipeline
-        // unifié : Blob pour la lecture + décodage scratch via tee.
-        var mime = file.type || 'audio/mpeg';
-        resetSource();
-        state.currentVideoId = 'local';
-        // Mettre à jour l'état global pour que app.js sache qu'on est en mode local
-        if (window.state) window.state.playerType[deckId] = 'local';
-        var _t0 = performance.now();
-        var mo = (file.size / 1024 / 1024).toFixed(2);
-        console.debug('%c[audio:' + deckId + '] ▼ loadLocalFile START — ' + mo + ' Mo  (mime=' + mime + ')', 'color:#08e');
-        var AE = window.AudioEngine;
-
-        // Même mécanisme tee : enregistre la promesse scratch AVANT de lire le
-        // fichier → ensureBuffer() l'attend au lieu de relancer un fetch Piped.
-        var scratchResolve, scratchReject;
-        var scratchPromise = new Promise(function (res, rej) {
-          scratchResolve = res; scratchReject = rej;
-        });
-        if (AE && typeof AE.setDeckBufferLoadPromise === 'function') {
-          AE.setDeckBufferLoadPromise(deckId, scratchPromise);
+        if (file.size > 256 * 1024 * 1024) {
+          return Promise.reject(new Error('Fichier local trop volumineux (maximum 256 Mo).'));
         }
-
+        const operation = beginLoad('local', 'local', false);
+        var AE = window.AudioEngine;
         var full = file.arrayBuffer().then(function (buf) {
-          var dlMs = (performance.now() - _t0).toFixed(0);
-          console.debug('%c[audio:' + deckId + '] ▼ loadLocalFile ← ' + (buf.byteLength / 1024 / 1024).toFixed(2)
-            + ' Mo en ' + dlMs + 'ms', 'color:#08e;font-weight:bold');
-          // 1) Blob same-origin avec le bon type MIME → audio.src.
-          var blob = new Blob([buf], { type: mime });
-          state.blobUrl = URL.createObjectURL(blob);
+          if (!isCurrent(operation.generation)) return null;
+          var mime = file.type || 'audio/mpeg';
+          state.blobUrl = URL.createObjectURL(new Blob([buf], { type: mime }));
+          prepareScratchDecode(AE, buf, operation.generation, true);
+          audio.addEventListener('loadedmetadata', function validateDuration() {
+            audio.removeEventListener('loadedmetadata', validateDuration);
+            var max = (window.YT_CONFIG && window.YT_CONFIG.MAX_TRACK_DURATION_SEC) || 1800;
+            if (Number(audio.duration) > max && isCurrent(operation.generation)) {
+              resetSource({ abort: true, clearBuffer: true, detachMedia: true });
+              reportLoadError(new Error('Cette piste dépasse la limite de ' + Math.round(max / 60) + ' minutes.'));
+            }
+          });
           audio.src = state.blobUrl;
           audio.load();
-          // 2) Déclenche le décodage scratch (même chemin tee).
-          try {
-            if (AE && typeof AE.loadDeckBufferFromBlob === 'function') {
-              AE.loadDeckBufferFromBlob(deckId, buf.slice(0)).then(scratchResolve, scratchReject);
-            } else {
-              scratchResolve(null);
-            }
-          } catch (e) {
-            console.warn('[audio:' + deckId + '] loadLocalFile: loadDeckBufferFromBlob échec', e);
-            scratchReject(e);
-          }
-          // 3) Extraire les métadonnées du fichier (fonctions depuis local-load.js)
-          var fileName = file.name;
-          var meta = (window.extractAudioMetadata) ? window.extractAudioMetadata(buf, mime, fileName) : { title: fileName, artist: '' };
-          var title = (meta && meta.title) ? meta.title : fileName;
-          var artist = (meta && meta.artist) ? meta.artist : '';
-          var coverUrl = (window.extractCoverImage) ? window.extractCoverImage(buf, mime) : null;
-          // Stocker les métadonnées dans l'objet player pour accès par app.js
-          var playerObj = (typeof window !== 'undefined') ? window.state.players[deckId] : null;
+          var fileName = file.name || 'audio-local';
+          var meta = window.extractAudioMetadata ? window.extractAudioMetadata(buf, mime, fileName) : { title: fileName, artist: '' };
+          var playerObj = window.state && window.state.players ? window.state.players[deckId] : null;
           if (playerObj) {
-            playerObj.lastLocalTitle = title;
-            playerObj.lastLocalArtist = artist;
+            playerObj.lastLocalTitle = meta.title || fileName;
+            playerObj.lastLocalArtist = meta.artist || '';
             playerObj.lastLocalFileName = fileName;
-            playerObj.lastLocalCover = coverUrl;
+            playerObj.lastLocalCover = window.extractCoverImage ? window.extractCoverImage(buf, mime) : null;
           }
-          // 4) Notifier app.js pour mettre à jour l'UI
-          if (typeof window.updateNowPlaying === 'function') {
-            window.updateNowPlaying(state.deckId);
-          }
-          return buf;
-        }, function (err) {
-          scratchReject(err);
+          if (typeof window.updateNowPlaying === 'function') window.updateNowPlaying(deckId);
+          return null;
+        }).finally(function () {
+          if (isCurrent(operation.generation)) state.loadPromise = null;
         });
         state.loadPromise = full;
         return full;
+      },
+
+      dispose: function () {
+        if (state.disposed) return;
+        state.disposed = true;
+        state.loadGeneration += 1;
+        resetSource({ abort: true, clearBuffer: true, detachMedia: true });
+        clearLocalMetadata();
+        try { if (audio.parentNode) audio.parentNode.removeChild(audio); } catch (_) {}
       },
 
       // Accès techniques (debug / tests)

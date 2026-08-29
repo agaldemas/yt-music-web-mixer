@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Détective snap-back — esp. tous les currentTime/seekTo</title>
+<style>body{font:13px monospace;background:#111;color:#eee;padding:12px}pre{background:#000;padding:10px;border:1px solid #444;max-height:80vh;overflow:auto}button{padding:10px;background:#222;color:#eee;border:1px solid #555;cursor:pointer;margin:10px 0}#status{font-weight:bold}</style>
+</head>
+<body>
+<h1>Détective snap-back — espionnage massif</h1>
+<p>Espionne audio.currentTime, audio.pause(), audio.play(), seekTo. Force un scratch de 500ms, vérifie tous les coups qui peuvent écrire la position après le disengage.</p>
+<button id="startBtn">▶ START</button>
+<p id="status">en attente...</p>
+<pre id="log"></pre>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Stocker tous les patches
+const patches = [];
+function patchMethod(obj, name, label) {
+  const orig = obj[name].bind(obj);
+  obj[name] = function(...args) {
+    const t = (performance.now() - t0).toFixed(0);
+    const stack = new Error().stack.split('\n').slice(2, 4).map(s => s.trim()).join(' ← ');
+    log(`[${t}ms] [${label}] ${name}(${args.map(a => typeof a === 'number' ? a.toFixed(2) : JSON.stringify(a)).join(', ')})  ← ${stack}`);
+    return orig(...args);
+  };
+  patches.push(() => { obj[name] = orig; });
+}
+
+const t0 = performance.now();
+
+async function main() {
+  const status = document.getElementById('status');
+  status.textContent = 'en cours...';
+
+  try {
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+    log(`✓ audio canplay, duration=${audio.duration.toFixed(1)}s`);
+
+    // === PATCH SETTER currentTime ===
+    let _curTimeVal = 0;
+    Object.defineProperty(audio, 'currentTime', {
+      get() { return _curTimeVal; },
+      set(v) {
+        const t = (performance.now() - t0).toFixed(0);
+        const stack = new Error().stack.split('\n').slice(2, 5).map(s => s.trim()).join(' ← ');
+        log(`[${t}ms] *** audio.currentTime SETTER = ${v.toFixed(3)} (was ${_curTimeVal.toFixed(3)})  ← ${stack}`);
+        _curTimeVal = v;
+      },
+      configurable: true,
+    });
+
+    // === PATCH autres méthodes critiques ===
+    patchMethod(audio, 'pause', 'audio');
+    patchMethod(audio, 'play', 'audio');
+    patchMethod(audio, 'load', 'audio');
+
+    log('\n=== Patch en place, setup deck ===');
+    const AE = window.AudioEngine;
+    await AE.resume();
+
+    AE.createDeckChain('TEST', audio);
+    const mp3 = new Uint8Array(await (await fetch('./Mandjou_QDIUL6T5GQU.mp3')).arrayBuffer());
+    await AE.loadDeckBufferFromBlob('TEST', mp3.buffer);
+    log('✓ deck TEST créé');
+
+    log('\n=== Démo : engagement scratch (sans pointer events) ===');
+    // Simule une position de départ
+    _curTimeVal = 30; // on triche le mock
+    await AE.engageScratch('TEST');
+    log(`✓ engageScratch OK (audio.currentTime=${audio.currentTime.toFixed(2)})`);
+
+    // Simule un mouvement (1 tour avant)
+    await sleep(200);
+    mockCtx.currentTime += 0.2;
+    AE.setScratchRate('TEST', 1);
+    log('✓ setScratchRate(1) à t=200ms');
+    await sleep(300);
+    mockCtx.currentTime += 0.3;
+    AE.setScratchRate('TEST', 0);
+    const pos = AE.getScratchPosition('TEST');
+    log(`✓ getScratchPosition()=${pos.toFixed(2)}s`);
+
+    log('\n=== DISENGAGE — observe tous les writes de currentTime après ===');
+    AE.disengageScratch('TEST', pos, true);
+    log(`→ disengageScratch appelé avec target=${pos.toFixed(2)}, wasPlaying=true`);
+
+    // Attend pour capturer tous les writes après disengage
+    await sleep(1500);
+    log(`\n=== RÉSUMÉ ===`);
+    log(`audio.currentTime FINAL = ${audio.currentTime.toFixed(2)}s`);
+    log(`(target attendu : ${pos.toFixed(2)}s)`);
+    log(`→ ${Math.abs(audio.currentTime - pos) < 0.3 ? '✓ OK' : '✗ SNAP-BACK : ' + (pos - audio.currentTime).toFixed(2) + 's de différence'}`);
+
+    status.textContent = 'TERMINE';
+  } catch (err) {
+    status.textContent = 'ERREUR: ' + err.message;
+    log('ERREUR:', err.message, err.stack);
+  }
+}
+
+// Mock AudioContext pour que AE marche (sans backend, pas de vrai AudioContext)
+const mockCtx = {
+  currentTime: 0,
+  state: 'running',
+  sampleRate: 44100,
+  _destination: {},
+  createGain() { return { gain: { value: 1, setValueAtTime(){}, setTargetAtTime(){}, cancelScheduledValues(){}, cancelAndHoldAtTime(){} }, connect(){}, disconnect(){} }; },
+  createAnalyser() { return { fftSize: 2048, smoothingTimeConstant: 0.8, connect(){}, disconnect(){}, getByteFrequencyData(){}, getByteTimeDomainData(){} }; },
+  createBiquadFilter() { return { type: 'allpass', frequency: { value: 0, setTargetAtTime(){} }, Q: { value: 0 }, gain: { value: 0, setTargetAtTime(){} }, connect(){}, disconnect(){} }; },
+  createBufferSource() {
+    const node = { buffer: null, playbackRate: { value: 0, setValueAtTime(){} }, _onended: null, _started: false, _stopped: false, connect(){}, disconnect(){}, start(){ this._started=true; }, stop(){ this._stopped=true; if(this._onended) this._onended(); } };
+    Object.defineProperty(node, 'onended', { get(){return this._onended;}, set(v){this._onended=v;} });
+    return node;
+  },
+  createMediaElementSource(el) {
+    if (el._mes) throw new Error('déjà connecté');
+    el._mes = { mediaElement: el, connect(){}, disconnect(){} };
+    return el._mes;
+  },
+  get destination() { return this._destination; },
+  resume() { this.state='running'; return Promise.resolve(); },
+  decodeAudioData(buf) { return Promise.resolve({ duration: 30, length: 44100*30, numberOfChannels: 1, getChannelData: () => new Float32Array(44100*30) }); },
+};
+window.AudioContext = function() { return mockCtx; };
+window.webkitAudioContext = window.AudioContext;
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').style.display = 'none';
+  main();
+};
+</script>
+<script src="js/audio-engine.js"></script>
+</body>
+</html>

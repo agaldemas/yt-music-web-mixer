@@ -75,13 +75,12 @@
         }],
         excludeAcceptAllOption: false,
       }).then(function (handle) {
-        return fetch(url).then(function (resp) {
+        var fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
+        return Promise.all([handle.createWritable(), fetcher(url)]).then(function (values) {
+          var writer = values[0], resp = values[1];
           if (!resp.ok) throw new Error('Erreur serveur : ' + resp.status);
-          return resp.blob();
-        }).then(function (blob) {
-          return handle.createWritable().then(function (writer) {
-            return writer.write(blob).then(function () { return writer.close(); });
-          });
+          if (resp.body && typeof resp.body.pipeTo === 'function') return resp.body.pipeTo(writer);
+          return resp.blob().then(function (blob) { return writer.write(blob).then(function () { return writer.close(); }); });
         });
       }).then(function () {
         console.debug('[local-save] ✓ Sauvegarde terminée — ' + filename);
@@ -93,14 +92,19 @@
         if (btn) btn.disabled = false;
       });
     } else {
-      // Fallback : <a download> classique (Firefox, Safari < 86)
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(function () { document.body.removeChild(a); }, 1000);
+      var fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
+      fetcher(url).then(function (resp) {
+        if (!resp.ok) throw new Error('Erreur serveur : ' + resp.status);
+        return resp.blob();
+      }).then(function (blob) {
+        var objectUrl = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = objectUrl; a.download = filename; a.style.display = 'none';
+        document.body.appendChild(a); a.click();
+        setTimeout(function () { URL.revokeObjectURL(objectUrl); document.body.removeChild(a); }, 1000);
+      }).catch(function (err) {
+        console.warn('[local-save] Échec sauvegarde :', err.message || err);
+      }).finally(function () { if (btn) btn.disabled = false; });
     }
   }
 
@@ -111,17 +115,18 @@
     var s = window.state;
     if (!s) { btn.disabled = true; return; }
 
-    var pType = s.playerType && s.playerType[deck];
+    var backend = s.backendMode && s.backendMode[deck];
+    var sourceKind = s.sourceKind && s.sourceKind[deck];
     var videoId = s.videoIds && s.videoIds[deck];
 
-    if (pType === 'piped' && videoId) {
+    if (backend === 'piped' && sourceKind !== 'local' && videoId) {
       btn.disabled = false;
       btn.title = 'Sauvegarder le MP3 en cours sur le disque';
     } else {
       btn.disabled = true;
-      if (pType === 'local') {
+      if (sourceKind === 'local') {
         btn.title = 'Fichier déjà local, rien à sauvegarder';
-      } else if (pType === 'iframe') {
+      } else if (backend === 'iframe') {
         btn.title = 'Sauvegarde YouTube disponible en mode DJ (basculez en mode DJ)';
       } else {
         btn.title = 'Aucune source chargée';

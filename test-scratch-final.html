@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Test final : pause pendant scratch</title>
+<style>body{font:13px monospace;background:#111;color:#eee;padding:12px}pre{background:#000;padding:10px;border:1px solid #444;max-height:80vh;overflow:auto}button{padding:10px;background:#222;color:#eee;border:1px solid #555;cursor:pointer;margin:10px 0}#status{font-weight:bold}</style>
+</head>
+<body>
+<h1>Test : pause pendant scratch = pas de snap-back ?</h1>
+<button id="startBtn">▶ START</button>
+<p id="status">en attente...</p>
+<pre id="log"></pre>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function main() {
+  const status = document.getElementById('status');
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+
+  try {
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+
+    const masterGain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    const sourceMuteGain = ctx.createGain();
+    sourceMuteGain.gain.value = 1.0;
+    const scratchGain = ctx.createGain();
+    const resp = await fetch('./Mandjou_QDIUL6T5GQU.mp3');
+    const scratchBuffer = await ctx.decodeAudioData(await resp.arrayBuffer());
+
+    const source = ctx.createMediaElementSource(audio);
+    source.connect(sourceMuteGain);
+    sourceMuteGain.connect(scratchGain);
+    scratchGain.connect(masterGain);
+    masterGain.connect(analyser);
+    masterGain.connect(ctx.destination);
+    masterGain.gain.value = 1.0;
+
+    const TEST_OFFSET = 10;
+    const TEST_LEN = 1.5;
+
+    function captureRms(seconds) {
+      return new Promise(async (resolve) => {
+        const samples = [];
+        const start = Date.now();
+        while (Date.now() - start < seconds * 1000) {
+          const buf = new Uint8Array(analyser.fftSize);
+          analyser.getByteTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = (buf[i] - 128) / 128;
+            sum += v * v;
+          }
+          samples.push(Math.sqrt(sum / buf.length));
+          await sleep(20);
+        }
+        const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+        const first5 = samples.slice(0, 5);
+        resolve({ mean, first5 });
+      });
+    }
+
+    // RÉFÉRENCE
+    log('\n=== RÉFÉRENCE ===');
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    await audio.play();
+    const ref = await captureRms(TEST_LEN);
+    log('[ref] first5:', ref.first5.map(s => s.toFixed(3)).join(','));
+    audio.pause();
+
+    // STRAT 5 : PAUSE dès l'engage + MES déconnecté, MES ne peut pas accumuler de buffer
+    log('\n=== STRAT 5 : pause DÈS l\'engage (MES déconnecté + audio paused) ===');
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    audio.pause(); // ← PAUSE IMMÉDIATE
+    sourceMuteGain.disconnect();
+    const sn5 = ctx.createBufferSource();
+    sn5.buffer = scratchBuffer;
+    sn5.playbackRate.value = 0;
+    sn5.connect(scratchGain);
+    sn5.start(0, TEST_OFFSET);
+    scratchGain.gain.value = 1;
+    await sleep(500); // accumule le buffer MAIS audio est paused donc MES ne produit rien
+
+    // disengage : mute + stop scratch + (audio déjà paused) seek
+    sourceMuteGain.gain.value = 0;
+    scratchGain.gain.value = 0;
+    sn5.stop();
+    sn5.disconnect();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    sourceMuteGain.connect(scratchGain);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    await audio.play();
+    await sleep(200);
+    const strat5 = await captureRms(TEST_LEN);
+    const deltas = ref.first5.map((v, i) => Math.abs(v - strat5.first5[i]));
+    const sum = deltas.reduce((a, b) => a + b, 0);
+    log('[STRAT 5] first5:', strat5.first5.map(s => s.toFixed(3)).join(','));
+    log('[STRAT 5] sum |delta| =', sum.toFixed(4), sum > 0.5 ? '⚠️ SNAP-BACK' : '✓ OK');
+
+    // STRAT 6 : MES DÉCONNECTÉ (source.disconnect) pendant scratch
+    log('\n=== STRAT 6 : MES source.disconnect() pendant scratch ===');
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    audio.pause();
+    try { source.disconnect(); log('source.disconnect OK'); } catch(e) { log('source.disconnect ERR:', e.message); }
+    const sn6 = ctx.createBufferSource();
+    sn6.buffer = scratchBuffer;
+    sn6.playbackRate.value = 0;
+    sn6.connect(scratchGain);
+    sn6.start(0, TEST_OFFSET);
+    scratchGain.gain.value = 1;
+    await sleep(500);
+    sourceMuteGain.gain.value = 0;
+    scratchGain.gain.value = 0;
+    sn6.stop();
+    sn6.disconnect();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    try { source.connect(sourceMuteGain); log('source.connect OK'); } catch(e) { log('source.connect ERR:', e.message); }
+    sourceMuteGain.connect(scratchGain);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    await audio.play();
+    await sleep(200);
+    const strat6 = await captureRms(TEST_LEN);
+    const deltas6 = ref.first5.map((v, i) => Math.abs(v - strat6.first5[i]));
+    const sum6 = deltas6.reduce((a, b) => a + b, 0);
+    log('[STRAT 6] first5:', strat6.first5.map(s => s.toFixed(3)).join(','));
+    log('[STRAT 6] sum |delta| =', sum6.toFixed(4), sum6 > 0.5 ? '⚠️ SNAP-BACK' : '✓ OK');
+
+    status.textContent = 'TERMINE';
+  } catch (err) {
+    status.textContent = 'ERREUR: ' + err.message;
+    log('ERREUR:', err.message, err.stack);
+  }
+}
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').style.display = 'none';
+  document.getElementById('status').textContent = 'en cours...';
+  main();
+};
+</script>
+</body>
+</html>

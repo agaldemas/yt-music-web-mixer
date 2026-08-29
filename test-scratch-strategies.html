@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Compare stratégies de fix</title>
+<style>body{font:13px monospace;background:#111;color:#eee;padding:12px}pre{background:#000;padding:10px;border:1px solid #444;max-height:80vh;overflow:auto}button{padding:10px;background:#222;color:#eee;border:1px solid #555;cursor:pointer;margin:10px 0}#status{font-weight:bold}</style>
+</head>
+<body>
+<h1>Compare stratégies de fix pour le snap-back</h1>
+<button id="startBtn">▶ START</button>
+<p id="status">en attente...</p>
+<pre id="log"></pre>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function main() {
+  const status = document.getElementById('status');
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+  log('ctx state=', ctx.state);
+
+  try {
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+
+    const masterGain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    const sourceMuteGain = ctx.createGain();
+    sourceMuteGain.gain.value = 1.0;
+    const scratchGain = ctx.createGain();
+    const resp = await fetch('./Mandjou_QDIUL6T5GQU.mp3');
+    const scratchBuffer = await ctx.decodeAudioData(await resp.arrayBuffer());
+
+    const source = ctx.createMediaElementSource(audio);
+    source.connect(sourceMuteGain);
+    sourceMuteGain.connect(scratchGain);
+    scratchGain.connect(masterGain);
+    masterGain.connect(analyser);
+    masterGain.connect(ctx.destination);
+    masterGain.gain.value = 1.0;
+
+    const TEST_OFFSET = 10;
+    const TEST_LEN = 1.5;
+
+    function captureRms(seconds) {
+      return new Promise(async (resolve) => {
+        const samples = [];
+        const start = Date.now();
+        while (Date.now() - start < seconds * 1000) {
+          const buf = new Uint8Array(analyser.fftSize);
+          analyser.getByteTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = (buf[i] - 128) / 128;
+            sum += v * v;
+          }
+          samples.push(Math.sqrt(sum / buf.length));
+          await sleep(20);
+        }
+        const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+        const max = Math.max(...samples);
+        const first20 = samples.slice(0, 20).map(s => s.toFixed(3)).join(',');
+        const firstFew = samples.slice(0, 5);
+        resolve({ mean, max, first20, firstFew });
+      });
+    }
+
+    async function setupScratch() {
+      // remet tout à zéro
+      audio.pause();
+      audio.currentTime = TEST_OFFSET;
+      await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+      sourceMuteGain.disconnect();
+      const scratchNode = ctx.createBufferSource();
+      scratchNode.buffer = scratchBuffer;
+      scratchNode.playbackRate.value = 0;
+      scratchNode.connect(scratchGain);
+      scratchNode.start(0, TEST_OFFSET);
+      scratchGain.gain.value = 1;
+      await sleep(500); // accumule du buffer dans le MES
+      scratchNode.stop();
+      scratchNode.disconnect();
+      return scratchNode;
+    }
+
+    // ====== RÉFÉRENCE ======
+    log('\n=== RÉFÉRENCE : play à 10s sans scratch ===');
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    await audio.play();
+    const ref = await captureRms(TEST_LEN);
+    log('[ref] mean=', ref.mean.toFixed(4), 'max=', ref.max.toFixed(4));
+    log('[ref] first 20 RMS:', ref.first20);
+    audio.pause();
+
+    function compare(label, captured) {
+      const delta = Math.abs(ref.firstFew[0] - captured.firstFew[0]);
+      const deltasAll = [];
+      for (let i = 0; i < Math.min(ref.firstFew.length, captured.firstFew.length); i++) {
+        deltasAll.push(Math.abs(ref.firstFew[i] - captured.firstFew[i]));
+      }
+      const sum = deltasAll.reduce((a, b) => a + b, 0);
+      log('[' + label + '] firstFew:', captured.firstFew.map(s => s.toFixed(3)).join(','));
+      log('[' + label + '] sum |delta| vs ref =', sum.toFixed(4),
+          sum > 0.5 ? '⚠️ SNAP-BACK' : '✓ OK');
+    }
+
+    // ====== STRATÉGIE 1 : FIX V3 actuel (pause + currentTime + wait seeked) ======
+    log('\n=== STRAT 1 : pause + currentTime + wait seeked (V3) ===');
+    await setupScratch();
+    sourceMuteGain.gain.value = 0;
+    scratchGain.gain.value = 0;
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    sourceMuteGain.connect(scratchGain);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    await audio.play();
+    await sleep(200);
+    const strat1 = await captureRms(TEST_LEN);
+    compare('STRAT 1', strat1);
+    audio.pause();
+
+    // ====== STRATÉGIE 2 : audio.load() AVANT audio.currentTime (ancien) ======
+    log('\n=== STRAT 2 : pause + load() + currentTime + wait seeked ===');
+    await setupScratch();
+    sourceMuteGain.gain.value = 0;
+    scratchGain.gain.value = 0;
+    audio.pause();
+    audio.load(); // ← clé
+    await new Promise(r => audio.addEventListener('loadedmetadata', r, { once: true }));
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    sourceMuteGain.connect(scratchGain);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    await audio.play();
+    await sleep(200);
+    const strat2 = await captureRms(TEST_LEN);
+    compare('STRAT 2', strat2);
+    audio.pause();
+
+    // ====== STRATÉGIE 3 : play() BRIÈVEMENT pendant le scratch pour forcer le MES à se resync ======
+    log('\n=== STRAT 3 : ne PAS pause, laisser jouer pendant scratch, seek à la fin ===');
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    await audio.play();
+    await sleep(200);
+    // engage scratch (audio continue à jouer)
+    sourceMuteGain.disconnect();
+    const scratchNode3 = ctx.createBufferSource();
+    scratchNode3.buffer = scratchBuffer;
+    scratchNode3.playbackRate.value = 0;
+    scratchNode3.connect(scratchGain);
+    scratchNode3.start(0, TEST_OFFSET);
+    scratchGain.gain.value = 1;
+    await sleep(500);
+    // disengage : mute + stop scratch, SANS pause, juste seek
+    sourceMuteGain.gain.value = 0;
+    scratchGain.gain.value = 0;
+    scratchNode3.onended = null;
+    scratchNode3.stop();
+    scratchNode3.disconnect();
+    audio.currentTime = TEST_OFFSET; // seek SANS pause
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    sourceMuteGain.connect(scratchGain);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    await sleep(300);
+    const strat3 = await captureRms(TEST_LEN);
+    compare('STRAT 3', strat3);
+    audio.pause();
+
+    // ====== STRATÉGIE 4 : disconnect MES entièrement pendant scratch, reconnect via createMediaElementSource ======
+    log('\n=== STRAT 4 : disconnect MES + reconnect (test si recreate fonctionne) ===');
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    // engage scratch + disconnect MES du sourceMuteGain
+    sourceMuteGain.disconnect();
+    try {
+      source.disconnect();
+    } catch (e) { log('source.disconnect err:', e.message); }
+    const scratchNode4 = ctx.createBufferSource();
+    scratchNode4.buffer = scratchBuffer;
+    scratchNode4.playbackRate.value = 0;
+    scratchNode4.connect(scratchGain);
+    scratchNode4.start(0, TEST_OFFSET);
+    scratchGain.gain.value = 1;
+    await sleep(500);
+    // disengage : mute + stop scratch
+    sourceMuteGain.gain.value = 0;
+    scratchGain.gain.value = 0;
+    scratchNode4.onended = null;
+    scratchNode4.stop();
+    scratchNode4.disconnect();
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    // reconnect MES
+    try {
+      source.connect(sourceMuteGain);
+      sourceMuteGain.connect(scratchGain);
+      log('reconnect OK');
+    } catch (e) { log('reconnect err:', e.message); }
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    await audio.play();
+    await sleep(200);
+    const strat4 = await captureRms(TEST_LEN);
+    compare('STRAT 4', strat4);
+    audio.pause();
+
+    status.textContent = 'TERMINE';
+  } catch (err) {
+    status.textContent = 'ERREUR: ' + err.message;
+    log('ERREUR:', err.message, err.stack);
+  }
+}
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').style.display = 'none';
+  document.getElementById('status').textContent = 'en cours...';
+  main();
+};
+</script>
+</body>
+</html>

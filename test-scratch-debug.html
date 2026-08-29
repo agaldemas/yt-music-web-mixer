@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Test réel du bug snap-back</title>
+<style>
+  body { font: 14px monospace; padding: 16px; background: #111; color: #eee; }
+  button { padding: 8px 14px; margin: 4px; background: #222; color: #eee; border: 1px solid #555; cursor: pointer; }
+  pre { background: #000; padding: 12px; border: 1px solid #444; overflow: auto; max-height: 70vh; }
+  .ok { color: #6c6; }
+  .bad { color: #f66; }
+  .warn { color: #fc6; }
+</style>
+</head>
+<body>
+<h1>Test réel : snap-back au release du scratch</h1>
+<button id="load">Charger MP3</button>
+<button id="engage">Engage scratch</button>
+<button id="seek5">Seek à 5s pendant scratch</button>
+<button id="disengage">Disengage</button>
+<button id="play">Play</button>
+<button id="pause">Pause</button>
+<pre id="log"></pre>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const ok = (...a) => log('%c✓', 'color:#6c6', ...a);
+const bad = (...a) => log('%c✗', 'color:#f66', ...a);
+
+let ctx, audio, masterGain, analyser, sourceMuteGain, scratchGain, scratchNode, scratchBuffer;
+let scratchEngaged = false;
+let scratchStartTime = 0;
+let scratchOffset = 0;
+let scratchRate = 0;
+let samplePos = 0;
+let raf;
+
+function initAudio() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  audio = document.createElement('audio');
+  audio.crossOrigin = 'anonymous';
+  audio.preload = 'auto';
+  audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+  document.body.appendChild(audio);
+  audio.addEventListener('canplay', async () => {
+    log('MP3 prêt, duration=', audio.duration.toFixed(2));
+    // Crée le graphe identique à audio-engine.js
+    masterGain = ctx.createGain();
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    sourceMuteGain = ctx.createGain();
+    sourceMuteGain.gain.value = 1.0;
+    scratchGain = ctx.createGain();
+    const lowShelf = ctx.createBiquadFilter();
+    const midPeak = ctx.createBiquadFilter();
+    const highShelf = ctx.createBiquadFilter();
+    const djFilter = ctx.createBiquadFilter();
+    const deckGain = ctx.createGain();
+
+    // Charge le MP3 dans un AudioBuffer pour le scratch
+    const resp = await fetch('./Mandjou_QDIUL6T5GQU.mp3');
+    const arr = await resp.arrayBuffer();
+    scratchBuffer = await ctx.decodeAudioData(arr);
+    log('scratchBuffer décodé, duration=', scratchBuffer.duration.toFixed(2));
+
+    const source = ctx.createMediaElementSource(audio);
+    source.connect(sourceMuteGain);
+    sourceMuteGain.connect(scratchGain);
+    scratchGain.connect(lowShelf);
+    lowShelf.connect(midPeak);
+    midPeak.connect(highShelf);
+    highShelf.connect(djFilter);
+    djFilter.connect(deckGain);
+    deckGain.connect(masterGain);
+    masterGain.connect(analyser);
+    masterGain.connect(ctx.destination);
+
+    // Pour mesurer ce que le MES produit en sortie, on observe analyser
+    ok('Graphe créé. MES connecté via sourceMuteGain → scratchGain.');
+    log('audio.crossOrigin=', audio.crossOrigin, 'audio.preload=', audio.preload);
+  }, { once: true });
+}
+
+document.getElementById('load').onclick = initAudio;
+
+document.getElementById('engage').onclick = async () => {
+  if (!ctx) return;
+  await ctx.resume();
+  scratchOffset = audio.currentTime;
+  scratchEngaged = true;
+  scratchRate = 0;
+  scratchStartTime = ctx.currentTime;
+  sourceMuteGain.disconnect();
+  scratchGain.gain.value = 1;
+  scratchNode = ctx.createBufferSource();
+  scratchNode.buffer = scratchBuffer;
+  scratchNode.playbackRate.value = 0;
+  scratchNode.connect(scratchGain);
+  scratchNode.start(0, scratchOffset);
+  log('engaged scratch at offset=', scratchOffset.toFixed(2));
+};
+
+document.getElementById('seek5').onclick = () => {
+  if (!scratchNode) return;
+  // Simule un mouvement forward de 5s en re-anchorant
+  const oldRate = scratchRate;
+  const dt = ctx.currentTime - scratchStartTime;
+  scratchOffset = scratchOffset + dt * oldRate;
+  scratchStartTime = ctx.currentTime;
+  scratchOffset += 5; // simule 5s de mouvement
+  scratchRate = 0;
+  scratchNode.stop();
+  scratchNode.disconnect();
+  scratchNode = ctx.createBufferSource();
+  scratchNode.buffer = scratchBuffer;
+  scratchNode.playbackRate.value = 0;
+  scratchNode.connect(scratchGain);
+  scratchNode.start(0, scratchOffset);
+  log('scratch seeked to offset=', scratchOffset.toFixed(2));
+};
+
+document.getElementById('disengage').onclick = () => {
+  if (!scratchEngaged) return;
+  const target = scratchOffset;
+  sourceMuteGain.gain.value = 0;
+  scratchGain.gain.value = 0;
+  if (scratchNode) {
+    scratchNode.onended = null;
+    scratchNode.stop();
+    scratchNode.disconnect();
+    scratchNode = null;
+  }
+  // FIX V3 : pause + currentTime + wait seeked
+  audio.pause();
+  audio.currentTime = target;
+  let resolved = false;
+  const onSeeked = () => {
+    audio.removeEventListener('seeked', onSeeked);
+    if (resolved) return;
+    resolved = true;
+    sourceMuteGain.connect(scratchGain);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    log('DISENGAGE: seeked fired. target=', target.toFixed(2),
+        'currentTime=', audio.currentTime.toFixed(2));
+  };
+  audio.addEventListener('seeked', onSeeked);
+  setTimeout(() => {
+    if (resolved) return;
+    resolved = true;
+    audio.removeEventListener('seeked', onSeeked);
+    sourceMuteGain.connect(scratchGain);
+    sourceMuteGain.gain.value = 1;
+    scratchGain.gain.value = 1;
+    log('DISENGAGE: seeked TIMEOUT. target=', target.toFixed(2),
+        'currentTime=', audio.currentTime.toFixed(2));
+  }, 1200);
+  scratchEngaged = false;
+};
+
+document.getElementById('play').onclick = () => audio.play();
+document.getElementById('pause').onclick = () => audio.pause();
+
+// Mesure en continu ce que le MES produit (RMS sur time domain)
+function poll() {
+  if (analyser) {
+    const buf = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(buf);
+    let rms = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = (buf[i] - 128) / 128;
+      rms += v * v;
+    }
+    rms = Math.sqrt(rms / buf.length);
+    if (window.__lastRms !== rms.toFixed(3)) {
+      window.__lastRms = rms.toFixed(3);
+      log(`t=${audio.currentTime.toFixed(2)}s paused=${audio.paused} rms=${rms.toFixed(3)} scratchEngaged=${scratchEngaged}`);
+    }
+  }
+  raf = requestAnimationFrame(poll);
+}
+poll();
+</script>
+</body>
+</html>

@@ -189,83 +189,64 @@
 
   // Construit le DOM d'un résultat (bouton cliquable : vignette + titre + durée)
   function buildResultEl(deck, video, onSelect, onMarkPlayed) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'search-result' + (video.isLive ? ' search-result-is-live' : '');
-    btn.dataset.videoId = video.id;
+    const card = document.createElement('div');
+    card.className = 'search-result' + (video.isLive ? ' search-result-is-live' : '');
+    card.dataset.videoId = video.id;
+
+    const selectBtn = document.createElement('button');
+    selectBtn.type = 'button';
+    selectBtn.className = 'search-result-select';
 
     const thumbs = video.thumbnails || {};
     const thumb = thumbs.medium || thumbs.high || thumbs.default || {};
     const thumbUrl = safeImgUrl(thumb.url);
-
-    // aria-label enrichi (titre + uploader + durée + vues + live)
     let ariaLabel = video.title;
     if (video.uploaderName) ariaLabel += ' — ' + video.uploaderName;
     if (video.isLive) ariaLabel += ' [EN DIRECT]';
     else if (video.duration) ariaLabel += ' (' + video.duration + ')';
     if (video.views) ariaLabel += ' — ' + formatViews(video.views);
-    btn.setAttribute('aria-label', 'Charger ' + ariaLabel);
+    selectBtn.setAttribute('aria-label', 'Charger ' + ariaLabel);
 
-    let html = '';
-    if (thumbUrl) {
-      html += '<img class="search-result-thumb" src="' + thumbUrl + '" alt="" loading="lazy" />';
-    } else {
-      html += '<div class="search-result-thumb search-result-thumb-empty" aria-hidden="true">🎵</div>';
-    }
+    let html = thumbUrl
+      ? '<img class="search-result-thumb" src="' + thumbUrl + '" alt="" loading="lazy" />'
+      : '<div class="search-result-thumb search-result-thumb-empty" aria-hidden="true">🎵</div>';
     html += '<div class="search-result-info">';
     html += '<span class="search-result-title">' + escapeHtml(video.title) + '</span>';
-    if (video.uploaderName) {
-      html += '<span class="search-result-uploader">' + escapeHtml(video.uploaderName) + '</span>';
-    }
-    if (video.isLive) {
-      html += '<span class="search-result-live">🔴 EN DIRECT</span>';
-    } else if (video.duration) {
-      html += '<span class="search-result-duration">' + escapeHtml(video.duration) + '</span>';
-    }
+    if (video.uploaderName) html += '<span class="search-result-uploader">' + escapeHtml(video.uploaderName) + '</span>';
+    if (video.isLive) html += '<span class="search-result-live">🔴 EN DIRECT</span>';
+    else if (video.duration) html += '<span class="search-result-duration">' + escapeHtml(video.duration) + '</span>';
     html += '</div>';
-    // Lien explicite vers YouTube : il affiche l'ID et demande confirmation
-    // avant d'ouvrir la vidéo dans un nouvel onglet.
-    const youtubeUrl = 'https://www.youtube.com/watch?v=' + encodeURIComponent(video.id);
-    html += '<a class="search-result-youtube-link" href="' + youtubeUrl
-      + '" target="_blank" rel="noopener noreferrer"'
-      + ' aria-label="Ouvrir ' + escapeHtml(video.id) + ' sur YouTube"'
-      + ' title="Ouvrir sur YouTube : ' + escapeHtml(video.id) + '">'
-      + '<span class="youtube-play-icon" aria-hidden="true">▶</span>'
-      + '</a>';
+    selectBtn.innerHTML = html;
 
-    btn.innerHTML = html;
+    const youtubeLink = document.createElement('a');
+    youtubeLink.className = 'search-result-youtube-link';
+    youtubeLink.href = 'https://www.youtube.com/watch?v=' + encodeURIComponent(video.id);
+    youtubeLink.target = '_blank';
+    youtubeLink.rel = 'noopener noreferrer';
+    youtubeLink.setAttribute('aria-label', 'Ouvrir ' + video.id + ' sur YouTube');
+    youtubeLink.title = 'Ouvrir sur YouTube : ' + video.id;
+    youtubeLink.innerHTML = '<span class="youtube-play-icon" aria-hidden="true">▶</span>';
 
-    // Hover avec debounce 500 ms : évite les rafales de requêtes
-    // /api/description/yt-dlp quand on survole rapidement la grille.
-    btn.addEventListener('pointerenter', () => {
+    card.appendChild(selectBtn);
+    card.appendChild(youtubeLink);
+    card.addEventListener('pointerenter', function () {
       clearTimeout(hoverTimer);
-      hoverTimer = setTimeout(() => showPopup(video, btn), 500);
+      hoverTimer = setTimeout(function () { showPopup(video, card); }, 500);
     });
-    btn.addEventListener('pointerleave', () => {
-      clearTimeout(hoverTimer);
-      hoverTimer = null;
-      scheduleHidePopup();
+    card.addEventListener('pointerleave', function () {
+      clearTimeout(hoverTimer); hoverTimer = null; scheduleHidePopup();
     });
-    // Focus clavier : immédiat (pas de rafale possible)
-    btn.addEventListener('focus', () => showPopup(video, btn));
-    btn.addEventListener('blur', hidePopup);
-
-    const youtubeLink = btn.querySelector('.search-result-youtube-link');
+    selectBtn.addEventListener('focus', function () { showPopup(video, card); });
+    selectBtn.addEventListener('blur', hidePopup);
     youtubeLink.addEventListener('click', function (event) {
-      event.stopPropagation();
       const open = window.confirm('Ouvrir cette vidéo YouTube dans un nouvel onglet ?\n\nID : ' + video.id);
       if (!open) event.preventDefault();
     });
-
-    // Clic → sélection, avec confirmation si live stream
-    btn.addEventListener('click', function () {
-      if (video.isLive) {
-        showStreamConfirm(deck, btn, video, onSelect, onMarkPlayed);
-        return;
-      }
-      commitSelect(deck, btn, video, onSelect, onMarkPlayed);
+    selectBtn.addEventListener('click', function () {
+      if (video.isLive) return showStreamConfirm(deck, card, video, onSelect, onMarkPlayed);
+      commitSelect(deck, card, video, onSelect, onMarkPlayed);
     });
-    return btn;
+    return card;
   }
 
   // Appelé par le clic sur un résultat confirmé (stream ou non)
@@ -656,15 +637,6 @@
     return div;
   }
 
-  // Message d'avertissement inline (affiché au-dessus des résultats conservés,
-  // par exemple quand une page suivante Piped échoue).
-  function buildInlineWarning(message) {
-    const div = document.createElement('div');
-    div.className = 'search-state search-state-warning search-state-inline';
-    div.textContent = '⚠️ ' + message;
-    return div;
-  }
-
   // ===== Appels API =====
 
   // /search?part=snippet&type=video&videoCategoryId=10&q=...&key=...
@@ -731,7 +703,8 @@
       if (signal.aborted) ctrl.abort();
       else signal.addEventListener('abort', function () { ctrl.abort(); });
     }
-    return fetch(url, {
+    var fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
+    return fetcher(url, {
       signal: ctrl.signal,
       headers: { 'Accept': 'application/json' },
     }).finally(function () { clearTimeout(timer); });

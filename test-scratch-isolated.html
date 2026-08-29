@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Test isolation snap-back</title>
+<style>body{font:13px monospace;background:#111;color:#eee;padding:12px}pre{background:#000;padding:10px;border:1px solid #444;max-height:80vh;overflow:auto}button{padding:10px;background:#222;color:#eee;border:1px solid #555;cursor:pointer;margin:10px 0}#status{font-weight:bold}</style>
+</head>
+<body>
+<h1>Test : le snap-back vient-il du MES déconnecté ?</h1>
+<button id="startBtn">▶ START</button>
+<p id="status">en attente...</p>
+<pre id="log"></pre>
+<script>
+const log = (...a) => {
+  document.getElementById('log').textContent += a.join(' ') + '\n';
+};
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function main() {
+  const status = document.getElementById('status');
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+
+  try {
+    const audio = document.createElement('audio');
+    audio.crossOrigin = 'anonymous';
+    audio.preload = 'auto';
+    audio.src = './Mandjou_QDIUL6T5GQU.mp3';
+    document.body.appendChild(audio);
+    await new Promise(r => audio.addEventListener('canplay', r, { once: true }));
+
+    const masterGain = ctx.createGain();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    const sourceMuteGain = ctx.createGain();
+    sourceMuteGain.gain.value = 1.0;
+    const scratchGain = ctx.createGain();
+
+    const source = ctx.createMediaElementSource(audio);
+    source.connect(sourceMuteGain);
+    sourceMuteGain.connect(scratchGain);
+    scratchGain.connect(masterGain);
+    masterGain.connect(analyser);
+    masterGain.connect(ctx.destination);
+    masterGain.gain.value = 1.0;
+
+    const TEST_OFFSET = 10;
+    const TEST_LEN = 1.5;
+
+    function captureDetailed() {
+      return new Promise(async (resolve) => {
+        const samples = [];
+        const start = Date.now();
+        while (Date.now() - start < TEST_LEN * 1000) {
+          const buf = new Uint8Array(analyser.fftSize);
+          analyser.getByteTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = (buf[i] - 128) / 128;
+            sum += v * v;
+          }
+          samples.push(Math.sqrt(sum / buf.length));
+          await sleep(20);
+        }
+        resolve(samples);
+      });
+    }
+
+    // Référence : seek + play SANS disconnect du MES
+    log('\n=== RÉFÉRENCE : seek + play SANS disconnect ===');
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    await audio.play();
+    const refSamples = await captureDetailed();
+    log('[ref] first 10:', refSamples.slice(0, 10).map(s => s.toFixed(3)).join(','));
+    audio.pause();
+
+    // Test A : disconnect MES + reconnect SANS pause/play
+    log('\n=== TEST A : sourceMuteGain disconnect 500ms puis reconnect (SANS pause/play) ===');
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    sourceMuteGain.disconnect();
+    await sleep(500); // MES déconnecté 500ms (équivalent à un scratch court)
+    sourceMuteGain.connect(scratchGain);
+    await audio.play();
+    const testA = await captureDetailed();
+    log('[A] first 10:', testA.slice(0, 10).map(s => s.toFixed(3)).join(','));
+    const deltaA = refSamples.slice(0, 10).map((v, i) => Math.abs(v - testA[i])).reduce((a,b)=>a+b,0);
+    log('[A] delta vs ref =', deltaA.toFixed(3), deltaA > 0.3 ? '⚠️' : '✓ OK');
+    audio.pause();
+
+    // Test B : source.disconnect + reconnect SANS pause/play
+    log('\n=== TEST B : source.disconnect 500ms puis reconnect (SANS pause/play) ===');
+    audio.pause();
+    audio.currentTime = TEST_OFFSET;
+    await new Promise(r => audio.addEventListener('seeked', r, { once: true }));
+    try { source.disconnect(); } catch(e) {}
+    await sleep(500);
+    try { source.connect(sourceMuteGain); } catch(e) {}
+    await audio.play();
+    const testB = await captureDetailed();
+    log('[B] first 10:', testB.slice(0, 10).map(s => s.toFixed(3)).join(','));
+    const deltaB = refSamples.slice(0, 10).map((v, i) => Math.abs(v - testB[i])).reduce((a,b)=>a+b,0);
+    log('[B] delta vs ref =', deltaB.toFixed(3), deltaB > 0.3 ? '⚠️' : '✓ OK');
+    audio.pause();
+
+    status.textContent = 'TERMINE';
+  } catch (err) {
+    status.textContent = 'ERREUR: ' + err.message;
+    log('ERREUR:', err.message, err.stack);
+  }
+}
+
+document.getElementById('startBtn').onclick = () => {
+  document.getElementById('startBtn').style.display = 'none';
+  document.getElementById('status').textContent = 'en cours...';
+  main();
+};
+</script>
+</body>
+</html>
