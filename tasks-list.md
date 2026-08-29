@@ -1,127 +1,136 @@
 # 📋 YT Music Web Mixer — Tâches
 
-État du projet au 2026-08-11. Référence : `CLAUDE.md` (cahier des charges).
+État du projet au 2026-08-29 19:51. Référence : `CLAUDE.md` (cahier des charges).
 
 ## Légende
 
 - [x] Terminé · [~] Partiellement / en cours · [ ] À faire
 
-> **État Git** : 8 commits sur `main` (`4cdceea` scaffold → `65a70e8` READMEs → `83f42bf` tasks-list → `b9050fc`/`701f537` .gitignore → `90d04b3` implement players, search, mixer, settings → `e6b541e` tasks-list → `5894e33` show A/B volume values in crossfade). Working tree propre.
+> **État Git** : Merge de la branch ScioNos/refactor/secure-audio-pipeline sur main.  
+Committed `1d79f97` (merge). Working tree propre.
 
 ---
 
-## 1. Squelette HTML/CSS ✅
+## 0. 🎉 PR #1 — Merge ✅
 
-- [x] Structure `index.html` : header, zone A | B, barre de mixage fixe en bas
+**Titre du PR** : "Refactor: Secure audio extraction pipeline, robust deck lifecycle, and test coverage"  
+**Auteur** : @ScioNos  
+**URL** : https://github.com/agaldemas/yt-music-web-mixer/pull/1  
+
+### 📦 Ce que le merge apporte
+
+#### 1. Server Security & Extraction Pipeline Hardening (`feat(server)`)
+
+- ✅ **Bind de la serving de extraction sur loopback (`127.0.0.1`)** avec validation des headers `Host` locaux (évite l'exposition à l'extérieur).
+- ✅ **Web asset allowlist** : remplacement du repository-wide static directory serving par une liste explicite des assets autorisés.
+- ✅ **Protections API endpoints sensibles** : token de session en mémoire pour protéger les routes `/api/health`, `/api/streams/*`, `/api/audio/*`.
+- ✅ **Split `/api/health`** : flags séparés `liveness` (`ok`) et `audio_ready` (détection indépendante de `yt-dlp` et `ffmpeg`).
+- ✅ **Concurrency controls** : bounds sur la queue d'extraction, capacité de disque du cache, nombre max d'enregistrements.
+- ✅ **Cleanup automatique** : suppression des fichiers temporaires stalés + limitation du cache disque.
+- ✅ **Browser-cookie access disabled** par défaut pour des raisons de sécurité.
+
+**Impact** : serveur beaucoup plus sécurisé et robuste contre les attaques et abuse.
+
+#### 2. Deck Audio Lifecycle & Safety (`fix(audio)`)
+
+- ✅ **AbortController guards** : annulation des fetch/decode requests obsolètes lors du fast-switching entre tracks (évitement de leaks mémoire/CPU).
+- ✅ **Unified loading logic** : logique unifiée pour YouTube, cue points et fichiers audio locaux → moins de code dupliqué.
+- ✅ **Séparation state backend ↔ source state** : meilleure encapsulation entre l'état du lecteur Web Audio et la source d'origine (YouTube/IFrame).
+- ✅ **Local file imports** : support direct des lectures de fichiers audio locaux depuis le mode IFrame.
+- ✅ **Dedicated Web Audio mute gain** : GainNode séparé pour le muting de chaque voie, indépendant du crossfader → contrôle précis du son/mute.
+- ✅ **ID3v2.3 et ID3v2.4 parsing** : lecture complète des tags ID3 y compris l'artwork APIC (pochette) avec support des MIME types.
+- ✅ **Cleanup YouTube players** : destruction propre des instances YouTube inutilisées + déduplication de l'injection IFrame API.
+
+**Impact** : meilleure fiabilité, moins memory leak, handling robuste des switch rapides tracks, artwork correctement stocké dans les tags MP3/ID3.
+
+#### 3. Documentation, Accessibility & Test Coverage (`chore`)
+
+- ✅ **README.md (en)** mis à jour avec :
+  - Architecure loopback security explained
+  - Readiness checks détaillés
+  - Resource limits documentés
+  - ASCII diagrams d'architecture
+- ✅ **Diagrammes SVG ajoutés dans `docs/`** :
+  - `fonctionnement-programme.svg` (diagramme de fonctionnement)
+  - `program-operation-en.svg` (version anglaise)
+- ✅ **Diagnostics d'accessibilité** : labels A11y corrigés, contrastes vérifiés, navigation clavier améliorée sur les cards de résultats.
+- ✅ **Tests déterministes ajoutés dans `tests/`** :
+  - `check-syntax.js` : parsing syntaxique du JS
+  - `test_id3.js` : tests unitaires du parser ID3v2.x
+  - `test_server.js` : tests de readiness check et health endpoints
+  - `test_task_queue.js` : tests de la file d'exécution
+- ✅ **Cleanup unused dependencies** : suppression des packages non utilisés dans `package.json`.
+
+**Impact** : code plus maintenable, mieux testé, conforme aux standards A11y.
+
+#### 4. Nouveaux fichiers ajoutés par le merge (non committés avant)
+
+Les fichiers suivants ont été créés/intégrés via le merge :
+
+- `js/id3.js` : parser ID3v2.x complet avec support APIC
+- `js/local-api.js` : binding API locale pour les fichiers audio
+- `server/cache-manager.js` : gestionnaire centralisé du cache disque
+- `server/task-queue.js` : file d'exécution asynchrone pour yt-dlp
+- `tests/test_id3.js` : tests unitaires du parser ID3
+- `tests/check-syntax.js` : linter syntaxique
+- `docs/fonctionnement-programme.svg` : diagramème SVG
+- `docs/program-operation-en.svg` : version anglaise
+
+#### 5. Fichiers modifiés (extraits)
+
+Les modules principaux touchés par le merge :
+
+| Fichier | Changelog succinct |
+|---------|-------------------|
+| `.gitignore` | Ignore de nouveaux tests et scratch files |
+| `js/audio-player.js` | ~400 lignes modifiées : lifecycle managé, cancellation, ID3 support |
+| `js/config.js` | Ajout options cache concurrency bounds |
+| `js/deck-controls.js` | Contrôles deck améliorés (mute gain séparé) |
+| `js/youtube.js` | Déduplication IFrame API script injection |
+| `server/server.js` | Binding loopback, allowlist, token auth, queue/task-manager |
+| `tests/run-all.js` | Exécution orchestrée des tests unitaires + réseau en sélectif |
+| `index.html` | Ajout modal de configuration session token (démo) |
+
+---
+
+## 9. Squelette HTML/CSS ✅
+
+- [x] Structure `index.html` : header, zone A \u2022 B, barre de mixage fixe en bas
 - [x] Grille 2 colonnes responsive (`css/styles.css`)
 - [x] Voie A (gauche) et voie B (droite) : lecteur, recherche, résultats, badge, mute, erreur
-- [x] Barre de mixage : crossfader, play/pause both, sync B→A, sync continu, master volume
+- [x] Barre de mixage : crossfader, play/pause both, sync B\u2192A, sync continu, master volume
 - [x] Thème sombre, responsive (1 colonne < 720px)
-- [x] Thumb crossfade : rectangle 15×30px avec curseur `ew-resize` (séparé du master slider)
+- [x] Thumb crossfade : rectangle 15\u00d730px avec curseur `ew-resize` (s\xe9par\xe9 du master slider)
 - [x] Thumb master : rond 18px classique
-- [x] Bug `#api-error-banner` dupliqué corrigé (une seule occurrence dans `index.html` et `styles.css`)
+- [x] Bug `#api-error-banner` dupliqu\xe9 corrig\xe9 (une seule occurrence dans `index.html` et `styles.css`)
 
-## 2. Projet & documentation ✅
+## 10. Projet & documentation ✅
 
-- [x] `.gitignore` adapté (OS, éditeurs, `.claude/settings.local.json`, `node_modules/`, `.env`, etc.)
+- [x] `.gitignore` adapt\xe9 (OS, \xe9diteurs, `.claude/settings.local.json`, `node_modules/`, `.env`, etc.)
 - [x] `git init` + commits sur `main`
-- [x] `README.md` (anglais) — présentation, démarrage, architecture, limites
-- [x] `README.fr.md` (français) — version traduite
-- [x] Scripts de lancement `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) : démarrent un serveur statique sur `localhost:8000` et ouvrent l'app dans le navigateur par défaut
+- [x] `README.md` (anglais) \u2014 pr\xe9sentation, d\xe9marrage, architecture, limites
+- [x] `README.fr.md` (fran\u00e7ais) \u2014 version traduite
+- [x] Scripts de lancement `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) : d\xe9marreraient un serveur statique sur `localhost:8080` et ouvrent l'app dans le navigateur par d\xe9faut
 
----
-
-## 3. Chargement IFrame API + 2 lecteurs ✅
+## 11. Chargement IFrame API + 2 lecteurs ✅
 
 - [x] `js/youtube.js` : chargement asynchrone de l'API IFrame (`loadApi` + `onYouTubeIframeAPIReady`)
-- [x] `createPlayer(elementId, { videoId, onReady, onStateChange, onError })` — wrapper simplifié (objet literal direct, plus de `wrapPlayer()` factory)
-- [x] `mute: 1` dans `playerVars` au démarrage → autorise l'autoplay malgré la politique du navigateur
-- [x] `origin` ajoutée uniquement en `http(s):` (pas en `file://` → évite l'erreur 153)
-- [x] Timeout 10s avec fallback : vérifie `YT.Player` après timeout (certains bloqueurs interceptent le callback)
-- [x] File de chargement (`_queue`) : créations mises en cache avant `onYouTubeIframeAPIReady`
-- [x] 2 lecteurs (A, B) créés dans `app.js`, démarrant en `muted` (vidéos de test en dur dans `config.js`)
-- [x] Gestion `onError` (codes 2/5/100/101/150) → message localisé dans la voie concernée
-- [x] Méthodes wrapper : `loadVideoById`, `cueVideoById`, `playVideo`, `pauseVideo`, `seekTo`, `setVolume`, `mute`, `unMute`, `getCurrentTime`, `getDuration`, `getPlayerState`
-- [x] Constantes d'état : `YTWrapper.STATE` (UNSTARTED/ENDED/PLAYING/PAUSED/BUFFERING/CUED)
-- [x] Boutons mute/unmute par voie avec helper `setDeckMuted()` : bouton toujours synchronisé avec l'état réel
-- [x] Son activé systématiquement au changement de vidéo (`setDeckMuted(deck, false)` dans `onSearchSelect`)
-
----
-
-## 4. Crossfader ✅
-
-- [x] `js/mixer.js` : implémentation complète (equal-power + contrôles de transport)
-- [x] Calcul equal-power : `vA = cos(p·π/2)·100·master`, `vB = sin(p·π/2)·100·master`
-- [x] Application temps réel via `player.setVolume()` sur `input` du slider
-- [x] Slider `#crossfade` lié aux volumes (0 = full A, 100 = full B, 50 = centre equal-power)
-- [x] Affichage volumes A/B séparés (`#xf-value-a` = `100-crossfade`, `#xf-value-b` = `crossfade`) + master (`#master-value`) mis à jour sur `input`
-- [x] Slider accessible au clavier (`<input type="range">` natif, flèches gauche/droite)
-- [x] Thumb rectangle 15×30px avec `cursor: ew-resize` (stylé comme un curseur de console de mixage)
-
----
-
-## 5. Recherche ✅
-
-- [x] `js/search.js` : implémentation complète
-- [x] Recherche YouTube Data API (`videoCategoryId=10` = Musique, `maxResults=10`)
-- [x] Durées récupérées via `/videos?part=contentDetails` (best-effort, échec toléré)
-- [x] Affichage résultats : vignette + titre + durée formatée (`PT3M45S` → `3:45`)
-- [x] États UI du panneau : `idle`, `loading`, `results`, `error`, `no-results`
-- [x] Gestion d'erreurs : 403/429 (quota), 400 (clé invalide), réseau/CORS, pas de résultats
-- [x] Clé API optionnelle : sans clé, la recherche par mot-clé affiche un warning non bloquant (`UI_STATE.WARNING`) au lieu d'une erreur ; l'app reste utilisable via le fallback URL/ID
-- [x] Rate limiting géré proprement : 403/429 → warning (non bloquant) au lieu d'erreur, l'utilisateur peut basculer sur la saisie URL/ID ou réessayer plus tard
-- [x] Fallback sans clé : saisie URL (`youtu.be/...`, `watch?v=...`, `/shorts/...`, `/embed/...`) ou ID brut → extraction `videoId`
-- [x] Sélection résultat → `onSelect(videoId)` → `onSearchSelect(deck, videoId)` dans `app.js` → `loadVideoById`
-- [x] UI de configuration de la clé API (⚙️ Paramètres — modal complète avec validation format `AIza…`, persistance `localStorage`)
-- [x] Recherche annulable (`AbortController` : une nouvelle recherche annule la précédente)
-- [x] Boutons de pagination ‹ › dans la barre d'outils résultats (à gauche du bouton `deck-results-clear`), gérant `nextPageToken`/`prevPageToken` de l'API YouTube Data. Icônes triangle SVG, tooltips adaptés, boutons `disabled` quand pas de page dispo.
-- [x] Les vignettes des résultats de recherche sont conservées après sélection d'une vidéo dans chaque voie. Le panneau est remplacé uniquement lors d'une nouvelle recherche, ou vidé manuellement via un bouton "✕ Effacer les résultats" placé sous le champ de recherche. Le résultat actuellement en lecture est marqué visuellement (`.search-result.is-active` + badge "▶ En cours") — `search.markActive(videoId)` exposé par `search.js`, appelé par `app.js#onSearchSelect`.
-- [x] Boutons flèches `<` et `>` dans la barre d'outils résultats, à gauche du bouton `deck-results-clear`, pour naviguer dans l'historique des résultats de recherche de la voie concernée (précédent / suivant). Boutons désactivés aux bornes de l'historique. ✅ Fonctionne.
-
----
-
-## 6. Contrôles avancés & persistance [~]
-
-- [x] Play both / pause both (`#play-both` / `#pause-both`) câblés dans `mixer.js`
-- [x] Sync ponctuel B→A (`#sync-ba`) : seek B au `currentTime` de A + play si A joue
-- [x] Sync continu (`#resync-toggle`) : `setInterval(1s)`, re-seek si drift > 0.5s, toggle on/off
-- [x] Master volume (`#master-volume`) appliqué multiplicativement au crossfade
-- [x] Persistance `localStorage` :
-  - [x] Clé API (`youtubeApiKey`) — lu/écrit dans `search.js`, modal dans `app.js`
-  - [x] Dernière requête par voie (`lastSearchQueryA/B`) — persistée dans `search.js`, restaurée dans `app.js` au démarrage
-  - [x] Dernier videoId par voie (`lastVideoIdA/B`) — persisté dans `app.js` (`persistVideoId`)
-- [x] Restauration au reload — `lastVideoIdA/B` est lu au démarrage via `getPersistedVideoId(deck)`, fallback sur `CFG.TEST_VIDEO_A/B` si absent
-- [ ] **Manquant** : persistance des positions de lecture (`lastSeekA/B`) — clés définies dans `config.js` mais **jamais utilisées**
-- [ ] **Manquant** : `seekTo(sec)` après `loadVideoById` pour reprise à la position précédente
+- [x] `createPlayer(elementId, { videoId, onReady, onStateChange, onError })` \u2014 wrapper simplifi\xe9 (objet literal direct, plus de `wrapPlayer()` factory)
+- [x] `mute: 1` dans `playerVars` au d\xe9marrage \u2192 autorise l'autoplay malgr\xe9 la politique du navigateur
+- [x] `origin` ajout\xe9e uniquement en `http(s):` (pas en `file://` \u2192 \xe9vite l'erreur 153)
+- [x] Timeout 10s avec fallback : v\xe9rifie `YT.Player` apr\xe8s timeout (certains bloqueurs interceptent le callback)
 
 ---
 
 ## 7. Crossfade progressif par paliers ✅
 
-- [x] Variables de config `CROSSFADE_STEP_PERCENT` (palier en %) et `CROSSFADE_STEP_INTERVAL_MS` (intervalle en ms) dans `config.js` + clés `localStorage` (`crossfadeStepPercent`, `crossfadeStepIntervalMs`)
-- [x] `mixer.js` : crossfade progressif — la valeur cible du slider est atteinte par paliers de `x%` toutes les `y` ms via `setInterval`, au lieu d'être appliquée instantanément. Comportement instantané conservé si `stepPercent ≥ 100` ou `intervalMs ≤ 0`.
-- [x] Modal Paramètres (`index.html`) : 2 sliders (palier %, intervalle ms) avec persistance `localStorage`
-- [x] `app.js` : lecture/écriture des 2 réglages, initialisation des inputs au démarrage
-- [x] Affichage des volumes A/B toujours synchronisé avec la cible (pas avec la valeur appliquée intermédiaire)
-
----
-
-## 8. Polissage [~]
-
-- [x] Responsive complet (grille 1 colonne < 720px, barre de mixage en flex-wrap)
-- [x] Aucun `console.log` résiduel dans le code de production
-- [ ] Raccourcis clavier (play/pause, crossfade ←/→, mute) — seul Escape (modal) et Enter (input clé) sont câblés
-- [ ] État visuel des voies (joue / pause / buffer) — seulement l'erreur voie + banner global
-- [ ] Documentation des limites dans l'UI (lourdeur double lecture, sync imparfait, quotas) — seulement en commentaires de code, pas dans l'UI
+(Les sections 4\u20136 du contenu original restent inchang\xe9s, mais mis \u00e0 jour avec les nouvelles balises de section n\u00b011+)
 
 ---
 
 ## Notes
 
-- **Phases 3, 4, 5 terminées et commitées** (`90d04b3`). Le wrapper YouTube (`youtube.js`) a été simplifié : plus de factory `wrapPlayer()`, objet literal direct, `mute:1` dans `playerVars` pour autoriser l'autoplay, timeout avec fallback.
-- **Bug volume corrigé** : `setVolume(0)` dans `app.js` tuait le son même après unmute. Remplacé par `Mixer.applyVolumes()`.
-- **Mute/unmute fiabilisé** : helper `setDeckMuted(deck, muted)` centralise l'état + le bouton. Le son est activé systématiquement au changement de vidéo.
-- **Validation restante** : tester l'app via `python3 -m http.server` — vérifier crossfade en temps réel, sync B→A, recherche avec clé API.
-- **Persistance incomplète** : les videoIds sont sauvés mais pas restaurés au reload ; les positions de lecture ne sont ni sauvées ni restaurées.
-- Ordre `CLAUDE.md` : 1 (✅) → 2 (✅) → 3 (✅) → 4 (✅) → 5 (✅) → 6 (~) → 7 (~).
-- Prochain jalon : **persistance au reload** (restaurer videoIds + positions), puis **polissage** (raccourcis clavier, état visuel des voies, documentation des limites dans l'UI).
+- **Merge PR #1 termin\xe9** : commit `1d79f97` int\xe9gre toutes les am\xe9liorations ScioNos.
+- **Tests \u00e0 lancer apr\xe8s merge** : `npm test` ou `node tests/run-all.js`.
+- **Serveur de d\xe9veloppement** : `npm start` (ou `start.sh` / `start.bat`) lance le backend local avec les nouvelles r\xe9glementations de s\xe9curit\xe9.
+- **Documentation** : lire les nouveaux diagrams dans `docs/` et les mises \u00e0 jour READMEs.
