@@ -338,12 +338,6 @@ function precache(deck) {
     var p = platters[deck];
     if (!p) return;
     var videoId = window.state && window.state.videoIds ? window.state.videoIds[deck] : '';
-    // console.debug('[scratch:' + deck + '] precache() appelé'
-    //   + '  videoId="' + videoId + '"'
-    //   + '  loadVideoId="' + p.loadVideoId + '"'
-    //   + '  bufferReady=' + p.bufferReady
-    //   + '  loading=' + p.loading
-    //   + '  hasLoadPromise=' + !!p.loadPromise);
     // Si le morceau a changé sans invalidation explicite, on réinvalide.
     if (p.loadVideoId && p.loadVideoId !== videoId) {
       console.debug('[scratch:' + deck + '] precache: morceau changé → invalidateBuffer');

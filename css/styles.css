@@ -160,6 +160,150 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 }
 .modal-close:hover { background: #1f2430; color: #fff; }
 
+/* Onglets de la modale */
+.modal-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 10px 18px 0;
+  border-bottom: 1px solid #232733;
+}
+
+.modal-tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #9ca3af;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  border-radius: 4px 4px 0 0;
+  transition: all 0.2s ease;
+}
+
+.modal-tab-btn:hover {
+  color: #e7e7ea;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.modal-tab-btn.active {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+  font-weight: 600;
+}
+
+.modal-tab-pane[hidden] {
+  display: none !important;
+}
+
+/* Paramètres Serveur & Champs */
+.setting-group {
+  padding: 10px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setting-group label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e7e7ea;
+  display: flex;
+  align-items: center;
+}
+
+.setting-group input[type="number"] {
+  background: #0f1115;
+  color: #e7e7ea;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.setting-group input[type="number"]:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+}
+
+.settings-actions .btn {
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-actions .btn-primary {
+  background: #2563eb;
+  border: 1px solid #3b82f6;
+  color: #fff;
+}
+
+.settings-actions .btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.settings-status {
+  font-size: 0.85rem;
+}
+
+.settings-status.status-ok {
+  color: #4ade80;
+}
+
+.settings-status.status-err {
+  color: #f87171;
+}
+
+/* Tooltips / Infobulles d'aide */
+.tooltip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  cursor: help;
+  font-size: 13px;
+  position: relative;
+  opacity: 0.8;
+}
+
+.tooltip-icon:hover,
+.tooltip-icon:focus {
+  opacity: 1;
+}
+
+.tooltip-icon[data-tooltip]:hover::after,
+.tooltip-icon[data-tooltip]:focus::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e1e24;
+  color: #eee;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: normal;
+  width: max-content;
+  max-width: 260px;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  border: 1px solid #444;
+  pointer-events: none;
+  line-height: 1.3;
+}
+
 .modal-section {
   padding: 14px 18px;
   display: flex;
@@ -822,6 +966,10 @@ body.mode-piped #player-B {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.np-title-text.np-title-error {
+  color: #ff4d4d !important;
+  font-weight: 600;
 }
 .np-title .search-result-youtube-link {
   flex: 0 0 auto;
@@ -1659,3 +1807,78 @@ body.mode-piped .deck-scratch {
  * on le rappelle pour la clarté : le scratch est impossible sans accès au
  * buffer audio — cf. contrainte #1 du CLAUDE.md). */
 body.mode-iframe .deck-scratch { display: none; }
+
+/* Onglets de la modale Paramètres */
+.modal-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-color, #2e3444);
+  padding-bottom: 8px;
+}
+
+.modal-tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #9aa0ac);
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.modal-tab-btn:hover {
+  color: var(--text-color, #fff);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.modal-tab-btn.active {
+  color: var(--accent-color, #ff0055);
+  background: rgba(255, 0, 85, 0.1);
+  font-weight: 600;
+}
+
+.modal-tab-pane[hidden] {
+  display: none !important;
+}
+
+/* Tooltips / Infobulles d'aide */
+.tooltip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  cursor: help;
+  font-size: 13px;
+  position: relative;
+  opacity: 0.8;
+}
+
+.tooltip-icon:hover,
+.tooltip-icon:focus {
+  opacity: 1;
+}
+
+.tooltip-icon[data-tooltip]:hover::after,
+.tooltip-icon[data-tooltip]:focus::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e1e24;
+  color: #eee;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: normal;
+  width: max-content;
+  max-width: 260px;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  border: 1px solid #444;
+  pointer-events: none;
+  line-height: 1.3;
+}

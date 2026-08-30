@@ -1607,6 +1607,95 @@
       status.hidden = true;
     }
 
+    // Gestion des onglets Client / Serveur
+    const tabBtns = modal.querySelectorAll('.modal-tab-btn');
+    const tabPanes = modal.querySelectorAll('.modal-tab-pane');
+    const cfgMaxDuration = document.getElementById('cfg-max-duration');
+    const cfgYtdlpTimeout = document.getElementById('cfg-ytdlp-timeout');
+    const cfgScratchMaxDuration = document.getElementById('cfg-scratch-max-duration');
+    const btnSaveServerCfg = document.getElementById('btn-save-server-config');
+    const serverCfgStatus = document.getElementById('server-config-status');
+
+    function showServerStatus(message, ok) {
+      if (!serverCfgStatus) return;
+      serverCfgStatus.textContent = message;
+      serverCfgStatus.style.color = ok ? '#2ecc71' : '#e74c3c';
+    }
+
+    async function loadServerConfig() {
+      if (!cfgMaxDuration || !cfgYtdlpTimeout || !cfgScratchMaxDuration) return;
+      try {
+        const fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
+        const res = await fetcher('/api/config');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        if (typeof data.maxTrackDurationSec === 'number') cfgMaxDuration.value = data.maxTrackDurationSec;
+        if (typeof data.ytdlpBinTimeoutMs === 'number') cfgYtdlpTimeout.value = data.ytdlpBinTimeoutMs;
+        if (typeof data.scratchMaxDurationSec === 'number') cfgScratchMaxDuration.value = data.scratchMaxDurationSec;
+      } catch (err) {
+        showServerStatus('⚠️ Impossible de charger la configuration serveur', false);
+      }
+    }
+
+    tabBtns.forEach(function (tabBtn) {
+      tabBtn.addEventListener('click', function () {
+        const targetId = tabBtn.dataset.tab;
+        tabBtns.forEach(function (b) { b.classList.remove('active'); });
+        tabPanes.forEach(function (p) {
+          p.classList.remove('active');
+          p.hidden = true;
+        });
+
+        tabBtn.classList.add('active');
+        const targetPane = document.getElementById(targetId);
+        if (targetPane) {
+          targetPane.classList.add('active');
+          targetPane.hidden = false;
+        }
+
+        if (targetId === 'tab-server') {
+          loadServerConfig();
+        }
+      });
+    });
+
+    if (btnSaveServerCfg) {
+      btnSaveServerCfg.addEventListener('click', async function () {
+        const dur = Number(cfgMaxDuration ? cfgMaxDuration.value : 0);
+        const timeout = Number(cfgYtdlpTimeout ? cfgYtdlpTimeout.value : 0);
+        const scratch = Number(cfgScratchMaxDuration ? cfgScratchMaxDuration.value : 0);
+
+        try {
+          const fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
+          const res = await fetcher('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              maxTrackDurationSec: dur,
+              ytdlpBinTimeoutMs: timeout,
+              scratchMaxDurationSec: scratch
+            })
+          });
+          if (!res.ok) {
+            const errData = await res.json().catch(function () { return {}; });
+            throw new Error(errData.error || ('HTTP ' + res.status));
+          }
+          const saved = await res.json();
+          if (cfgMaxDuration && typeof saved.maxTrackDurationSec === 'number') cfgMaxDuration.value = saved.maxTrackDurationSec;
+          if (cfgYtdlpTimeout && typeof saved.ytdlpBinTimeoutMs === 'number') cfgYtdlpTimeout.value = saved.ytdlpBinTimeoutMs;
+          if (cfgScratchMaxDuration && typeof saved.scratchMaxDurationSec === 'number') cfgScratchMaxDuration.value = saved.scratchMaxDurationSec;
+          showServerStatus('✓ Configuration serveur mise à jour', true);
+          setTimeout(function () {
+            if (serverCfgStatus && serverCfgStatus.textContent === '✓ Configuration serveur mise à jour') {
+              serverCfgStatus.textContent = '';
+            }
+          }, 3000);
+        } catch (err) {
+          showServerStatus('⚠️ Erreur : ' + err.message, false);
+        }
+      });
+    }
+
     function openModal() {
       input.value = SEARCH.getApiKey() || '';
       hideStatus();

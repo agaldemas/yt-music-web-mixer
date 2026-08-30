@@ -25,6 +25,35 @@ const { createApp } = require('../server/server');
     const session = await (await fetch(base + '/api/session')).json();
     r = await fetch(base + '/api/meta/bad', { headers: { 'X-Local-Token': session.token } });
     if (r.status !== 400) throw new Error('jeton refusé');
+
+    // Vérification de la protection et du fonctionnement de /api/config
+    r = await fetch(base + '/api/config');
+    if (r.status !== 403) throw new Error('GET /api/config sans token devrait renvoyer 403');
+
+    r = await fetch(base + '/api/config', { headers: { 'X-Local-Token': session.token } });
+    if (r.status !== 200) throw new Error('GET /api/config avec token devrait renvoyer 200');
+    const cfg = await r.json();
+    if (typeof cfg.maxTrackDurationSec !== 'number' || typeof cfg.ytdlpBinTimeoutMs !== 'number' || typeof cfg.scratchMaxDurationSec !== 'number') {
+      throw new Error('GET /api/config données invalides: ' + JSON.stringify(cfg));
+    }
+
+    r = await fetch(base + '/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Local-Token': session.token
+      },
+      body: JSON.stringify({
+        maxTrackDurationSec: 7200,
+        ytdlpBinTimeoutMs: 300000,
+        scratchMaxDurationSec: 900
+      })
+    });
+    if (r.status !== 200) throw new Error('POST /api/config avec token devrait renvoyer 200');
+    const updatedCfg = await r.json();
+    if (!updatedCfg.ok || updatedCfg.maxTrackDurationSec !== 7200 || updatedCfg.ytdlpBinTimeoutMs !== 300000 || updatedCfg.scratchMaxDurationSec !== 900) {
+      throw new Error('POST /api/config mise à jour invalide: ' + JSON.stringify(updatedCfg));
+    }
     r = await fetch(base + '/api/ready');
     if (r.status !== 503) throw new Error('readiness attendue');
     const hostStatus = await new Promise((resolve, reject) => {

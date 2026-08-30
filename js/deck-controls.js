@@ -237,11 +237,18 @@
     // Titre : texte (ellipsis). Le bouton YouTube est dans .np-actions,
     // au-dessus du bouton info "!" (colonne alignée à droite).
     if (c.els.npTitle) {
-      c.els.npTitle.innerHTML = '';
-      var titleSpan = document.createElement('span');
-      titleSpan.className = 'np-title-text';
-      titleSpan.textContent = info.title || '—';
-      c.els.npTitle.appendChild(titleSpan);
+      var titleSpan = c.els.npTitle.querySelector('.np-title-text');
+      if (!titleSpan) {
+        c.els.npTitle.innerHTML = '';
+        titleSpan = document.createElement('span');
+        titleSpan.className = 'np-title-text';
+        c.els.npTitle.appendChild(titleSpan);
+      }
+      c._currentTrackTitle = info.title || '—';
+      // Ne remplace le texte que si un téléchargement/erreur n'est pas en cours d'affichage
+      if (!c._isDownloading) {
+        titleSpan.textContent = c._currentTrackTitle;
+      }
     }
     // Boutons d'action alignés à droite : YouTube (haut) + info "!" (dessous).
     if (c.els.npActions) {
@@ -408,10 +415,82 @@
     rafId = requestAnimationFrame(loop);
   }
 
+  // Affiche la progression du téléchargement dans le titre du deck
+  function setDownloadProgress(deck, percent, loaded, total) {
+    var c = controllers[deck];
+    if (!c || !c.els.npTitle) return;
+    if (c.els.npRoot && c.els.npRoot.hidden) {
+      c.els.npRoot.hidden = false;
+    }
+    var titleSpan = c.els.npTitle.querySelector('.np-title-text');
+    if (!titleSpan) {
+      // Si le span n'existe pas ou si npTitle a du texte brut
+      c.els.npTitle.innerHTML = '';
+      titleSpan = document.createElement('span');
+      titleSpan.className = 'np-title-text';
+      c.els.npTitle.appendChild(titleSpan);
+    }
+    titleSpan.classList.remove('np-title-error');
+    if (percent != null && percent >= 100) {
+      c._isDownloading = false;
+      titleSpan.textContent = c._currentTrackTitle || '—';
+      return;
+    }
+    c._isDownloading = true;
+    // 2 étapes : extraction/conversion côté serveur, puis téléchargement du flux
+    var txt = '';
+    if (percent != null && !isNaN(percent) && percent > 0) {
+      txt = '⏳ Téléchargement… ' + Math.round(percent) + '%';
+    } else if (loaded != null && !isNaN(loaded) && loaded > 0) {
+      if (total > 0) {
+        txt = '⏳ Téléchargement… ' + Math.min(99, Math.round((loaded / total) * 100)) + '%';
+      } else {
+        txt = '⏳ Téléchargement… ' + Math.round(loaded / 1024) + ' KB';
+      }
+    } else {
+      txt = '⏳ Extraction serveur…';
+    }
+    titleSpan.textContent = txt;
+  }
+
+  // Affiche une erreur de téléchargement dans le titre du deck
+  function setDownloadError(deck, msg) {
+    var c = controllers[deck];
+    if (!c || !c.els.npTitle) return;
+    c._isDownloading = false;
+    if (c.els.npRoot && c.els.npRoot.hidden) {
+      c.els.npRoot.hidden = false;
+    }
+    var titleSpan = c.els.npTitle.querySelector('.np-title-text');
+    if (!titleSpan) {
+      c.els.npTitle.innerHTML = '';
+      titleSpan = document.createElement('span');
+      titleSpan.className = 'np-title-text';
+      c.els.npTitle.appendChild(titleSpan);
+    }
+    titleSpan.textContent = '⚠️ ' + (msg || 'Erreur de téléchargement');
+    titleSpan.classList.add('np-title-error');
+  }
+
+  // Nettoie l'état d'erreur du titre
+  function clearDownloadStatus(deck) {
+    var c = controllers[deck];
+    if (!c || !c.els.npTitle) return;
+    c._isDownloading = false;
+    var titleSpan = c.els.npTitle.querySelector('.np-title-text');
+    if (titleSpan) {
+      titleSpan.classList.remove('np-title-error');
+      titleSpan.textContent = c._currentTrackTitle || '—';
+    }
+  }
+
   window.DeckTransport = {
     bind: bind,
     onStateChange: onStateChange,
     setNowPlaying: setNowPlaying,
+    setDownloadProgress: setDownloadProgress,
+    setDownloadError: setDownloadError,
+    clearDownloadStatus: clearDownloadStatus,
     start: start,
     fmtTime: fmtTime,
   };

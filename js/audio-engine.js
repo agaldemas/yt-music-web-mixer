@@ -576,7 +576,20 @@
         reject(new Error('decodeDeckBuffer: timeout réseau (XHR)'));
       };
 
-      xhr.send();
+      // Transmission du token X-Local-Token si l'API locale est disponible
+      var sendXhr = function () {
+        xhr.send();
+      };
+      if (window.LocalAPI && typeof window.LocalAPI.getToken === 'function') {
+        window.LocalAPI.getToken(false).then(function (token) {
+          if (token) xhr.setRequestHeader('X-Local-Token', token);
+          sendXhr();
+        }).catch(function () {
+          sendXhr();
+        });
+      } else {
+        sendXhr();
+      }
     });
   }
 

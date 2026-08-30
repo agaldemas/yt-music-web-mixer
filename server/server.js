@@ -41,7 +41,7 @@
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { TaskQueue } = require('./task-queue');
 const { createCacheManager } = require('./cache-manager');
 
@@ -61,9 +61,10 @@ try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch (_) {}
 
 // yt-dlp : appelé paresseusement (uniquement dans extractAudio).
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
-const YTDLP_BIN_TIMEOUT_MS = 120000;   // -x peut être lent (téléchargement complet)
+let YTDLP_BIN_TIMEOUT_MS = Math.max(10000, Number(process.env.YTDLP_BIN_TIMEOUT_MS) || 600000); // 10 min
 const FFMPEG_TIMEOUT_MS = 60000;
-const MAX_TRACK_DURATION_SEC = Math.max(60, Number(process.env.MAX_TRACK_DURATION_SEC) || 30 * 60);
+let MAX_TRACK_DURATION_SEC = Math.max(60, Number(process.env.MAX_TRACK_DURATION_SEC) || 14400); // 4h
+let SCRATCH_MAX_DURATION_SEC = Math.max(60, Number(process.env.SCRATCH_MAX_DURATION_SEC) || 600); // 10 min
 const CACHE_MAX_BYTES = Math.max(1024 * 1024, Number(process.env.CACHE_MAX_BYTES) || 2 * 1024 * 1024 * 1024);
 const CACHE_MAX_ENTRIES = Math.max(1, Number(process.env.CACHE_MAX_ENTRIES) || 100);
 const EXTRACT_CONCURRENCY = Math.max(1, Number(process.env.EXTRACT_CONCURRENCY) || 2);
@@ -433,6 +434,13 @@ function extractAudio(videoId) {
   return pending;
 }
 
+// Progression en direct des extractions yt-dlp en cours : videoId -> { percent, stage, updatedAt }
+const extractProgress = new Map();
+
+function getExtractProgress(videoId) {
+  return extractProgress.get(videoId) || null;
+}
+
 // Un seul essai yt-dlp -x (avec ou sans cookies). Logs détaillés pour
 // chaque issue. Résout avec le chemin du fichier extrait.
 function runExtract(videoId, withCookies) {
@@ -444,6 +452,8 @@ function runExtract(videoId, withCookies) {
       '--audio-format', 'mp3',    // MP3 lisible par <audio> partout
       '--audio-quality', '5',     // ~64-96 kbps, ~5 Mo / 4 min
       '--embed-metadata',         // tags ID3 (title, artist, album, date, genre…) dans le MP3
+      '--progress',               // force la sortie de la progression même en mode pipe (non-TTY)
+      '--newline',                // émet des retours à la ligne pour le parsing en direct
       '--no-warnings',
       '--no-playlist',
       '--no-cache-dir',
@@ -453,19 +463,63 @@ function runExtract(videoId, withCookies) {
     if (withCookies && YTDLP_COOKIES_BROWSER && YTDLP_COOKIES_BROWSER !== 'none') {
       args.splice(args.indexOf('-x') + 1, 0, '--cookies-from-browser', YTDLP_COOKIES_BROWSER);
     }
-    const opts = { maxBuffer: 8 * 1024 * 1024, timeout: YTDLP_BIN_TIMEOUT_MS };
 
-    execFile(YTDLP_BIN, args, opts, (err, stdout, stderr) => {
+    extractProgress.set(videoId, { percent: 0, stage: 'start', updatedAt: Date.now() });
+
+    const proc = spawn(YTDLP_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch (_) {}
+      const e = new Error('Délai d\'extraction dépassé (' + Math.round(YTDLP_BIN_TIMEOUT_MS / 1000) + 's).');
+      e.code = 'extract-timeout';
+      extractProgress.delete(videoId);
+      reject(e);
+    }, YTDLP_BIN_TIMEOUT_MS);
+
+    const onData = (chunk) => {
+      const str = chunk.toString();
+      stdout += str;
+      const lines = str.split(/[\r\n]+/);
+      for (const line of lines) {
+        const m = line.match(/\[download\]\s+([\d\.]+)%/);
+        if (m) {
+          const pct = parseFloat(m[1]);
+          if (!isNaN(pct)) {
+            extractProgress.set(videoId, { percent: Math.min(99, Math.round(pct)), stage: 'download', updatedAt: Date.now() });
+          }
+        } else if (/\[ExtractAudio\]|\[ffmpeg\]/i.test(line)) {
+          extractProgress.set(videoId, { percent: 99, stage: 'convert', updatedAt: Date.now() });
+        }
+      }
+    };
+
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', (chunk) => {
+      const str = chunk.toString();
+      stderr += str;
+      onData(chunk);
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      extractProgress.delete(videoId);
+      reject(err);
+    });
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      extractProgress.delete(videoId);
       const combined = String(stderr || '') + '\n' + String(stdout || '');
+
       if (RE_ANTIBOT.test(combined)) {
         const e = new Error('YouTube exige une vérification anti-bot.');
         e.code = 'antibot';
-        // Log détaillé : la sortie yt-dlp permet de diagnostiquer (LOGIN_REQUIRED,
-        // cookies requis, IP bloquée…) sans relancer à la main.
         console.error('[extract] ✗ ANTI-BOT ' + videoId + ' — ' + combined.trim().split('\n').slice(-8).join(' | '));
         return reject(e);
       }
-      if (err) {
+      if (code !== 0) {
         if (/private video|video unavailable|not exist|been removed|not available in your country/i.test(combined)) {
           const e = new Error('Vidéo indisponible.');
           e.code = 'notfound';
@@ -478,13 +532,12 @@ function runExtract(videoId, withCookies) {
           console.error('[extract] ✗ FFMPEG ABSENT ' + videoId);
           return reject(e);
         }
-        const e = new Error('yt-dlp -x a échoué : ' + (err.message || combined.slice(0, 200)));
+        const e = new Error('yt-dlp -x a échoué : ' + combined.slice(0, 200));
         e.code = 'extract';
         console.error('[extract] ✗ ÉCHEC ' + videoId + ' — ' + combined.trim().split('\n').slice(-5).join(' | '));
         return reject(e);
       }
-      // yt-dlp écrit <id>.mp3. Si absent, cherche un autre format
-      // (m4a/opus) qu'il aurait pu produire — le <audio> les lit aussi.
+
       if (!hasCached(videoId)) {
         const re = new RegExp('^' + videoId + '\\.(mp3|m4a|opus|webm|aac)$');
         let found = null;
@@ -787,6 +840,7 @@ app.use(function securityHeaders(req, res, next) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'", "base-uri 'self'", "object-src 'none'",
     "script-src 'self' https://www.youtube.com https://s.ytimg.com", "style-src 'self' 'unsafe-inline'",
@@ -840,6 +894,41 @@ app.get('/api/health', async (req, res) => {
 app.get('/api/ready', (req, res) => {
   const snapshot = capabilitySnapshot();
   res.status(snapshot.ready ? 200 : 503).json(snapshot);
+});
+
+app.get('/api/progress/:id', (req, res) => {
+  const id = req.params.id;
+  if (!RE_VIDEOID.test(id)) return res.status(400).json({ error: 'videoId invalide.' });
+  const p = getExtractProgress(id);
+  res.json({ videoId: id, progress: p });
+});
+
+app.get('/api/config', (req, res) => {
+  res.json({
+    maxTrackDurationSec: MAX_TRACK_DURATION_SEC,
+    ytdlpBinTimeoutMs: YTDLP_BIN_TIMEOUT_MS,
+    scratchMaxDurationSec: SCRATCH_MAX_DURATION_SEC,
+    cookiesBrowser: YTDLP_COOKIES_BROWSER
+  });
+});
+
+app.post('/api/config', express.json(), (req, res) => {
+  const body = req.body || {};
+  if (typeof body.maxTrackDurationSec === 'number') {
+    MAX_TRACK_DURATION_SEC = Math.max(60, Math.min(86400, body.maxTrackDurationSec));
+  }
+  if (typeof body.ytdlpBinTimeoutMs === 'number') {
+    YTDLP_BIN_TIMEOUT_MS = Math.max(10000, Math.min(3600000, body.ytdlpBinTimeoutMs));
+  }
+  if (typeof body.scratchMaxDurationSec === 'number') {
+    SCRATCH_MAX_DURATION_SEC = Math.max(60, Math.min(7200, body.scratchMaxDurationSec));
+  }
+  res.json({
+    ok: true,
+    maxTrackDurationSec: MAX_TRACK_DURATION_SEC,
+    ytdlpBinTimeoutMs: YTDLP_BIN_TIMEOUT_MS,
+    scratchMaxDurationSec: SCRATCH_MAX_DURATION_SEC
+  });
 });
 
 // --- GET /api/streams/:id ---

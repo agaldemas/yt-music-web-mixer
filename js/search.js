@@ -268,6 +268,10 @@
     if (typeof updateNowPlaying === 'function') {
       updateNowPlaying(deck, info);
     }
+    // Déclenche l'affichage immédiat du statut de téléchargement
+    if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
+      window.DeckTransport.setDownloadProgress(deck, 0, 0, 0);
+    }
     // 3. Met à jour le badge "En cours"
     if (typeof onMarkPlayed === 'function') onMarkPlayed(video.id);
   }

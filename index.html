@@ -35,78 +35,113 @@
         <button class="modal-close" type="button" data-close-modal="settings" aria-label="Fermer">✕</button>
       </header>
 
-      <section class="modal-section">
-        <label for="api-key-input" class="modal-label">Clé API YouTube Data v3</label>
-        <input
-          id="api-key-input"
-          class="modal-input"
-          type="password"
-          autocomplete="off"
-          spellcheck="false"
-          placeholder="AIzaSy... (stockée localement, jamais envoyée ailleurs qu'à Google)"
-        />
-        <p class="modal-hint">
-          La clé n'est jamais embarquée dans le code ni transmise hors des appels à l'API YouTube officielle.
-          Créez-en une sur <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>
-          (API <em>YouTube Data API v3</em> activée). Quota gratuit : 10 000 unités/jour
-          (≈ 100 recherches).
-        </p>
-        <div id="api-key-status" class="modal-status" hidden></div>
-      </section>
+      <div class="modal-tabs">
+        <button type="button" class="modal-tab-btn active" data-tab="tab-client">Client</button>
+        <button type="button" class="modal-tab-btn" data-tab="tab-server">Serveur</button>
+      </div>
 
-      <section class="modal-section">
-        <h3 class="modal-subtitle">🔊 Mode de lecture</h3>
-        <p class="modal-hint">
-          <strong>DJ (Audio / DSP)</strong> — vrai mixage audio (crossfade, EQ, filtres, analyse) via Web Audio API. Audio uniquement, pas de vidéo YouTube.
-          <br /><strong>YT IFrame (YouTube)</strong> — lecteur vidéo officiel, crossfade par volume uniquement (pas de DSP).
-          <br /><strong>Auto</strong> — DJ si les instances sont disponibles, sinon YT IFrame (résolu au démarrage).
-        </p>
-        <div class="modal-slider-head">
-          <label for="player-mode-select" class="modal-label">Mode</label>
-          <select id="player-mode-select" class="modal-select">
-            <option value="auto">Auto</option>
-            <option value="piped">🔊 DJ (Audio / DSP)</option>
-            <option value="iframe">📺 YT IFrame (YouTube)</option>
-          </select>
-        </div>
-        <p class="modal-hint modal-hint-mini">
-          Le bouton d'en-tête permute DJ ↔ YT IFrame (les deux decks ensemble). « Auto » n'est atteignable que depuis ce menu.
-        </p>
-        <div id="player-mode-status" class="modal-status" hidden></div>
-      </section>
+      <div id="tab-client" class="modal-tab-pane active">
+        <section class="modal-section">
+          <label for="api-key-input" class="modal-label">Clé API YouTube Data v3</label>
+          <input
+            id="api-key-input"
+            class="modal-input"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="AIzaSy... (stockée localement, jamais envoyée ailleurs qu'à Google)"
+          />
+          <p class="modal-hint">
+            La clé n'est jamais embarquée dans le code ni transmise hors des appels à l'API YouTube officielle.
+            Créez-en une sur <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>
+            (API <em>YouTube Data API v3</em> activée). Quota gratuit : 10 000 unités/jour
+            (≈ 100 recherches).
+          </p>
+          <div id="api-key-status" class="modal-status" hidden></div>
+        </section>
 
-      <section class="modal-section">
-        <h3 class="modal-subtitle">🎚️ Crossfade progressif</h3>
-        <p class="modal-hint">
-          Atteint la valeur cible du crossfade par paliers au lieu d'être instantané.
-          Mettre le palier à 100 % ou l'intervalle à 0 ms pour un comportement instantané.
-        </p>
-
-        <div class="modal-slider-row">
+        <section class="modal-section">
+          <h3 class="modal-subtitle">🔊 Mode de lecture</h3>
+          <p class="modal-hint">
+            <strong>DJ (Audio / DSP)</strong> — vrai mixage audio (crossfade, EQ, filtres, analyse) via Web Audio API. Audio uniquement, pas de vidéo YouTube.
+            <br /><strong>YT IFrame (YouTube)</strong> — lecteur vidéo officiel, crossfade par volume uniquement (pas de DSP).
+            <br /><strong>Auto</strong> — DJ si les instances sont disponibles, sinon YT IFrame (résolu au démarrage).
+          </p>
           <div class="modal-slider-head">
-            <label for="xf-step-percent" class="modal-label">Palier</label>
-            <input id="xf-step-percent-num" class="modal-num-input" type="number" min="1" max="100" value="100" step="1" aria-label="Palier du crossfade progressif en pourcentage (saisie)" />
-            <span class="modal-slider-unit">%</span>
+            <label for="player-mode-select" class="modal-label">Mode</label>
+            <select id="player-mode-select" class="modal-select">
+              <option value="auto">Auto</option>
+              <option value="piped">🔊 DJ (Audio / DSP)</option>
+              <option value="iframe">📺 YT IFrame (YouTube)</option>
+            </select>
           </div>
-          <input id="xf-step-percent" class="modal-slider" type="range" min="1" max="100" value="100" step="1" aria-label="Palier du crossfade progressif en pourcentage" />
-        </div>
+          <p class="modal-hint modal-hint-mini">
+            Le bouton d'en-tête permute DJ ↔ YT IFrame (les deux decks ensemble). « Auto » n'est atteignable que depuis ce menu.
+          </p>
+          <div id="player-mode-status" class="modal-status" hidden></div>
+        </section>
 
-        <div class="modal-slider-row">
-          <div class="modal-slider-head">
-            <label for="xf-step-interval" class="modal-label">Intervalle</label>
-            <input id="xf-step-interval-num" class="modal-num-input" type="number" min="0" max="5000" value="0" step="5" aria-label="Intervalle du crossfade progressif en millisecondes (saisie)" />
-            <span class="modal-slider-unit">ms</span>
+        <section class="modal-section">
+          <h3 class="modal-subtitle">🎚️ Crossfade progressif</h3>
+          <p class="modal-hint">
+            Atteint la valeur cible du crossfade par paliers au lieu d'être instantané.
+            Mettre le palier à 100 % ou l'intervalle à 0 ms pour un comportement instantané.
+          </p>
+
+          <div class="modal-slider-row">
+            <div class="modal-slider-head">
+              <label for="xf-step-percent" class="modal-label">Palier</label>
+              <input id="xf-step-percent-num" class="modal-num-input" type="number" min="1" max="100" value="100" step="1" aria-label="Palier du crossfade progressif en pourcentage (saisie)" />
+              <span class="modal-slider-unit">%</span>
+            </div>
+            <input id="xf-step-percent" class="modal-slider" type="range" min="1" max="100" value="100" step="1" aria-label="Palier du crossfade progressif en pourcentage" />
           </div>
-          <input id="xf-step-interval" class="modal-slider" type="range" min="0" max="5000" value="0" step="5" aria-label="Intervalle du crossfade progressif en millisecondes" />
+
+          <div class="modal-slider-row">
+            <div class="modal-slider-head">
+              <label for="xf-step-interval" class="modal-label">Intervalle</label>
+              <input id="xf-step-interval-num" class="modal-num-input" type="number" min="0" max="5000" value="0" step="5" aria-label="Intervalle du crossfade progressif en millisecondes (saisie)" />
+              <span class="modal-slider-unit">ms</span>
+            </div>
+            <input id="xf-step-interval" class="modal-slider" type="range" min="0" max="5000" value="0" step="5" aria-label="Intervalle du crossfade progressif en millisecondes" />
+          </div>
+
+          <div id="xf-step-status" class="modal-status" hidden></div>
+        </section>
+
+        <footer class="modal-footer">
+          <button id="api-key-clear" class="modal-btn modal-btn-secondary" type="button">Supprimer la clé</button>
+          <button id="api-key-save" class="modal-btn modal-btn-primary" type="button">Enregistrer</button>
+        </footer>
+      </div>
+
+      <div id="tab-server" class="modal-tab-pane" hidden>
+        <div class="setting-group">
+          <label for="cfg-max-duration">
+            Durée max des pistes (secondes)
+            <span class="tooltip-icon" tabindex="0" aria-label="Aide" data-tooltip="Limite maximale acceptée pour l'extraction complète. Ex: 14400 pour 4h, 1800 pour 30min.">ℹ️</span>
+          </label>
+          <input type="number" id="cfg-max-duration" min="60" max="86400" step="60" placeholder="14400">
         </div>
-
-        <div id="xf-step-status" class="modal-status" hidden></div>
-      </section>
-
-      <footer class="modal-footer">
-        <button id="api-key-clear" class="modal-btn modal-btn-secondary" type="button">Supprimer la clé</button>
-        <button id="api-key-save" class="modal-btn modal-btn-primary" type="button">Enregistrer</button>
-      </footer>
+        <div class="setting-group">
+          <label for="cfg-ytdlp-timeout">
+            Timeout yt-dlp (millisecondes)
+            <span class="tooltip-icon" tabindex="0" aria-label="Aide" data-tooltip="Délai maximum alloué à l'extraction yt-dlp avant abandon. Ex: 600000 pour 10 min.">ℹ️</span>
+          </label>
+          <input type="number" id="cfg-ytdlp-timeout" min="10000" max="3600000" step="1000" placeholder="600000">
+        </div>
+        <div class="setting-group">
+          <label for="cfg-scratch-max-duration">
+            Durée max scratch (secondes)
+            <span class="tooltip-icon" tabindex="0" aria-label="Aide" data-tooltip="Durée max pour le décodage intégral du buffer AudioContext pour le scratch vinyle. Ex: 600 pour 10 min.">ℹ️</span>
+          </label>
+          <input type="number" id="cfg-scratch-max-duration" min="60" max="7200" step="60" placeholder="600">
+        </div>
+        <div class="settings-actions">
+          <button type="button" id="btn-save-server-config" class="btn btn-primary">Enregistrer la config serveur</button>
+          <span id="server-config-status" class="settings-status"></span>
+        </div>
+      </div>
     </div>
   </div>
 

@@ -268,18 +268,18 @@
     }
 
     function prepareScratchDecode(AE, buffer, generation, scratchEnabled) {
-      if (!scratchEnabled || !AE || typeof AE.loadDeckBufferFromBlob !== 'function') return Promise.resolve(null);
+      if (!AE || typeof AE.loadDeckBufferFromBlob !== 'function') return Promise.resolve(null);
       var promise = new Promise(function (resolve) {
         function decodeWhenReady() {
           audio.removeEventListener('loadedmetadata', decodeWhenReady);
           if (!isCurrent(generation)) return resolve(null);
-          var duration = Number(audio.duration) || 0;
-          if (!duration || duration > ((window.YT_CONFIG && window.YT_CONFIG.SCRATCH_MAX_DURATION_SEC) || 600)) {
-            return resolve(null);
-          }
           AE.loadDeckBufferFromBlob(deckId, buffer).then(resolve, function () { resolve(null); });
         }
-        audio.addEventListener('loadedmetadata', decodeWhenReady);
+        if (audio.readyState >= 1 && audio.duration) {
+          decodeWhenReady();
+        } else {
+          audio.addEventListener('loadedmetadata', decodeWhenReady);
+        }
       });
       promise.catch(function () {});
       if (typeof AE.setDeckBufferLoadPromise === 'function') AE.setDeckBufferLoadPromise(deckId, promise);
@@ -293,12 +293,112 @@
       var _t0 = performance.now();
       var AE = window.AudioEngine;
       var fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
-      var full = fetcher(url, { headers: { Range: 'bytes=0-' }, signal: signal }).then(function (res) {
-        if (!res.ok && res.status !== 206) throw new Error('download HTTP ' + res.status);
+
+      // Polling de la progression de l'extraction backend tant que la réponse HTTP n'est pas arrivée
+      var progressPollTimer = null;
+      var isLocalAudio = /^\/api\/audio\//.test(url) || (typeof location !== 'undefined' && url.indexOf(location.origin + '/api/audio/') === 0);
+      if (isLocalAudio) {
+        var videoIdMatch = url.match(/\/api\/audio\/([a-zA-Z0-9_-]+)/);
+        var targetVideoId = videoIdMatch ? videoIdMatch[1] : null;
+        if (targetVideoId) {
+          progressPollTimer = setInterval(function () {
+            if (!isCurrent(generation)) {
+              clearInterval(progressPollTimer);
+              return;
+            }
+            fetcher('/api/progress/' + encodeURIComponent(targetVideoId), { signal: signal }).then(function (r) {
+              return r.ok ? r.json() : null;
+            }).then(function (data) {
+              if (!isCurrent(generation) || !data || !data.progress) return;
+              var p = data.progress;
+              if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
+                window.DeckTransport.setDownloadProgress(deckId, p.percent, 0, 0);
+              }
+            }).catch(function () {});
+          }, 1000);
+        }
+      }
+
+      var full = fetcher(url, { headers: { Range: 'bytes=0-' }, signal: signal }).then(async function (res) {
+        if (progressPollTimer) { clearInterval(progressPollTimer); progressPollTimer = null; }
+        if (!res.ok && res.status !== 206) {
+          var errorMessage = 'download HTTP ' + res.status;
+          try {
+            if (typeof res.json === 'function') {
+              var errData = await res.json();
+              if (errData && (errData.error || errData.message)) {
+                errorMessage = errData.error || errData.message;
+              }
+            } else if (typeof res.text === 'function') {
+              var errText = await res.text();
+              if (errText) errorMessage = errText;
+            }
+          } catch (e) { /* ignore parse error */ }
+          if (window.DeckTransport && typeof window.DeckTransport.setDownloadError === 'function') {
+            window.DeckTransport.setDownloadError(deckId, errorMessage);
+          }
+          throw new Error(errorMessage);
+        }
         var mime = res.headers.get('content-type') || 'audio/mpeg';
-        return res.arrayBuffer().then(function (buf) { return { buf: buf, mime: mime }; });
+        var contentLength = res.headers.get('content-length');
+        var contentRange = res.headers.get('content-range');
+        var total = 0;
+        if (contentRange) {
+          var m = contentRange.match(/\/(\d+)$/);
+          if (m) total = parseInt(m[1], 10);
+        }
+        if (!total && contentLength) {
+          total = parseInt(contentLength, 10);
+        }
+        if (isNaN(total)) total = 0;
+
+        if (res.body && typeof res.body.getReader === 'function') {
+          var reader = res.body.getReader();
+          var chunks = [];
+          var loaded = 0;
+          var lastProgressUpdate = performance.now();
+          // Émission immédiate du 1er tick dès la réception de la réponse HTTP
+          if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
+            window.DeckTransport.setDownloadProgress(deckId, total > 0 ? 0 : null, 0, total);
+          }
+          while (true) {
+            var result = await reader.read();
+            if (result.done) break;
+            if (result.value) {
+              chunks.push(result.value);
+              loaded += result.value.length || result.value.byteLength || 0;
+              var now = performance.now();
+              // Mise à jour de l'affichage 1 fois par seconde (1000ms) pour éviter les re-renders excessifs du DOM
+              if (now - lastProgressUpdate >= 1000) {
+                lastProgressUpdate = now;
+                var percent = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : null;
+                if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
+                  window.DeckTransport.setDownloadProgress(deckId, percent, loaded, total);
+                }
+              }
+            }
+          }
+          // Notification finale à la fin du stream
+          if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
+            window.DeckTransport.setDownloadProgress(deckId, 100, loaded, total);
+          }
+          var combined = new Uint8Array(loaded);
+          var offset = 0;
+          for (var i = 0; i < chunks.length; i++) {
+            combined.set(chunks[i], offset);
+            offset += chunks[i].length || chunks[i].byteLength || 0;
+          }
+          return { buf: combined.buffer, mime: mime };
+        } else {
+          return res.arrayBuffer().then(function (buf) {
+            if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
+              window.DeckTransport.setDownloadProgress(deckId, 100, buf.byteLength, buf.byteLength);
+            }
+            return { buf: buf, mime: mime };
+          });
+        }
       }).then(function (r) {
-        if (!isCurrent(generation)) return null;
+        if (!isCurrent(generation) || !r) return null;
         var blob = new Blob([r.buf], { type: r.mime });
         state.blobUrl = URL.createObjectURL(blob);
         prepareScratchDecode(AE, r.buf, generation, scratchEnabled);
@@ -320,6 +420,10 @@
         if (isCurrent(generation)) {
           state.loadPromise = null;
           state.loadAbort = null;
+        }
+        if (progressPollTimer) {
+          clearInterval(progressPollTimer);
+          progressPollTimer = null;
         }
       });
       state.loadPromise = full;
@@ -461,6 +565,9 @@
         const shouldPlay = (p._pendingPlayRequested === true) || (!audio.paused);
         p._pendingPlayRequested = false;
         const operation = beginLoad(id, 'youtube', shouldPlay);
+        if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
+          window.DeckTransport.setDownloadProgress(deckId, 0, 0, 0);
+        }
         PipedStreams.fetchStreamInfo(id, operation.signal).then(function (entry) {
           if (!isCurrent(operation.generation)) return;
           const best = entry.bestAudio && entry.bestAudio.stream;
@@ -577,7 +684,7 @@
           prepareScratchDecode(AE, buf, operation.generation, true);
           audio.addEventListener('loadedmetadata', function validateDuration() {
             audio.removeEventListener('loadedmetadata', validateDuration);
-            var max = (window.YT_CONFIG && window.YT_CONFIG.MAX_TRACK_DURATION_SEC) || 1800;
+            var max = (window.YT_CONFIG && window.YT_CONFIG.MAX_TRACK_DURATION_SEC) || 14400;
             if (Number(audio.duration) > max && isCurrent(operation.generation)) {
               resetSource({ abort: true, clearBuffer: true, detachMedia: true });
               reportLoadError(new Error('Cette piste dépasse la limite de ' + Math.round(max / 60) + ' minutes.'));
