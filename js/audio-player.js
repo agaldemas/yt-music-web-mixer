@@ -312,10 +312,10 @@
               if (!isCurrent(generation) || !data || !data.progress) return;
               var p = data.progress;
               if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
-                window.DeckTransport.setDownloadProgress(deckId, p.percent, 0, 0);
+                window.DeckTransport.setDownloadProgress(deckId, p.percent > 0 ? p.percent : null, 0, 0, p.label);
               }
             }).catch(function () {});
-          }, 1000);
+          }, 300);
         }
       }
 
@@ -378,9 +378,9 @@
               }
             }
           }
-          // Notification finale à la fin du stream
+          // Notification à la fin de la réception HTTP : passage au décodage / initialisation
           if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
-            window.DeckTransport.setDownloadProgress(deckId, 100, loaded, total);
+            window.DeckTransport.setDownloadProgress(deckId, null, 0, 0, '⏳ Décodage audio…');
           }
           var combined = new Uint8Array(loaded);
           var offset = 0;
@@ -392,7 +392,7 @@
         } else {
           return res.arrayBuffer().then(function (buf) {
             if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
-              window.DeckTransport.setDownloadProgress(deckId, 100, buf.byteLength, buf.byteLength);
+              window.DeckTransport.setDownloadProgress(deckId, null, 0, 0, '⏳ Décodage audio…');
             }
             return { buf: buf, mime: mime };
           });
@@ -404,6 +404,13 @@
         prepareScratchDecode(AE, r.buf, generation, scratchEnabled);
         audio.src = state.blobUrl;
         audio.load();
+        // Restaure le titre une fois que l'élément audio a chargé les métadonnées et peut jouer
+        audio.addEventListener('loadedmetadata', function onLoaded() {
+          audio.removeEventListener('loadedmetadata', onLoaded);
+          if (isCurrent(generation) && window.DeckTransport && typeof window.DeckTransport.clearDownloadStatus === 'function') {
+            window.DeckTransport.clearDownloadStatus(deckId);
+          }
+        });
         console.debug('[audio:' + deckId + '] chargé en ' + (performance.now() - _t0).toFixed(0) + 'ms');
         return null;
       }).catch(function (err) {

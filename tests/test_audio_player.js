@@ -22,6 +22,13 @@ window.AudioEngine={
  clearDeckBuffer(){},setDeckBufferLoadPromise(){},loadDeckBufferFromBlob(){return Promise.resolve({duration:100})},
  resume(){return Promise.resolve()},setMuted(id,v){setMutedCalls.push([id,v])},getPitch(){return 0},setPitch(){},getAnalyser(){return null},getContext(){return {}}
 };
+let progressCalls = [];
+window.DeckTransport = {
+  setDownloadProgress: (deck, percent, loaded, total, label) => {
+    progressCalls.push({ deck, percent, loaded, total, label });
+  },
+  setDownloadError: () => {}
+};
 let streamImpl=id=>Promise.resolve({videoId:id,bestAudio:{stream:{url:'/api/audio/'+id}},scratchEligible:true});
 window.PipedStreams={fetchStreamInfo:(id,signal)=>streamImpl(id,signal),refreshStream:(id,signal)=>streamImpl(id,signal),getCorsSafeUrl:(e,s)=>s&&s.url||'',classifyError:e=>({message:e&&e.message||'Erreur réseau'})};
 let fetchImpl=(url,opts)=>Promise.resolve({ok:true,status:200,headers:{get:n=>n==='content-type'?'audio/mpeg':null},arrayBuffer:()=>Promise.resolve(new Uint8Array([1,2,3]).buffer)});
@@ -35,6 +42,7 @@ const AP=window.AudioPlayer;
  let ready=0, errors=[]; const p=AP.createAudioPlayer('A',{onReady:()=>ready++,onError:e=>errors.push(e)}); window.state.players.A=p;
  p.loadVideoById('abc123XYZ_-'); await new Promise(r=>setTimeout(r,10));
  assert('source convertie en Blob',p._getAudioElement().src==='blob:mock-1');
+ assert('progression téléchargement émise',progressCalls.length > 0 && progressCalls[0].deck === 'A');
  assert('backend/source renseignés',window.state.backendMode.A==='piped'&&window.state.sourceKind.A==='youtube');
  p.mute(); p.unMute(); assert('mute via AudioEngine',setMutedCalls.length===2&&setMutedCalls[0][1]===true&&setMutedCalls[1][1]===false);
  p._getAudioElement()._emit('canplay'); assert('onReady sur canplay',ready===1);

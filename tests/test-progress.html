@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Test Progress E2E</title>
+  <style>
+    body { font-family: sans-serif; background: #16191f; color: #fff; padding: 20px; }
+    .card { background: #222834; padding: 20px; border-radius: 8px; max-width: 500px; }
+    .np-title { font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; }
+    .log { background: #000; color: #0f0; padding: 10px; font-family: monospace; font-size: 12px; height: 200px; overflow-y: auto; margin-top: 15px; }
+  </style>
+</head>
+<body>
+  <h1>Test Progression Téléchargement & Extraction</h1>
+  <div class="card">
+    <div id="deck-title" class="np-title">
+      <span class="np-title-text">—</span>
+    </div>
+    <button id="btn-load">Charger Morceau Test</button>
+  </div>
+  <div class="log" id="log"></div>
+
+  <script src="/js/config.js"></script>
+  <script src="/js/local-api.js"></script>
+  <script src="/js/deck-controls.js"></script>
+  <script src="/js/piped-streams.js"></script>
+  <script src="/js/audio-player.js"></script>
+  <script>
+    const logEl = document.getElementById('log');
+    function log(msg) {
+      logEl.innerHTML += '<div>[' + new Date().toLocaleTimeString() + '] ' + msg + '</div>';
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    const titleEl = document.getElementById('deck-title');
+    window.controllers = {
+      A: {
+        els: { npTitle: titleEl, npRoot: { hidden: false } },
+        _currentTrackTitle: 'Titre Original Test'
+      }
+    };
+
+    // Observer les changements sur le titre
+    const observer = new MutationObserver(() => {
+      log('DOM Title: ' + titleEl.innerText.trim());
+    });
+    observer.observe(titleEl, { childList: true, subtree: true, characterData: true });
+
+    document.getElementById('btn-load').addEventListener('click', async () => {
+      log('Lancement chargement test...');
+      window.DeckTransport.setDownloadProgress('A', 0, 0, 0);
+      
+      const videoId = 'j2ny3JhPn7U';
+      const poll = setInterval(async () => {
+        try {
+          const res = await window.LocalAPI.fetch('/api/progress/' + videoId);
+          if (res.ok) {
+            const data = await res.json();
+            log('Poll /api/progress: ' + JSON.stringify(data));
+            if (data && data.progress) {
+              window.DeckTransport.setDownloadProgress('A', data.progress.percent, 0, 0, data.progress.label);
+            }
+          }
+        } catch (e) {
+          log('Poll err: ' + e.message);
+        }
+      }, 500);
+
+      try {
+        const res = await window.LocalAPI.fetch('/api/audio/' + videoId);
+        log('Réponse audio HTTP: ' + res.status);
+        clearInterval(poll);
+        window.DeckTransport.setDownloadProgress('A', 100, 1, 1);
+      } catch (err) {
+        log('Erreur fetch audio: ' + err.message);
+        clearInterval(poll);
+      }
+    });
+  </script>
+</body>
+</html>

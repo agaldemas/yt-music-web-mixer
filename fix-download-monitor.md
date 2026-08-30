@@ -136,10 +136,10 @@ delegate_task(
 - **Fichier cible :** `js/audio-player.js` (fonction `loadDeckArrayBuffer`, lignes ~289-327)
 - **Action :**
   - Consommer la réponse via `res.body.getReader()`.
-  - Calculer la progression `loaded / total` et notifier `window.DeckTransport.setDownloadProgress(deckId, percent, loaded, total)` avec un throttling à **1 fois par seconde (1000ms)** pour éviter les re-renders excessifs du DOM.
+  - Calculer la progression `loaded / total` et notifier `window.DeckTransport.setDownloadProgress(deckId, percent, loaded, total)`.
   - En cas d'erreur HTTP (`!res.ok`), lire le corps JSON d'erreur et appeler `window.DeckTransport.setDownloadError(deckId, err.message)`.
 - **Vérification :** `node tests/test_audio_player.js`
-- [x] Task 2.1 terminée
+- [x] Task 2.1 terminée (test unitaire validant l'émission de progression ajouté)
 
 ---
 
@@ -208,6 +208,37 @@ delegate_task(
 
 ---
 
+### 🟢 Phase 5 : Robustesse Scratch, Tranches Dynamiques & Fichiers Locaux
+
+#### Task 5.1 : Découpage dynamique de tranches scratch pour les longs mix (>15 min)
+- **Fichiers cibles :** `server/server.js`, `js/scratch.js`, `js/audio-engine.js`
+- **Problème résolu :** Le décodage Web Audio (`decodeAudioData`) de mix longs (ex: 2h / 107 Mo) tentait d'allouer ~2,5 Go de RAM Float32 PCM d'un coup, provoquant l'erreur `EncodingError: Unable to decode audio data`.
+- **Action :**
+  - Ajout de la route `GET /api/scratch/:id?t=sec` dans `server/server.js` extrayant via `ffmpeg -acodec copy` une tranche de 3 minutes ultra-légère (< 3 Mo) autour de la position de lecture courante.
+  - Gestion de l'offset de tranche (`X-Scratch-Start`) dans `js/audio-engine.js` pour un scratch précis et immédiat.
+  - Support de la route `/api/scratch/` en fallback dans `js/scratch.js`.
+- **Vérification :** `node tests/test_scratch_slice.js`
+- [x] Task 5.1 terminée
+
+#### Task 5.2 : Scratch sur fichiers locaux & préservation des ArrayBuffer
+- **Fichiers cibles :** `js/scratch.js`, `js/audio-engine.js`
+- **Problème résolu :** `getStreamUrlForDeck` renvoyait une URL vide sur les pistes locales (`videoId: ''` ou `'local'`), et `decodeAudioData` neutralisait (neutered) l'ArrayBuffer source.
+- **Action :**
+  - Récupération du `Blob URL` direct (`audioEl.src`) dans `getStreamUrlForDeck` lorsque `videoId` est local.
+  - Clonage systématique du buffer d'octets (`arrayBuffer.slice(0)`) dans `loadDeckBufferFromBlob` (`js/audio-engine.js`) avant passage au décodeur natif.
+- **Vérification :** `npm test`
+- [x] Task 5.2 terminée
+
+#### Task 5.3 : Suite de tests automatisés pour tranches scratch
+- **Fichiers cibles :** `tests/test_scratch_slice.js`, `tests/run-all.js`
+- **Action :**
+  - Création du test d'intégration `test_scratch_slice.js` vérifiant l'extraction de tranche `audio/mpeg` et les en-têtes HTTP de positionnement.
+  - Intégration dans le runner global `tests/run-all.js` (9/9 suites passées).
+- **Vérification :** `npm test`
+- [x] Task 5.3 terminée
+
+---
+
 ## 📌 Résumé de Commande pour le Modèle / Subagent
 
 ```bash
@@ -217,6 +248,7 @@ npm run check:syntax
 # Pour exécuter les tests ciblés :
 node tests/test_server.js
 node tests/test_audio_player.js
+node tests/test_scratch_slice.js
 
 # Pour exécuter la suite complète :
 npm test

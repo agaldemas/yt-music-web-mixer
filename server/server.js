@@ -487,10 +487,10 @@ function runExtract(videoId, withCookies) {
         if (m) {
           const pct = parseFloat(m[1]);
           if (!isNaN(pct)) {
-            extractProgress.set(videoId, { percent: Math.min(99, Math.round(pct)), stage: 'download', updatedAt: Date.now() });
+            extractProgress.set(videoId, { percent: Math.min(99, Math.round(pct)), stage: 'download', label: '⏳ Téléchargement… ' + Math.round(pct) + '%', updatedAt: Date.now() });
           }
         } else if (/\[ExtractAudio\]|\[ffmpeg\]/i.test(line)) {
-          extractProgress.set(videoId, { percent: 99, stage: 'convert', updatedAt: Date.now() });
+          extractProgress.set(videoId, { percent: 99, stage: 'convert', label: '⏳ Encodage MP3…', updatedAt: Date.now() });
         }
       }
     };
@@ -1037,6 +1037,42 @@ app.get('/api/audio/:id', async (req, res) => {
   }
 });
 
+// --- GET /api/scratch/:id ---
+// Découpe à la volée une tranche de 3 minutes (180s) centrée sur le point de lecture
+// (`?t=secondes`) pour permettre un décodage PCM instantané et ultra-léger (< 40 Mo de RAM)
+// même sur les mix de plusieurs heures.
+app.get('/api/scratch/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!RE_VIDEOID.test(id)) return res.status(400).json({ error: 'videoId invalide.' });
+
+  const t = Math.max(0, parseFloat(req.query.t) || 0);
+  const duration = 180; // 3 minutes
+  const start = Math.max(0, t - 30); // 30s avant la position courante
+
+  try {
+    const file = await extractAudio(id);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('X-Scratch-Start', String(start));
+    res.setHeader('X-Scratch-Duration', String(duration));
+
+    const ffmpegProc = spawn('ffmpeg', [
+      '-ss', String(start),
+      '-t', String(duration),
+      '-i', file,
+      '-f', 'mp3',
+      '-acodec', 'copy',
+      'pipe:1'
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+
+    ffmpegProc.stdout.pipe(res);
+    req.on('close', () => {
+      try { ffmpegProc.kill('SIGKILL'); } catch (_) {}
+    });
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: 'Extraction de la tranche scratch échouée.' });
+  }
+});
+
 // --- GET /api/download/:id ---
 // Sauvegarde locale (mode DJ) : sert le MP3 du cache en téléchargement
 // (Content-Disposition: attachment). Le nom de fichier proposé est
@@ -1079,6 +1115,7 @@ app.get('/api/download/:id', async (req, res) => {
 
 // --- Frontend statique allowlisté ---
 app.get('/', (req, res) => res.sendFile(path.join(ROOT, 'index.html')));
+app.get('/test-progress', (req, res) => res.sendFile(path.join(ROOT, 'tests', 'test-progress.html')));
 app.use('/css', express.static(path.join(ROOT, 'css')));
 app.use('/js', express.static(path.join(ROOT, 'js')));
 app.get('/favicon.ico', (req, res) => res.sendFile(path.join(ROOT, 'favicon.ico')));

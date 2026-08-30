@@ -190,6 +190,14 @@
   function getStreamUrlForDeck(deck) {
     var PipedStreams = window.PipedStreams;
     var videoId = window.state && window.state.videoIds ? window.state.videoIds[deck] : '';
+    // Gestion des fichiers locaux : on utilise la source Blob directe de l'élément audio
+    if (!videoId || videoId === 'local') {
+      var player = window.state && window.state.players ? window.state.players[deck] : null;
+      var audioEl = player && typeof player._getAudioElement === 'function' ? player._getAudioElement() : null;
+      if (audioEl && audioEl.src) {
+        return audioEl.src;
+      }
+    }
     if (!PipedStreams || !videoId) {
       console.warn('[scratch:' + deck + '] getStreamUrlForDeck: PipedStreams=' + !!PipedStreams
         + '  videoId="' + videoId + '" → URL vide');
@@ -279,7 +287,15 @@ function ensureBuffer(deck) {
       console.error('[scratch:' + deck + '] ensureBuffer: ✗ URL vide → rejet immédiat');
       return Promise.reject(new Error('Aucun flux audio disponible pour le scratch.'));
     }
-    if (p.bufferReady && p.lastUrl === url && AE.getDeckBuffer(deck)) {
+    // Si la piste est un mix long (ou en fallback d'échec tee), on utilise la route de tranche légère
+    var player = window.state && window.state.players ? window.state.players[deck] : null;
+    var currentTime = (player && typeof player.getCurrentTime === 'function') ? player.getCurrentTime() : 0;
+    var scratchUrl = url;
+    if (/\/api\/audio\//.test(url)) {
+      scratchUrl = url.replace('/api/audio/', '/api/scratch/') + '?t=' + Math.round(currentTime);
+    }
+
+    if (p.bufferReady && p.lastUrl === scratchUrl && AE.getDeckBuffer(deck)) {
       console.debug('%c[scratch:' + deck + '] ensureBuffer: ✓ même URL déjà décodée (instantané)', 'color:#0a0');
       return Promise.resolve();
     }
@@ -287,15 +303,12 @@ function ensureBuffer(deck) {
     // === NOUVEAU décodage (XHR + decodeAudioData) ===
     console.debug('%c[scratch:' + deck + '] ensureBuffer: ⏳ NOUVEAU décodage démarré'
       + '  active=' + p.active
-      + '  url=' + (url.length > 70 ? url.slice(0, 70) + '…' : url),
+      + '  url=' + (scratchUrl.length > 70 ? scratchUrl.slice(0, 70) + '…' : scratchUrl),
       'color:#e80;font-weight:bold');
     p.loading = true;
-    p.lastUrl = url;
+    p.lastUrl = scratchUrl;
     if (p.active) setState(deck, STATE_LOADING, 'Chargement…');
 
-    // Callback de progression : met à jour le badge de la platine pendant le
-    // téléchargement (ex: "↓ 45%"). En préchargement (active=false) on reste
-    // discret pour ne pas polluer l'UI.
     function onProgress(fraction) {
       if (p.active) {
         setState(deck, STATE_LOADING, '↓ ' + Math.round(fraction * 100) + '%');
@@ -303,7 +316,7 @@ function ensureBuffer(deck) {
     }
 
     var t0 = now();
-    var decode = AE.decodeDeckBuffer(deck, url, onProgress).then(function (decoded) {
+    var decode = AE.decodeDeckBuffer(deck, scratchUrl, onProgress).then(function (decoded) {
       p.bufferReady = true;
       p.loading = false;
       p.loadPromise = null;

@@ -416,7 +416,7 @@
   }
 
   // Affiche la progression du téléchargement dans le titre du deck
-  function setDownloadProgress(deck, percent, loaded, total) {
+  function setDownloadProgress(deck, percent, loaded, total, customLabel) {
     var c = controllers[deck];
     if (!c || !c.els.npTitle) return;
     if (c.els.npRoot && c.els.npRoot.hidden) {
@@ -437,6 +437,10 @@
       return;
     }
     c._isDownloading = true;
+    if (customLabel) {
+      titleSpan.textContent = customLabel;
+      return;
+    }
     // 2 étapes : extraction/conversion côté serveur, puis téléchargement du flux
     var txt = '';
     if (percent != null && !isNaN(percent) && percent > 0) {
@@ -448,7 +452,7 @@
         txt = '⏳ Téléchargement… ' + Math.round(loaded / 1024) + ' KB';
       }
     } else {
-      txt = '⏳ Extraction serveur…';
+      txt = '⏳ Préparation…';
     }
     titleSpan.textContent = txt;
   }

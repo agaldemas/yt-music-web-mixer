@@ -549,6 +549,8 @@
         console.debug('[scratch:' + deckId + '] → ctx.decodeAudioData('
           + (arr.byteLength / 1024 / 1024).toFixed(2) + ' Mo)…');
         var _tdec = performance.now();
+        var isSlice = !!xhr.getResponseHeader('X-Scratch-Start');
+        var sliceStart = parseFloat(xhr.getResponseHeader('X-Scratch-Start')) || 0;
         ctx.decodeAudioData(arr).then(function (decoded) {
           var decMs = (performance.now() - _tdec).toFixed(0);
           console.debug('%c[scratch:' + deckId + '] ← decodeAudioData en ' + decMs + 'ms'
@@ -558,6 +560,7 @@
             + '  PCM=' + (decoded.length * decoded.numberOfChannels * 4 / 1024 / 1024).toFixed(1) + ' Mo',
             'color:#0a0;font-weight:bold');
           chain.scratchBuffer = decoded;
+          chain.scratchBufferSliceOffset = isSlice ? sliceStart : 0;
           console.debug('%c[scratch:' + deckId + '] decodeDeckBuffer TOTAL '
             + (performance.now() - _t0).toFixed(0) + 'ms', 'color:#e80;font-weight:bold');
           resolve(decoded);
@@ -623,10 +626,12 @@
     // audio.currentTime sur la position calculée du scratch.
     const audio = chain.audioEl;
     chain.wasPlayingBeforeScratch = !audio.paused;
-    const offset = isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const globalOffset = isFinite(audio.currentTime) ? audio.currentTime : 0;
     try { audio.pause(); } catch (e) { /* ignore */ }
-    chain.scratchOffset = Math.max(0, Math.min(offset,
-      chain.scratchBuffer.duration));
+    const sliceStart = chain.scratchBufferSliceOffset || 0;
+    const localOffset = Math.max(0, Math.min(globalOffset - sliceStart, chain.scratchBuffer.duration));
+    chain.scratchOffset = globalOffset;
+    chain.scratchLocalOffset = localOffset;
 
     // Duck rapide sur scratchGain (avant le swap de source) pour éviter
     // le clic de reconnexion. Puis on déconnecte sourceMuteGain de
@@ -636,19 +641,14 @@
     await duckDown(chain);
     try { chain.sourceMuteGain.disconnect(); } catch (e) { /* déjà déconnecté */ }
 
-    // (Le MES a été mis en pause plus haut → wasPlayingBeforeScratch mémorisé)
-
-    // Crée le nœud scratch. onended remonte quand le buffer atteint la fin
-    // (scratch en lecture avant prolongé) — on le neutralise pendant le
-    // scratch actif (recréation au prochain geste).
+    // Crée le nœud scratch.
     const node = ctx.createBufferSource();
     node.buffer = chain.scratchBuffer;
-    node.playbackRate.value = 0; // figé au départ (l'utilisateur tient la platine)
+    node.playbackRate.value = 0; // figé au départ
     node.connect(chain.scratchGain);
     try {
-      node.start(0, chain.scratchOffset);
+      node.start(0, chain.scratchLocalOffset);
     } catch (e) {
-      // start() peut throw si offset > duration (fin de morceau).
       node.disconnect();
       duckUp(chain, 1);
       throw e;
@@ -936,7 +936,7 @@
     if (!chain) throw new Error('loadDeckBufferFromBlob: deck absent');
     if (chain.scratchBuffer) return Promise.resolve(chain.scratchBuffer);
 
-    var copy = arrayBuffer;
+    var copy = arrayBuffer.slice(0);
     var _t0 = performance.now();
     console.debug('%c[scratch:' + deckId + '] loadDeckBufferFromBlob START — '
       + (copy.byteLength / 1024 / 1024).toFixed(2) + ' Mo (tee, pas de re-fetch)', 'color:#e80');

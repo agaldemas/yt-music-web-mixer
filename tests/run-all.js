@@ -12,6 +12,7 @@ const TESTS = [
   'test_audio_player.js',
   'test_mixer.js',
   'test_server.js',
+  'test_scratch_slice.js',
 ];
 let failed = 0;
 for (const file of TESTS) {
