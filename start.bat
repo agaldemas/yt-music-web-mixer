@@ -36,19 +36,13 @@ set auto_open=%1
 if "%auto_open%"=="" ( set auto_open=prompt )           REM Pas de paramètre : demander par défaut
 
 REM Normalise pour accepter yes/yes/no/Y/N/etc.
-sset "normalized_auto_open=%auto_open: = %"
-set "normalized_auto_open_lower=%auto_open:lower=/%
-if /i "%normalized_auto_open_lower%"=="yes" (
-  set auto_open=yes
-) else if /i "%normalized_auto_open_lower%"=="y" (
-  set auto_open=yes
-) else if /i "%normalized_auto_open_lower%"=="no" (
-  set auto_open=no
-) else if /i "%normalized_auto_open_lower%"=="n" (
-  set auto_open=no
-) else (
-  set auto_open=prompt
-)
+REM (cmd.exe n'a pas de lower() ; on s'appuie sur le commutateur /i de IF,
+REM  qui compare deja en case-insensitive — pas besoin de gymnastique.)
+if /i "%auto_open%"=="yes"        set "auto_open=yes"
+if /i "%auto_open%"=="y"          set "auto_open=yes"
+if /i "%auto_open%"=="no"         set "auto_open=no"
+if /i "%auto_open%"=="n"          set "auto_open=no"
+if /i "%auto_open%"=="prompt"     set "auto_open=prompt"
 
 if "%auto_open%"=="yes" (
   REM Ouverture automatique demandée
