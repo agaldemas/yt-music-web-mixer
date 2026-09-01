@@ -124,3 +124,4 @@ yt-music-web-mixer/
 - Aucun CORS `*` sur `/api` ; conserver le jeton `X-Local-Token` en mémoire uniquement.
 - `createApp()` doit rester importable sans démarrer le serveur ; `startServer()` gère le démarrage.
 - Cookies de navigateur opt-in, cache borné, pistes DJ limitées à 30 min, tranches de scratch à 10 min.
+- Voir [`SECURITY.md`](SECURITY.md) (en anglais) pour la justification complète de la Content Security Policy, l'explication de `worker-src 'self' blob:` (horloge Tone.js), la protection anti DNS-rebinding via validation du `Host`, et le modèle de jeton local.

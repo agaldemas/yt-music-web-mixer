@@ -124,3 +124,4 @@ yt-music-web-mixer/
 - No wildcard CORS on `/api`; keep `X-Local-Token` in memory only.
 - `createApp()` must remain importable without starting the server; `startServer()` handles startup.
 - Browser cookies are opt-in, cache is bounded, DJ tracks limited to 30 min, scratch slices to 10 min.
+- See [`SECURITY.md`](SECURITY.md) for the full Content Security Policy rationale, the worker-src / blob: justification (Tone.js clock), local-host enforcement, and the token model.
