@@ -287,9 +287,44 @@ function ensureBuffer(deck) {
       console.error('[scratch:' + deck + '] ensureBuffer: ✗ URL vide → rejet immédiat');
       return Promise.reject(new Error('Aucun flux audio disponible pour le scratch.'));
     }
-    // Si la piste est un mix long (ou en fallback d'échec tee), on utilise la route de tranche légère
     var player = window.state && window.state.players ? window.state.players[deck] : null;
     var currentTime = (player && typeof player.getCurrentTime === 'function') ? player.getCurrentTime() : 0;
+    var playerState = player && typeof player._getState === 'function' ? player._getState() : null;
+
+    // Découpage instantané en mémoire si c'est un gros fichier local (Blob / ArrayBuffer)
+    if (playerState && playerState.localArrayBuffer && window.Mp3Slice) {
+      var audioEl = player && typeof player._getAudioElement === 'function' ? player._getAudioElement() : null;
+      var totalDur = (audioEl && audioEl.duration) || 180;
+      var sliceResult = window.Mp3Slice.sliceMp3Window(playerState.localArrayBuffer, totalDur, currentTime, 180);
+      
+      p.loading = true;
+      if (p.active) setState(deck, STATE_LOADING, 'Découpage…');
+      
+      var t0 = now();
+      var sliceDecode = AE.loadDeckBufferFromBlob(deck, sliceResult.buffer).then(function (decoded) {
+        var chain = AE.hasDeck(deck) ? window.AudioEngine : null;
+        p.bufferReady = true;
+        p.loading = false;
+        p.loadPromise = null;
+        if (window.AudioEngine && window.AudioEngine.setDeckBufferSliceOffset) {
+          window.AudioEngine.setDeckBufferSliceOffset(deck, sliceResult.sliceStartSec);
+        }
+        console.debug('%c[scratch:' + deck + '] ensureBuffer: ✓ tranche locale PRÊTE en ' + (now() - t0).toFixed(0) + 'ms'
+          + '  (offset=' + sliceResult.sliceStartSec.toFixed(1) + 's)', 'color:#0a0;font-weight:bold');
+        if (!p.active) setState(deck, STATE_IDLE, 'Prêt');
+        return decoded;
+      });
+
+      p.loadPromise = sliceDecode.then(null, function (err) {
+        p.loading = false;
+        p.loadPromise = null;
+        if (p.active) setState(deck, STATE_ERROR, 'Erreur');
+        throw err;
+      });
+
+      return p.loadPromise;
+    }
+
     var scratchUrl = url;
     if (/\/api\/audio\//.test(url)) {
       scratchUrl = url.replace('/api/audio/', '/api/scratch/') + '?t=' + Math.round(currentTime);
@@ -360,7 +395,8 @@ function precache(deck) {
     if (p.bufferReady || p.loading || p.loadPromise) {
       return;
     }
-    if (!videoId) {
+    var isLocal = (window.state && window.state.sourceKind && window.state.sourceKind[deck] === 'local') || videoId === 'local';
+    if (!videoId && !isLocal) {
       console.warn('[scratch:' + deck + '] precache: pas de videoId → skip');
       return;
     }

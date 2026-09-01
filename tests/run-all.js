@@ -13,6 +13,7 @@ const TESTS = [
   'test_mixer.js',
   'test_server.js',
   'test_scratch_slice.js',
+  'test_local_scratch_e2e.js',
 ];
 let failed = 0;
 for (const file of TESTS) {

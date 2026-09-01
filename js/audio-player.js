@@ -684,11 +684,14 @@
         }
         const operation = beginLoad('local', 'local', false);
         var AE = window.AudioEngine;
-        var full = file.arrayBuffer().then(function (buf) {
+        var full = file.arrayBuffer().then(function (rawBuf) {
           if (!isCurrent(operation.generation)) return null;
           var mime = file.type || 'audio/mpeg';
-          state.blobUrl = URL.createObjectURL(new Blob([buf], { type: mime }));
-          prepareScratchDecode(AE, buf, operation.generation, true);
+          state.blobUrl = URL.createObjectURL(new Blob([rawBuf.slice(0)], { type: mime }));
+          // Stocke le buffer brut complet sur le player pour les découpes de scratch ultérieures
+          state.localArrayBuffer = rawBuf;
+          
+          prepareScratchDecode(AE, rawBuf.slice(0), operation.generation, true);
           audio.addEventListener('loadedmetadata', function validateDuration() {
             audio.removeEventListener('loadedmetadata', validateDuration);
             var max = (window.YT_CONFIG && window.YT_CONFIG.MAX_TRACK_DURATION_SEC) || 14400;
@@ -700,13 +703,13 @@
           audio.src = state.blobUrl;
           audio.load();
           var fileName = file.name || 'audio-local';
-          var meta = window.extractAudioMetadata ? window.extractAudioMetadata(buf, mime, fileName) : { title: fileName, artist: '' };
+          var meta = window.extractAudioMetadata ? window.extractAudioMetadata(rawBuf.slice(0), mime, fileName) : { title: fileName, artist: '' };
           var playerObj = window.state && window.state.players ? window.state.players[deckId] : null;
           if (playerObj) {
             playerObj.lastLocalTitle = meta.title || fileName;
             playerObj.lastLocalArtist = meta.artist || '';
             playerObj.lastLocalFileName = fileName;
-            playerObj.lastLocalCover = window.extractCoverImage ? window.extractCoverImage(buf, mime) : null;
+            playerObj.lastLocalCover = window.extractCoverImage ? window.extractCoverImage(rawBuf.slice(0), mime) : null;
           }
           if (typeof window.updateNowPlaying === 'function') window.updateNowPlaying(deckId);
           return null;

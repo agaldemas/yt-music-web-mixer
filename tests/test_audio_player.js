@@ -56,6 +56,20 @@ const AP=window.AudioPlayer;
  assert('chargement obsolète ignoré',p._getAudioElement().src==='blob:mock-2');
  let played=false; p._getAudioElement().play=()=>{played=true;return Promise.resolve()}; p.cueVideoById('cue00000001'); await new Promise(r=>setTimeout(r,10)); assert('cue ne joue pas',!played);
  streamImpl=()=>Promise.resolve({bestAudio:null}); p.loadVideoById('nostream001'); await new Promise(r=>setTimeout(r,10)); assert('erreur sans flux explicite',errors.some(e=>/Aucun flux/.test(e.message)));
+
+ // Test chargement fichier local (loadLocalFile)
+ const localMockFile = {
+   name: 'sample-track.mp3',
+   type: 'audio/mpeg',
+   size: 1024 * 1024,
+   arrayBuffer: () => Promise.resolve(new Uint8Array([10, 20, 30]).buffer)
+ };
+ const pLocal = AP.createAudioPlayer('B', {});
+ await pLocal.loadLocalFile(localMockFile);
+ assert('loadLocalFile charge le Blob audio', pLocal._getAudioElement().src.startsWith('blob:mock-'));
+ assert('loadLocalFile marque sourceKind et backendMode', window.state.sourceKind.B === 'local' && window.state.backendMode.B === 'piped');
+
  p.dispose(); assert('dispose marque le player',p._getState().disposed===true);
+ pLocal.dispose();
  console.log(`AudioPlayer: ${pass} pass / ${fail} fail`); process.exit(fail?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});

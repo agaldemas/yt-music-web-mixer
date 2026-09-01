@@ -846,7 +846,7 @@ app.use(function securityHeaders(req, res, next) {
     "script-src 'self' https://www.youtube.com https://s.ytimg.com", "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.ytimg.com https://*.googleusercontent.com https://*.private.coffee",
     "media-src 'self' blob: https:", "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
-    "connect-src 'self' https://www.youtube.com https://*.private.coffee", "form-action 'self'"
+    "connect-src 'self' blob: data: https://www.youtube.com https://*.private.coffee", "form-action 'self'"
   ].join('; '));
   next();
 });
@@ -1115,6 +1115,7 @@ app.get('/api/download/:id', async (req, res) => {
 
 // --- Frontend statique allowlisté ---
 app.get('/', (req, res) => res.sendFile(path.join(ROOT, 'index.html')));
+app.get('/sequencer', (req, res) => res.sendFile(path.join(ROOT, 'sequencer.html')));
 app.get('/test-progress', (req, res) => res.sendFile(path.join(ROOT, 'tests', 'test-progress.html')));
 app.use('/css', express.static(path.join(ROOT, 'css')));
 app.use('/js', express.static(path.join(ROOT, 'js')));

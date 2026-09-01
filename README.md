@@ -42,17 +42,278 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
   - **Spectrum/waveform visualizers** per deck and a master spectrum in the mixer bar (via `AnalyserNode`, 30+ FPS).
 - **Persistence** via `localStorage`: API key, last queries, last video IDs, gain trim, EQ, DJ filter, pitch per deck are saved and restored on reload and on mode switch.
 - **One-click launch scripts**: `start.sh` (macOS/Linux/WSL) and `start.bat` (Windows) start the local Express server on port 5400 and open the app in your default browser.
+- **Windows install script (`install.bat`)**: double-click it after the `git clone` to automatically install **Git, Node.js LTS, yt-dlp nightly, ffmpeg/ffprobe** and the project's npm dependencies (via `winget` or PowerShell as a fallback).
 - **Responsive**: collapses to a single column on small screens.
 
 ---
 
 ## 🚀 Getting started
 
-### 1. Open the app
+### 1. Installation
+
+> 🚀 **On Windows?** The easiest way is to **double-click `install.bat`** (at the project root, after the `git clone`): it installs **Git, Node.js LTS, yt-dlp nightly and ffmpeg/ffprobe** automatically (via `winget` or PowerShell as a fallback), then runs `npm install`. Once `install.bat` is done, run `start.bat` to start the app. Everything below (subsections 1.1 → 1.5) is the **detailed / manual** version: useful to understand what `install.bat` does under the hood, or if you want to install dependencies one by one (e.g. on macOS/Linux, or if `install.bat` does not fit your environment).
+
+This section describes how to **fetch the source code** and **install the dependencies** (Node.js, `yt-dlp`, `ffmpeg`) — the focus is **Windows**, where none of these tools are preinstalled. On macOS or Linux, just ignore the Windows-specific subsections.
+
+#### 1.1 Get the project (Git)
+
+The recommended way is to clone the repo with **Git**: you can then pull updates with a simple `git pull`. If you don't have Git yet, see “Install Git” below.
+
+```bash
+git clone https://github.com/agaldemas/yt-music-web-mixer.git
+cd yt-music-web-mixer
+```
+
+> 💡 You don't need a GitHub account — the clone above is **read-only**, no authentication required.
+
+##### Install Git
+
+**Windows** — install **Git for Windows** (provides Git Bash, the Explorer context menu and `git` on the command line):
+
+1. Download the installer from <https://git-scm.com/download/win>.
+2. Run the downloaded `.exe`. Keep the default options (add to PATH, Explorer integration, LF/CRLF auto-conversion — important if you edit code).
+3. Open a new `PowerShell` or `Git Bash` window and check:
+
+    ```powershell
+    git --version
+    ```
+
+    Must print `git version 2.x`. If Windows asks you to confirm adding it to the PATH, say yes.
+
+**macOS** — Xcode Command Line Tools are enough:
+
+```bash
+xcode-select --install   # one-off
+git --version
+```
+
+**Linux (Debian/Ubuntu)**:
+
+```bash
+sudo apt update && sudo apt install -y git
+git --version
+```
+
+#### 1.2 Install Node.js (Windows) — only to run this project
+
+> The project requires **Node.js 22.12+** or **24 LTS** (see `package.json` → `engines.node`). You do **not** install Node *via* npm — npm is bundled with Node, so installing Node brings npm along automatically.
+
+**Recommended method: official Windows installer (.msi)**
+
+1. Go to <https://nodejs.org/en/download> and download the **Windows Installer (.msi)** for the **LTS** branch (recommended) or **Current** (≥ 22.12) if you know what you're doing.
+2. Run the `.msi`. On the **Custom Setup** screen, make sure **“Add to PATH”** and **“npm package manager”** are checked, then click **Next → Install**.
+3. At the end, leave **“Install additional tools for native modules”** checked if offered (optional but useful).
+
+**Alternative (no installer, for advanced users) — winget / Chocolatey / Scoop**
+
+```powershell
+# winget (built into recent Windows 10/11)
+winget install -e --id OpenJS.NodeJS.LTS
+
+# Chocolatey (admin PowerShell)
+choco install nodejs-lts
+
+# Scoop
+scoop install nodejs-lts
+```
+
+##### Verification
+
+**Open a new PowerShell window** (PATH changes only apply to new shells), then:
+
+```powershell
+node --version    # should print v22.12.x or v24.x.x
+npm --version     # should print a version ≥ 10
+where.exe node    # should print the binary path
+```
+
+> ⚠️ If `node` is not recognized, close **all** open PowerShell/VS Code/Explorer windows and reopen — modified PATH values only propagate to the next login shell.
+
+> ⚠️ **Important for this project**: do **not** install Node from the Microsoft Store on Windows (the PATH is virtual, some extensions can't find it, and the project refuses to start). Prefer the `.msi` installer, `choco`, `scoop` or `winget` as shown above.
+
+##### For macOS / Linux (quick reminder)
+
+- **macOS**: `brew install node` (Homebrew installs Node LTS + npm).
+- **Linux (Debian/Ubuntu)**: `sudo apt install -y nodejs npm`, or Nodesource (recommended for a recent version):
+
+    ```bash
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt install -y nodejs
+    ```
+
+#### 1.3 Install `yt-dlp` and `ffmpeg`
+
+These two binaries are **required for DJ mode** (audio extraction + conversion).
+
+##### Windows
+
+**Recommended option — `winget`** (simplest, auto-updates):
+
+```powershell
+winget install -e --id yt-dlp.yt-dlp
+winget install -e --id Gyan.FFmpeg
+```
+
+**Manual install for `yt-dlp`**:
+
+1. Download `yt-dlp.exe` from the **Windows (exe)** asset: <https://github.com/yt-dlp/yt-dlp/releases/latest> (or the nightly: <https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest>).
+2. Place the executable in a folder already on your `PATH` (easiest: `C:\Users\<you>\bin\`) **or** add its folder to your user-level `PATH`:
+    - Control Panel → System → Advanced system settings → **Environment Variables** → `Path` (user) → **Edit** → **New** → paste the folder path.
+3. Open a **new** PowerShell and check:
+
+    ```powershell
+    yt-dlp --version
+    ```
+
+    Must print `2026.08.x` (nightly) or newer. **Important**: the Homebrew/Chocolatey stable `2026.07.04` is broken for this project (see warning below) — use the **nightly**, or let winget keep it up to date.
+
+**Manual install for `ffmpeg`**:
+
+1. Go to the **Windows builds** page: <https://www.gyan.dev/ffmpeg/builds/> and download the **release full** build (`ffmpeg-release-essentials.zip` is enough for this project).
+2. Unzip the archive and copy the contents of the `bin/` folder (at least `ffmpeg.exe`, `ffprobe.exe`) into the same folder as `yt-dlp.exe` above.
+3. Verify:
+
+    ```powershell
+    ffmpeg -version
+    ffprobe -version
+    ```
+
+##### macOS
+
+```bash
+brew install yt-dlp ffmpeg
+```
+
+Then install the **nightly** `yt-dlp` on top (the stable Homebrew version is broken for this project, see warning):
+
+```bash
+sudo curl -L https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_macos -o /usr/local/bin/yt-dlp
+sudo chmod +x /usr/local/bin/yt-dlp
+sudo mv /opt/homebrew/bin/yt-dlp /opt/homebrew/bin/yt-dlp.brew   # so the nightly wins
+hash -r
+yt-dlp --version   # should print 2026.08.x (not 2026.07.04)
+```
+
+##### Linux (Debian/Ubuntu)
+
+```bash
+sudo apt update
+sudo apt install -y ffmpeg
+sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+sudo chmod +x /usr/local/bin/yt-dlp
+yt-dlp --version
+```
+
+#### 1.4 Install the project's Node dependencies
+
+Once the repo is cloned and Node is installed:
+
+```bash
+cd yt-music-web-mixer
+npm install
+```
+
+This downloads `express` and `jsdom` (see `package.json`). No compilation, no build step — it's plain JavaScript.
+
+> 🛡️ **If `npm install` fails behind a corporate proxy**, configure npm:
+> ```bash
+> npm config set proxy http://proxy.company:8080
+> npm config set https-proxy http://proxy.company:8080
+> ```
+
+#### 1.5 Preflight check (all-in-one)
+
+Before going any further, run this small diagnostic. It checks in a single command that **Git**, **Node.js**, **npm**, **`yt-dlp`**, **`ffmpeg`** and **`ffprobe`** are all present and at the right version. If a line is missing or in error, jump back to the matching subsection (1.1, 1.2 or 1.3) — **do not move on to step 2 until every line is green**.
+
+##### Windows (PowerShell)
+
+```powershell
+# Run this in a PowerShell window OPENED AFTER the installations
+# (otherwise the new PATH entries are not visible yet).
+
+Write-Host "--- System tools ---"
+Write-Host ("git      : {0}" -f ((& git --version) 2>$null  -join ' '))
+Write-Host ("node     : {0}" -f ((& node --version) 2>$null  -join ' '))
+Write-Host ("npm      : {0}" -f ((& npm --version)  2>$null  -join ' '))
+Write-Host ("yt-dlp   : {0}" -f ((& yt-dlp --version) 2>$null -join ' '))
+Write-Host ("ffmpeg   : {0}" -f ((& ffmpeg -version) 2>$null  -join ' '))
+Write-Host ("ffprobe  : {0}" -f ((& ffprobe --version) 2>$null -join ' '))
+
+Write-Host ""
+Write-Host "--- Node dependencies (npm) ---"
+if (Test-Path .\package.json) {
+    Write-Host ("package.json : present (Node {0} required)" -f (node -p "require('./package.json').engines.node"))
+} else {
+    Write-Host "package.json : MISSING — are you inside the yt-music-web-mixer folder?"
+}
+
+Write-Host ""
+Write-Host "--- Ports / connectivity ---"
+Test-NetConnection -ComputerName 127.0.0.1 -Port 5400 -InformationLevel Quiet -WarningAction SilentlyContinue `
+    | ForEach-Object { Write-Host ("port 5400 (free={0})" -f $_) }
+```
+
+##### macOS / Linux (bash)
+
+```bash
+# Run this in a terminal OPENED AFTER the installations.
+
+echo "--- System tools ---"
+printf 'git      : %s\n' "$(git --version 2>&1)"
+printf 'node     : %s\n' "$(node --version 2>&1)"
+printf 'npm      : %s\n' "$(npm --version 2>&1)"
+printf 'yt-dlp   : %s\n' "$(yt-dlp --version 2>&1)"
+printf 'ffmpeg   : %s\n' "$(ffmpeg -version 2>&1 | head -n1)"
+printf 'ffprobe  : %s\n' "$(ffprobe -version 2>&1 | head -n1)"
+
+echo
+echo "--- Node dependencies (npm) ---"
+if [ -f package.json ]; then
+  echo "package.json : present (Node $(node -p "require('./package.json').engines.node") required)"
+else
+  echo "package.json : MISSING — are you inside the yt-music-web-mixer folder?"
+fi
+
+echo
+echo "--- Port 5400 (used by the Express server) ---"
+if command -v lsof >/dev/null 2>&1; then
+  lsof -iTCP:5400 -sTCP:LISTEN 2>/dev/null && echo "⚠️  port 5400 already in use" || echo "port 5400 : free ✓"
+elif command -v ss >/dev/null 2>&1; then
+  ss -ltn 'sport = :5400' 2>/dev/null | tail -n +2 | grep -q . && echo "⚠️  port 5400 already in use" || echo "port 5400 : free ✓"
+else
+  echo "(install 'lsof' or 'ss' to enable this check)"
+fi
+```
+
+##### Expected output
+
+Every line must show up (no error message, no `command not found`, no `is not recognized`):
+
+| Tool       | Expected version                             | Note |
+|------------|----------------------------------------------|------|
+| `git`      | `git version 2.x`                            | Anything ≥ 2.0 |
+| `node`     | `v22.12.x` or `v24.x` or newer               | **Must** be ≥ 22.12 (see `engines.node` in `package.json`) |
+| `npm`      | `10.x` or newer                              | Bundled with Node |
+| `yt-dlp`   | `2026.08.x` or newer                         | ⚠️ **Avoid `2026.07.04`** (broken for this project: non-replayable `ANDROID_VR` client) |
+| `ffmpeg`   | `ffmpeg version 4.x` to `7.x`                | Any recent build |
+| `ffprobe`  | same version as `ffmpeg`                     | Must come with `ffmpeg` |
+| `port 5400`| `free ✓`                                     | If already taken, step 3 (`npm start`) will refuse to start |
+
+##### Quick diagnostics
+
+- **`'git' is not recognized` (Windows)**: close all shells and reopen a fresh PowerShell (PATH not yet propagated). If it persists: `where.exe git` should return a path; if not, Git was not installed → go back to 1.1.
+- **`'node' is not recognized`**: same reflex — reopen a shell. Otherwise Node was not added to the PATH during the `.msi` install → reinstall and tick "Add to PATH".
+- **`yt-dlp` too old (`2026.07.04`)**: pip / winget / chocolatey can reinstall it on top; otherwise grab the nightly from <https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest>.
+- **`'ffmpeg'/'ffprobe' not found`**: the folder containing the `.exe` files is not in `PATH` → see Environment Variables, point 1.3.
+- **`port 5400: already in use`**: another server is on that port (or a forgotten `npm start`). On Windows: `netstat -ano | findstr :5400` then `taskkill /PID <pid> /F`. On macOS/Linux: `lsof -iTCP:5400 -sTCP:LISTEN` then `kill <pid>`.
+
+> ✅ If everything is green, you can jump to [step 2 “Open the app”](#2-open-the-app) or, better, directly to [step 3 “Start the local Express server”](#3-recommended-start-the-local-express-server) for the full DJ mode.
+
+### 2. Open the app
 
 Double-click `index.html` to open it via `file://`. The YouTube players work in this mode.
 
-### 2. (Recommended) Start the local Express server
+### 3. (Recommended) Start the local Express server
 
 The Express server is the recommended way to run the application. It serves the frontend and provides the local `yt-dlp` extraction required by **DJ mode**. Install Node.js, run `npm install`, make sure `yt-dlp` is installed, then start:
 
@@ -104,7 +365,7 @@ Start the server and open the browser in a single command:
 
 The scripts start the loopback-only Express server and open <http://127.0.0.1:5400> automatically.
 
-### 3. Configure the YouTube Data API key (optional)
+### 4. Configure the YouTube Data API key (optional)
 
 Keyword search works **even without a key** thanks to the public Piped API. A YouTube Data API key remains **optional**: it provides more relevant music results, official pagination, and avoids relying on Piped instances (which can be slow or unavailable). It is free to create, but Google applies a daily usage quota. No programming knowledge is required:
 

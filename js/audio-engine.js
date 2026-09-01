@@ -155,7 +155,7 @@
   // Pour changer de vidéo : NE PAS recréer la chaîne, changer `audioEl.src`.
   // Pour détruire une voie : destroyDeckChain(deckId).
   function createDeckChain(deckId, audioEl) {
-    if (!audioEl || !(audioEl instanceof HTMLAudioElement)) {
+    if (!audioEl || (!(audioEl instanceof HTMLAudioElement) && !audioEl.addEventListener)) {
       throw new Error('createDeckChain: audioEl doit être un élément <audio>');
     }
     if (chains[deckId]) {
@@ -972,6 +972,12 @@
     return chains[deckId] ? chains[deckId].scratchLoadPromise : null;
   }
 
+  function setDeckBufferSliceOffset(deckId, offsetSec) {
+    if (chains[deckId]) {
+      chains[deckId].scratchBufferSliceOffset = Number(offsetSec) || 0;
+    }
+  }
+
   // ===== Accesseurs =====
 
   function getAnalyser(deckId) {
@@ -1023,6 +1029,7 @@
     loadDeckBufferFromBlob: loadDeckBufferFromBlob,
     setDeckBufferLoadPromise: setDeckBufferLoadPromise,
     getDeckBufferLoadPromise: getDeckBufferLoadPromise,
+    setDeckBufferSliceOffset: setDeckBufferSliceOffset,
     // Constantes exportées (debug / config UI)
     CONST: {
       EQ_FREQ_LOW: EQ_FREQ_LOW,
