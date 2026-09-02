@@ -123,43 +123,17 @@
   //         ET stepIntervalMs > 0 (réglage « crossfade progressif » des
   //         Paramètres), sinon saut direct.
   //   - Toujours : palier >= 100 ou intervalle <= 0 → instantané.
-  function stepTowardsTarget() {
-    if (autoXf) {
-      // Crossfade progressif armé : ramp-up par paliers, même en mode Piped.
-      if (stepPercent >= 100 || stepIntervalMs <= 0) {
-        appliedCrossfade = crossfade;
-        applyVolumes();
-        return;
-      }
-      stopStepping();
-      stepHandle = setInterval(function () {
-        var delta = crossfade - appliedCrossfade;
-        if (Math.abs(delta) <= stepPercent) {
-          // Dernier palier : on atteint la cible exacte
-          appliedCrossfade = crossfade;
-          applyVolumes();
-          stopStepping();
-          return;
-        }
-        // Avance vers la cible par incrément signé
-        appliedCrossfade += (delta > 0 ? stepPercent : -stepPercent);
-        applyVolumes();
-      }, stepIntervalMs);
-      return;
-    }
-    if (mode === 'piped') {
-      // En Piped, setTargetAtTime fait la transition fluide en interne.
-      // On pousse directement la cible sans paliers.
-      stopStepping();
-      appliedCrossfade = crossfade;
-      applyVolumes();
-      return;
-    }
-    if (stepPercent >= 100 || stepIntervalMs <= 0) {
-      appliedCrossfade = crossfade;
-      applyVolumes();
-      return;
-    }
+  // Saut direct à la cible du slider (pas de paliers).
+  function jumpToTarget() {
+    stopStepping();
+    appliedCrossfade = crossfade;
+    applyVolumes();
+  }
+
+  // Ramp-up par paliers de appliedCrossfade vers crossfade.
+  // Un seul setInterval partagé : le corps est identique que le ramp-up soit
+  // déclenché par « Auto XF » (armé) ou par le réglage historique IFrame.
+  function startStepping() {
     stopStepping();
     stepHandle = setInterval(function () {
       var delta = crossfade - appliedCrossfade;
@@ -174,6 +148,36 @@
       appliedCrossfade += (delta > 0 ? stepPercent : -stepPercent);
       applyVolumes();
     }, stepIntervalMs);
+  }
+
+  // Règles d'application de la cible du slider :
+  //   - Si le crossfade progressif est ARMÉ (autoXf = true, case « Auto XF »
+  //     cochée) : la cible est atteinte par paliers (stepPercent / stepIntervalMs)
+  //     dans les DEUX modes (Piped + IFrame).
+  //   - Si désarmé :
+  //       · Mode Piped : saut direct à la cible (le ramping fluide est géré
+  //         nativement par GainNode.setTargetAtTime → pas de paliers manuels).
+  //       · Mode IFrame : comportement historique par paliers SI stepPercent < 100
+  //         ET stepIntervalMs > 0 (réglage « crossfade progressif » des
+  //         Paramètres), sinon saut direct.
+  //   - Toujours : palier >= 100 ou intervalle <= 0 → instantané.
+  function stepTowardsTarget() {
+    var stepping = stepPercent < 100 && stepIntervalMs > 0;
+    if (autoXf) {
+      // Crossfade progressif armé : ramp-up par paliers, même en mode Piped.
+      if (stepping) startStepping();
+      else jumpToTarget();
+      return;
+    }
+    if (mode === 'piped') {
+      // En Piped, setTargetAtTime fait la transition fluide en interne.
+      // On pousse directement la cible sans paliers.
+      jumpToTarget();
+      return;
+    }
+    // Mode IFrame : paliers historiques si réglés, sinon saut direct.
+    if (stepping) startStepping();
+    else jumpToTarget();
   }
 
   // Sync ponctuel : B se cale sur la position de A
