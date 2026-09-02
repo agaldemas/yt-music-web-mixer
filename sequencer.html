@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Séquenceur & Boîte à Rythmes — YT Music Web Mixer</title>
+    <!-- Tone.js — bundle local (la CSP interdit unpkg) -->
+    <script src="js/vendor/tone.js"></script>
+    <link rel="stylesheet" href="css/sequencer.css">
+</head>
+<body class="debug-zones">
+
+    <header id="sequencer-header">
+        <div class="header-left">
+            <h1>🥁 Séquenceur & Boîte à Rythmes</h1>
+            <a href="index.html" class="back-link">← Retour au Mixer</a>
+        </div>
+        
+        <div class="transport-controls">
+            <div class="control-group">
+                <label for="bpm">BPM</label>
+                <input type="range" id="bpm" min="40" max="240" value="120">
+                <span id="bpm-value">120</span>
+            </div>
+            <div class="control-group">
+                <label for="master-volume">Volume Master</label>
+                <input type="range" id="master-volume" min="0" max="100" value="80">
+                <span id="vol-value">80%</span>
+            </div>
+            <div class="playback-btns">
+                <button id="play-pause">Play</button>
+                <button id="stop">Stop</button>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <section id="sequencer-container">
+            <div id="step-matrix" class="step-matrix">
+                <!-- Généré dynamiquement par js/sequencer-app.js -->
+            </div>
+        </section>
+
+        <section id="drum-kit-view" class="drum-kit-view">
+            <!-- Scène batterie (image + hotspots) générée dynamiquement -->
+        </section>
+    </main>
+
+    <footer>
+        <p>YT Music Web Mixer — Séquenceur Tone.js</p>
+    </footer>
+
+    <script src="js/sequencer-samples.js"></script>
+    <script src="js/sequencer-app.js"></script>
+</body>
+</html>

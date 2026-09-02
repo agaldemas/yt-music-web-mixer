@@ -1123,6 +1123,7 @@ app.get('/sequencer.html', (req, res) => res.sendFile(path.join(ROOT, 'sequencer
 app.get('/test-progress', (req, res) => res.sendFile(path.join(ROOT, 'tests', 'test-progress.html')));
 app.use('/css', express.static(path.join(ROOT, 'css')));
 app.use('/js', express.static(path.join(ROOT, 'js')));
+app.use('/assets', express.static(path.join(ROOT, 'assets')));
 app.get('/favicon.ico', (req, res) => res.sendFile(path.join(ROOT, 'favicon.ico')));
 app.get('/audio-file.png', (req, res) => res.sendFile(path.join(ROOT, 'audio-file.png')));
 // Asset de la batterie vue du dessus (séquenceur)
