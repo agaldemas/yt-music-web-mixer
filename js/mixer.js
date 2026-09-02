@@ -315,10 +315,6 @@
     isPipedMode: isPipedMode,
     syncBtoA: syncBtoA,
     toggleContinuousSync: toggleContinuousSync,
-    // État courant (debug / tests)
-    getState: function () {
-      return { crossfade: crossfade, appliedCrossfade: appliedCrossfade, master: master, autoXf: autoXf };
-    },
     // Constantes exportées (debug / tests)
     CONST: {
       SYNC_DRIFT_THRESHOLD_PIPED: SYNC_DRIFT_THRESHOLD_PIPED,

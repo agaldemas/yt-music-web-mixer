@@ -126,7 +126,9 @@
   - [x] `initDrumKit()` : crée la scène `.drum-kit-stage`, positionne les 8 pads, ajoute la zone pédale charleston.
   - [x] Câblage des boutons Play/Stop et des sliders BPM/Master Volume sur le `DOMContentLoaded`.
   - [x] Garde `if (typeof Tone === 'undefined') return` sur tous les handlers audio pour ne pas planter si le bundle ne charge pas.
-- [ ] **Persistance `localStorage`** — *non implémenté* : pattern, BPM et volumes ne sont pas sauvegardés entre rechargements.
+- [ ] **Persistance `localStorage`** — *en cours* : `padConfig` (mode/kit/sampleFile par note) sauvegardé et restauré au chargement.
+  - [x] Sauvegarde dans `localStorage` au changement (`setPadMode` / `setPadSample`).
+  - [x] Restauration au boot (`loadPadConfigFromStorage`) avant `initGrid` / `initDrumKit`.
 
 ---
 
@@ -159,6 +161,7 @@
 - [x] **Worker de Tone.js bloqué par CSP** (fallback `script-src` ne couvre pas `worker-src`) → directive `worker-src 'self' blob:` ajoutée.
 - [x] **Bouton Play ne déclenchait rien** → transport complet câblé : `Tone.start()`, `Tone.Transport.scheduleRepeat`, callbacks Play/Pause/Stop, scheduler 16 pas, playhead visuel.
 - [x] **Curseur de lecture bloqué sur le pas 0** → confusion entre le `step` passé en argument (jamais fourni par `scheduleRepeat`) et l'incrément manuel de `currentStep`. Corrigé : `currentStep = (currentStep + 1) % 16` en fin de callback.
+- [x] **Dropdown son figé sur le mode initial** (`populateSoundMenu` construit une fois au boot) → reconstruit au clic (`menu.innerHTML = ''` + `populateSoundMenu`) et bouton mis à jour via `updateToggleLabel` ; affichage exclusif `✓` (sélectionné) / `○` (autres).
 
 ---
 
