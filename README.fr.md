@@ -45,6 +45,7 @@ L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le s
 - **Persistance** via `localStorage` : clé API, dernières requêtes, derniers videoIds, trim de gain, EQ, filtre DJ et pitch par voie sont sauvegardés et restaurés au reload et à la bascule de mode.
 - **Scripts de lancement en un clic** : `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) démarrent le serveur Express local sur le port 5400 et ouvrent l'app dans le navigateur par défaut.
 - **Script d'installation Windows (`install.bat`)** : double-cliquez dessus après le `git clone` pour installer automatiquement **Git, Node.js LTS, yt-dlp nightly, ffmpeg/ffprobe** et les dépendances npm du projet (via `winget` ou PowerShell en fallback).
+- **Séquenceur & Boîte à rythmes** : page autonome avec matrice de programmation 16 pas et batterie interactive (voir [Guide d'utilisation du Séquenceur](sequencer-use.fr.md)).
 - **Responsive** : passe en une colonne sur petit écran.
 
 ---

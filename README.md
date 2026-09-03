@@ -43,6 +43,7 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
 - **Persistence** via `localStorage`: API key, last queries, last video IDs, gain trim, EQ, DJ filter, pitch per deck are saved and restored on reload and on mode switch.
 - **One-click launch scripts**: `start.sh` (macOS/Linux/WSL) and `start.bat` (Windows) start the local Express server on port 5400 and open the app in your default browser.
 - **Windows install script (`install.bat`)**: double-click it after the `git clone` to automatically install **Git, Node.js LTS, yt-dlp nightly, ffmpeg/ffprobe** and the project's npm dependencies (via `winget` or PowerShell as a fallback).
+- **Step Sequencer & Drum Machine**: standalone page with a 16-step programming matrix and interactive drum kit (see [Sequencer User Guide](sequencer-use.md)).
 - **Responsive**: collapses to a single column on small screens.
 
 ---

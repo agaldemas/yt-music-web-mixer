@@ -424,11 +424,15 @@ function initDrumKit() {
 
         el.append(name, kbd);
 
-        // Écouteurs : souris / tactile
+        // Écouteurs : souris / tactile. Le Hat est spécial : c'est une cymbale
+        // charleston, son "open" est joué au mouseup/touchend (relâchement du pad)
+        // ou via raccourci clavier (touche H). On NE déclenche PAS de son sur
+        // mouseleave : si l'utilisateur survole puis déplace le curseur hors du
+        // pad sans cliquer, on ne doit rien entendre (comportement normal d'un
+        // pad à déclenchement manuel, pas d'un pad à pression continue).
         const isHat = pad.openNote;
         el.addEventListener('mousedown', () => triggerPadDown(pad));
         el.addEventListener('mouseup', () => { if (isHat) triggerPadUp(pad); });
-        el.addEventListener('mouseleave', () => { if (isHat) triggerPadUp(pad); });
         el.addEventListener('touchstart', (e) => { e.preventDefault(); triggerPadDown(pad); }, { passive: false });
         el.addEventListener('touchend', (e) => { e.preventDefault(); if (isHat) triggerPadUp(pad); }, { passive: false });
         el.addEventListener('touchcancel', () => { if (isHat) triggerPadUp(pad); });
@@ -474,39 +478,36 @@ function initDrumKit() {
         playHatNote(hatPedalState);
     });
 
-    // Clic sur la zone HAT (pas la pédale) : joue selon état mémoire
-    const hatZone = document.querySelector('.cymbal-hat');
-    if (hatZone) {
-        hatZone.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (hatPedalState === 'UP') {
-                playHatNote('UP'); // ouverte
-            } else {
-                playHatNote('DOWN'); // fermée/étouffée
-            }
-            flashPad('cymbal-hat');
-        });
-    }
+    // Note : la pédale charleston (ci-dessous) déclenche bien la note au
+    // mousedown (toggle mémoire + son adapté). Pour le pad Hat lui-même,
+    // on NE rajoute PAS de listener 'click' ici : le pad est déjà câblé
+    // par la boucle DRUM_PADS.forEach() au-dessus (mousedown → triggerPadDown
+    // qui choisit open/closed selon hatPedalState, mouseup → no-op).
+    // Un listener 'click' en plus causerait un double déclenchement
+    // (mousedown joue 1 son, click joue le même son 50 ms plus tard).
 
     stage.appendChild(pedal);
 }
 
-// Appui sur un pad : joue la note (charleston = version fermée).
-// Le HAT est spécial : si le pad est en mode 'sample' on passe par
-// playNoteByConfig (note résolue via openNote si pédale UP, pad.note sinon).
-// Si mode 'synth', on passe par playHatNote (qui gère la durée ADSR fine
-// 16n fermée / 8n ouverte).
+// Appui sur un pad : joue la note.
+// Cas spécial de la charleston (pad avec openNote) : le son joué dépend de
+// l'état mémoire de la pédale. Pas de double-trigger au relâchement (un
+// seul son par frappe) — le user a explicitement demandé ce comportement
+// (un hit = hihat-open OU hihat-closed, jamais les deux).
+//   - Pédale UP  (mémoire "ouverte")  → joue la note ouverte (F1 / hihat-open)
+//   - Pédale DOWN (mémoire "fermée")  → joue la note fermée (E1 / hihat-closed)
 function triggerPadDown(pad) {
     const isHat = pad.openNote;
     if (isHat) {
-        if (hatPedalState !== 'UP') return; // pédale engagée : la pédale gère
-        const cfg = padConfig[pad.note];
+        // Hat : on choisit la note selon la pédale, pas d'artifice au relâchement.
+        const note = hatPedalState === 'UP' ? pad.openNote : pad.note;
+        const cfg = padConfig[note];
         if (cfg && cfg.mode === 'sample') {
-            // Mode sample : joue le WAV fermé (E1). On garde la même logique
-            // "fermée" que le mode synth.
-            playNoteByConfig(pad.note);
+            playNoteByConfig(note);
         } else {
-            playHatNote('DOWN'); // fermée/étouffée (synth)
+            // Synth : on délègue à playHatNote avec l'état mémoire pour qu'il
+            // ajuste la durée ADSR (8n ouverte / 16n fermée).
+            playHatNote(hatPedalState);
         }
     } else {
         playNoteByConfig(pad.note);
@@ -514,20 +515,13 @@ function triggerPadDown(pad) {
     flashPad(pad.className);
 }
 
-// Relâchement : le pad HAT joue ouverte UNLESS pedal is engaged.
+// Relâchement : ne joue RIEN pour la charleston. Un seul son par frappe
+// (cf. commentaire de triggerPadDown). Avant, on rejouait "open" au mouseup
+// → double son (closed + open) à chaque clic sur le pad Hat, comportement
+// très gênant. Conservé en no-op explicite pour que les appels existants
+// (mouseup / touchend / keyup / touchcancel) restent neutres.
 function triggerPadUp(pad) {
-    const isHat = pad.openNote;
-    if (!isHat) return;
-    if (hatPedalState === 'DOWN') return; // pédale engagée : on garde fermé
-    const openNote = pad.openNote;
-    const cfg = padConfig[openNote];
-    if (cfg && cfg.mode === 'sample') {
-        // Mode sample : joue le WAV ouvert (F1)
-        playNoteByConfig(openNote);
-    } else {
-        playHatNote('UP'); // ouverte (synth, durée 8n)
-    }
-    flashPad(pad.className);
+    // Intentionnellement vide : la charleston ne joue qu'à l'appui.
 }
 
 // Mise à jour de l'indicateur texte "UP"/"DOWN" sur la pédale
