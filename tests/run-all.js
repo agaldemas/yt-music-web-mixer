@@ -14,6 +14,7 @@ const TESTS = [
   'test_server.js',
   'test_scratch_slice.js',
   'test_local_scratch_e2e.js',
+  'test_factory_presets.js',
 ];
 let failed = 0;
 for (const file of TESTS) {

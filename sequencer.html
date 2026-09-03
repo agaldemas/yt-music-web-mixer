@@ -31,9 +31,15 @@
                 <button type="button" id="rythmes-btn" class="track-sound-toggle" aria-haspopup="listbox" aria-expanded="false">Rythmes ▾</button>
                 <div id="rythmes-menu" class="track-sound-menu rythmes-menu" hidden role="listbox" aria-label="Presets rythmes"></div>
             </div>
+            <div class="factory-wrap" id="factory-wrap">
+                <button type="button" id="factory-btn" class="track-sound-toggle" aria-haspopup="listbox" aria-expanded="false">🎵 Presets ▾</button>
+                <div id="factory-menu" class="track-sound-menu factory-menu" hidden role="listbox" aria-label="Presets d'usine"></div>
+            </div>
             <div class="playback-btns">
                 <button id="play-pause">Play</button>
                 <button id="stop">Stop</button>
+                <button id="clear-grid" type="button" class="btn-clear-grid">🗑 Clear</button>
+                <button id="randomize" type="button" class="btn-randomize" title="Génère un pattern musicalement sensé (déterministe : même seed à chaque clic)">🎲 Randomize</button>
             </div>
         </div>
     </header>
@@ -54,8 +60,22 @@
         <p>YT Music Web Mixer — Séquenceur Tone.js</p>
     </footer>
 
-    <script src="js/sequencer-samples.js"></script>
-    <script src="js/musicca-presets.js"></script>
+    <!-- Vendor + données (chargés AVANT les sous-modules du séquenceur) -->
+    <script src="js/vendor/tone.js"></script>
+    <script src="js/sequencer-samples.js"></script>     <!-- DRUM_KITS, KIT_LIST -->
+    <script src="js/musicca-presets.js"></script>      <!-- MUSICA_PRESETS, musicaToGrid, findMusicaPreset -->
+    <script src="js/factory-presets.js"></script>      <!-- FACTORY_PRESETS, findFactoryPreset -->
+
+    <!-- Sous-modules du séquenceur (ordre important) -->
+    <script src="js/sequencer-config.js"></script>       <!-- GRID_TRACKS, DRUM_PADS, gridEl, état global -->
+    <script src="js/sequencer-mix.js"></script>          <!-- TRACK_GAIN_NODES, buildTrackMix -->
+    <script src="js/sequencer-sound.js"></script>        <!-- padConfig, buildTrackSoundToggle, playNoteByConfig -->
+    <script src="js/sequencer-grid.js"></script>         <!-- initGrid, clearGrid, randomizeGrid -->
+    <script src="js/sequencer-drumkit.js"></script>      <!-- initDrumKit, triggerPadDown/Up -->
+    <script src="js/sequencer-presets.js"></script>      <!-- loadMusiccaPreset, initRythmesMenu, loadFactoryPreset -->
+    <script src="js/sequencer-transport.js"></script>    <!-- setBpm, togglePlay, stopSequencer -->
+
+    <!-- Orchestrateur (doit être chargé EN DERNIER) -->
     <script src="js/sequencer-app.js"></script>
 </body>
 </html>

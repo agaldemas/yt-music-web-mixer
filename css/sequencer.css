@@ -65,6 +65,32 @@ input { font-family: inherit; }
 .btn-primary:hover { background: #1d4ed8; }
 .btn-stop { background: #7f1d1d; border-color: #b91c1c; color: #fecaca; }
 .btn-stop:hover { background: #991b1b; }
+.btn-clear-grid {
+  background: #2e3444;
+  color: #e7e7ea;
+  border: 1px solid #3b4253;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background 0.12s, border-color 0.12s, transform 0.05s;
+}
+.btn-clear-grid:hover { background: #3b4253; border-color: #4c5570; }
+.btn-clear-grid:active { transform: translateY(1px); }
+
+/* Bouton Randomize — violet pour se démarquer du Clear (gris) */
+.btn-randomize {
+  background: #3b2e54;
+  color: #e7e7ea;
+  border: 1px solid #5b4d7d;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background 0.12s, border-color 0.12s, transform 0.05s;
+}
+.btn-randomize:hover { background: #4c3d6e; border-color: #7560a0; }
+.btn-randomize:active { transform: translateY(1px); }
 
 /* Sliders (webkit + moz) */
 input[type="range"] {
@@ -489,7 +515,12 @@ footer {
 }
 
 .instrument-col {
-  width: 320px;
+  /* Large pour absorber, dans l'ordre : nom (~80px) + .track-mix
+     (vol 50 + mute 24 + solo 24 + gap 4 = ~110px) + .track-sound-toggle
+     (jusqu'à ~150px sur les noms de samples longs type
+     "acoustic / hihat-closed") + padding 12+12 = ~360px min.
+     400px laisse une marge confortable et reste raisonnable à l'écran. */
+  width: 400px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -642,6 +673,107 @@ footer {
   margin: 4px 0;
 }
 
+/* ============================================================
+   Mini-panneau Volume / Mute / Solo par piste
+   — vit en 1er dans .track-name-wrap (aligné à gauche)
+   — pas de margin-left: auto, on veut qu'il colle au bord gauche
+     et que le .track-sound-toggle (dernier enfant, en dernier dans
+     le flex space-between) se colle au bord droit.
+   ============================================================ */
+.track-mix {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Slider volume — horizontal fin (~50px), thème dark DAW. */
+.track-volume {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 50px;
+  height: 4px;
+  background: #2e3444;
+  border-radius: 2px;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+.track-volume::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #93c5fd;
+  border: 1px solid #3b82f6;
+  cursor: pointer;
+}
+.track-volume::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #93c5fd;
+  border: 1px solid #3b82f6;
+  cursor: pointer;
+}
+.track-volume:hover::-webkit-slider-thumb { background: #bfdbfe; }
+.track-volume:hover::-moz-range-thumb { background: #bfdbfe; }
+
+/* Boutons pastille Mute / Solo — ronds 22px, neutres par défaut. */
+.track-mute,
+.track-solo {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #2e3444;
+  background: #15181f;
+  color: #9ca3af;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  flex-shrink: 0;
+  transition: background 0.08s, color 0.08s, border-color 0.08s, box-shadow 0.08s;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  line-height: 1;
+}
+.track-mute:hover,
+.track-solo:hover {
+  background: #2a2f3c;
+  color: #e7e7ea;
+  border-color: #3b82f6;
+}
+
+/* Mute actif : pastille rouge, icône 🔇. */
+.track-mute.is-muted {
+  background: #4a1d1d;
+  color: #fca5a5;
+  border-color: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.45);
+}
+.track-mute.is-muted:hover {
+  background: #5a2424;
+  color: #fecaca;
+}
+
+/* Solo actif : pastille jaune, lettre S en gras. */
+.track-solo.is-solo {
+  background: #4a3a0d;
+  color: #fde68a;
+  border-color: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.45);
+}
+.track-solo.is-solo:hover {
+  background: #5a4610;
+  color: #fef3c7;
+}
+
 /* Dropdown Rythmes (Musicca) — réutilise track-sound-menu, variantes header */
 .rythmes-wrap { position: relative; }
 .rythmes-menu {
@@ -651,6 +783,15 @@ footer {
   /* fixed positionné au clic comme track-sound-menu, z-index hérité */
 }
 .rythmes-menu .track-sound-menu-item { font-size: 0.82rem; }
+
+/* Dropdown Factory (Presets d'usine) — jumeau du dropdown Rythmes */
+.factory-wrap { position: relative; }
+.factory-menu {
+  min-width: 220px;
+  max-height: 320px;
+  padding: 4px 0;
+}
+.factory-menu .track-sound-menu-item { font-size: 0.82rem; }
 
 /* ============================================================
    Responsive
