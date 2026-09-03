@@ -161,6 +161,39 @@ Source extraite le 2026-09-03 depuis `drum-machine.min.js` (Presets = 20 entrée
   - [x] Sauvegarde dans `localStorage` au changement (`setPadMode` / `setPadSample`).
   - [x] Restauration au boot (`loadPadConfigFromStorage`) avant `initGrid` / `initDrumKit`.
 
+### 7.1 Bugfixes layout 2 colonnes + alignement instrument/piste (2026-09-03)
+
+- [x] **Variables CSS partagées `:root` `--seq-row-height: 44px`, `--seq-row-gap: 6px`, `--seq-grid-width: 900px`** : une seule source de vérité (hauteur, gap, largeur) → les 9 lignes de gauche alignées au pixel près avec les 9 lignes de droite.
+- [x] **`.step-row` adopte `grid-template-columns: repeat(16, 1fr)`** (plus `calc(900px / 16)`) : 16 colonnes = 100% de `.steps-col` (900px), parfaitement superposées au `.drum-kit-stage` (900px) en dessous.
+- [x] **`.step-row .step` vire `aspect-ratio: 1` → `auto`** + `overflow: hidden` : cellule fait 100% du grid cell (~52×44px) au lieu de forcer 52×52 qui débordait → plus de chevauchement des rows.
+- [x] **`.drum-kit-stage` calé sur `var(--seq-grid-width)`** : batterie strictement alignée sous le bloc des 16 steps.
+
+### 7.2 Bugfixes dropdowns de choix d'instrument + son du séquenceur (2026-09-03)
+
+- [x] **Cause #1 — `initGrid()` créait `row.className='track-row'` mais ne l'attachait jamais au DOM** (variable orpheline). `syncPatternFromDOM()` et `applyGridToDOM()` faisaient `querySelectorAll('.track-row')` → 0 résultats → `pattern[]` jamais sync → pas de son. **Fix** : suppression du `row` orpheline, requêtes sur `.step-row`.
+- [x] **Cause #2 — `gridEl.querySelector('.track-sound-toggle[data-note=…]')` interrogeait `#step-matrix`**, alors que les toggles vivent dans `#instrument-names`. **Fix** : helper `findTrackToggle(note)` qui interroge le bon scope (3 occurrences).
+- [x] **`.step.active` → `.step-row .step.active`** : spécificité supérieure à `.step-row .step` qui écrasait l'orange.
+
+### 7.3 Couleurs steps / playhead (2026-09-03)
+
+- [x] **`.step.active` → orange vif `#f97316`** (au lieu du bleu historique `#3b82f6`).
+- [x] **`.step.playing` → bordure bleue `#3b82f6`** (au lieu du jaune), `.step.active.playing` → bleu plein.
+- [x] **`.step-row` ajoute `overflow: hidden`** sur les cellules.
+
+### 7.4 Fix Tone.js "Start time must be strictly greater…" + BPM live (2026-09-03)
+
+- [x] **Cause** : `player.start()` (sans arg, donc à `Tone.now()`) levait quand 2 hits consécutifs sur la même piste. **Fix** : `onSequencerStep(time)` propage le `time` du `scheduleRepeat` à `playNoteByConfig(note, time)` / `playHatNote(state, time)` → `player.start(time)` planifié sur le timestamp du step (strictement croissant par construction).
+- [x] **`try/catch` autour de `triggerGridNote`** dans `onSequencerStep` : si une piste lève, le scheduler continue → le playhead ne se fige plus (« dérive » résolue).
+
+### 7.5 BPM change "n'a aucun effet sans Stop+Play" (2026-09-03)
+
+- [x] **Cause** : 3 chemins mettaient à jour `Tone.Transport.bpm.value` mais aucun ne re-schedule le `scheduleRepeat` existant. **Fix** : source unique `setBpm(newBpm)` (clamp + input + affichage + Transport + `rescheduleLoop()`) ; tous les chemins (slider `input`, `loadMusiccaPreset`, `togglePlay`) passent par `setBpm`. `rescheduleLoop()` est aussi source unique du `scheduleRepeat` (clear + re-create si `isPlaying`).
+
+### 7.6 Premier son au reload ≠ son sauvegardé + désynchro preset Rythmes (2026-09-03)
+
+- [x] **Cause #1 — `preloadSample()` jamais appelé au boot** : `padConfig` restauré (label UI OK), mais `Tone.Player` créé seulement au 1er `playNoteByConfig()` → 1er hit = synth fallback. **Fix** : `preloadAllSamples()` au `DOMContentLoaded` pour chaque `mode='sample'`.
+- [x] **Cause #2 — preset Rythmes non persisté** : bouton retombait sur "Rythmes ▾" au reload. **Fix** : clé `localStorage` `ytwm_activePreset` (`saveActivePreset` / `loadActivePresetName`); `loadMusiccaPreset()` appelle `saveActivePreset()` systématiquement; au boot, si un preset est sauvegardé, on le réapplique (grille + BPM + label + highlight menu synchro dès le chargement).
+
 ---
 
 ## 8. 🧪 Tests, Validation & Documentation

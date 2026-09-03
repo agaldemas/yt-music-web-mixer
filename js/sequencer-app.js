@@ -305,6 +305,30 @@ function loadPadConfigFromStorage() {
     } catch (e) { /* ignore */ }
 }
 
+// === Persistance du preset Rythmes actif ===
+// Sans ça, après reload, le bouton Rythmes ▾ affichait le label par défaut
+// alors que la grille gardait le pattern du dernier preset joué → état désynchro.
+const STORAGE_PRESET_KEY = 'ytwm_activePreset';
+function saveActivePreset(nameFr) {
+    try { localStorage.setItem(STORAGE_PRESET_KEY, String(nameFr || '')); } catch (e) { /* ignore */ }
+}
+function loadActivePresetName() {
+    try { return localStorage.getItem(STORAGE_PRESET_KEY) || ''; } catch (e) { return ''; }
+}
+
+// Pré-charge TOUS les samples configurés en mode='sample' au boot. Sans ça,
+// le 1er step joué après reload tombait sur le synth fallback parce que le
+// Tone.Player n'était créé qu'au premier playNoteByConfig().
+function preloadAllSamples() {
+    if (typeof Tone === 'undefined') return;
+    Object.keys(padConfig).forEach((note) => {
+        const cfg = padConfig[note];
+        if (cfg && cfg.mode === 'sample' && cfg.sampleFile) {
+            preloadSample(note);
+        }
+    });
+}
+
 function setPadSample(note, kitName, fname) {
     if (!DRUM_KITS[kitName]) return;
     const cfg = padConfig[note];
@@ -319,7 +343,11 @@ function setPadSample(note, kitName, fname) {
 // `hatPad` est résolu dynamiquement à chaque appel pour rester valide
 // même si DRUM_PADS est réinitialisé.
 // Le mode (synth / sample) est lu depuis padConfig[note] → Tone.Player ou Tone.MetalSynth.
-function playHatNote(state) {
+// `time` est le timestamp Tone.js du step (fourni par le scheduler Transport).
+// Indispensable pour les re-triggers rapides : player.start(time) au lieu de
+// player.start() évite l'erreur "Start time must be strictly greater than
+// previous start time" quand 2 hits consécutifs frappent la même piste.
+function playHatNote(state, time) {
     const pad = DRUM_PADS.find((p) => p.name === 'Hat');
     if (!pad || typeof Tone === 'undefined') return;
     const note = state === 'DOWN' ? pad.note : pad.openNote;
@@ -328,12 +356,16 @@ function playHatNote(state) {
     if (cfg.mode === 'sample') {
         // En mode sample on joue simplement le WAV (le WAV est "self-contained")
         const player = getPlayerForNote(note);
-        if (player && player.loaded) player.start();
+        if (player && player.loaded) {
+            if (typeof time === 'number') player.start(time);
+            else player.start();
+        }
     } else {
         const synth = getSynthForNote(note);
         if (!synth) return;
         const duration = state === 'DOWN' ? '16n' : '8n'; // court/étouffé si DOWN, long/ouvert si UP
-        synth.triggerAttackRelease(note, duration);
+        if (typeof time === 'number') synth.triggerAttackRelease(note, duration, time);
+        else synth.triggerAttackRelease(note, duration);
     }
 }
 
@@ -649,24 +681,36 @@ function preloadSample(note) {
 // Joue un pad selon sa config (synth ou sample). Point d'entrée unique.
 // Si mode='sample' mais buffer pas encore chargé : FALLBACK sur le synth
 // pour ne pas avoir un clic mort. Le sample sera prêt au 2e appel.
-function playNoteByConfig(note) {
+// `time` est le timestamp Tone.js du step (fourni par Transport.scheduleRepeat)
+// et est passé à player.start / synth.triggerAttackRelease pour permettre
+// des re-triggers rapides sans erreur "Start time must be strictly greater
+// than previous start time" (sinon 2 hits consécutifs sur la même piste
+// lèvent une exception et coupent la lecture du séquenceur).
+function playNoteByConfig(note, time) {
     const cfg = padConfig[note];
     if (!cfg) return;
     if (cfg.mode === 'sample') {
         const player = getPlayerForNote(note);
         if (player && player.loaded) {
-            player.start();
+            if (typeof time === 'number') player.start(time);
+            else player.start();
             return;
         }
         // Fallback : lance le pré-chargement (idempotent) et joue le synth
         // en attendant. L'utilisateur entend toujours quelque chose.
         preloadSample(note);
         const synth = getSynthForNote(note);
-        if (synth) synth.triggerAttackRelease(note, '16n');
+        if (synth) {
+            if (typeof time === 'number') synth.triggerAttackRelease(note, '16n', time);
+            else synth.triggerAttackRelease(note, '16n');
+        }
     } else {
         // mode 'synth'
         const synth = getSynthForNote(note);
-        if (synth) synth.triggerAttackRelease(note, '16n');
+        if (synth) {
+            if (typeof time === 'number') synth.triggerAttackRelease(note, '16n', time);
+            else synth.triggerAttackRelease(note, '16n');
+        }
     }
 }
 
@@ -682,13 +726,57 @@ const STEP_DURATION = '16n'; // 1/16e note par pas
 const pattern = GRID_TRACKS.map(() => new Array(STEPS_PER_LOOP).fill(false));
 let loopId = null; // id du callback scheduleRepeat, pour le clear
 
+// Replanifie le `scheduleRepeat` du séquenceur. Source unique de la
+// création/recréation du loop : appelé par togglePlay (au démarrage) et par
+// setBpm (changement de BPM). Sans re-planification quand le BPM change
+// pendant la lecture, Tone.js continue de tirer le callback à l'ancien
+// intervalle. Le Transport lui-même n'est pas touché, seul le loop est
+// recréé, donc le playhead continue sans saut audible.
+function rescheduleLoop() {
+    if (typeof Tone === 'undefined' || !isPlaying) return;
+    if (loopId !== null) {
+        Tone.Transport.clear(loopId);
+        loopId = null;
+    }
+    loopId = Tone.Transport.scheduleRepeat((time) => {
+        onSequencerStep(time);
+        Tone.Draw.schedule(() => { /* hook visuel facultatif */ }, time);
+    }, STEP_DURATION);
+}
+
+// Source unique pour changer le BPM : on met à jour l'input, l'affichage
+// ET le Transport, puis on replanifie le loop s'il est en cours. C'est le seul
+// endroit qui touche au BPM, ce qui évite l'embrouille précédente (modifs
+// partielles du BPM via 3 chemins différents qui se contredisaient).
+function setBpm(newBpm) {
+    const v = Math.max(40, Math.min(240, Number(newBpm) || 120));
+    const bpmInput = document.getElementById('bpm');
+    const bpmValue = document.getElementById('bpm-value');
+    if (bpmInput) bpmInput.value = String(v);
+    if (bpmValue) bpmValue.textContent = String(v);
+    if (typeof Tone !== 'undefined' && Tone.Transport) {
+        Tone.Transport.bpm.value = v;
+    }
+    rescheduleLoop();
+}
 // À chaque pas du séquenceur, on parcourt les pistes et on déclenche
 // les notes des pas actifs. Aussi : on anime le playhead visuel (.playing).
-function onSequencerStep() {
-    // Déclenche les notes des pas actifs AVANT d'avancer
+// `stepTime` est le timestamp Tone.js du pas (fourni par scheduleRepeat) —
+// passé à playNoteByConfig pour que Tone.Player.schedule() ne lève pas
+// "Start time must be strictly greater than previous start time" lors de
+// re-triggers rapides (2 hits consécutifs sur la même piste).
+function onSequencerStep(stepTime) {
+    // Déclenche les notes des pas actifs AVANT d'avancer.
+    // try/catch par piste : si un Tone.Player lève (ex. re-trigger trop rapide
+    // malgré le fix stepTime), on continue sur les autres pistes et le
+    // séquenceur ne se "fige" pas (sinon le playhead semble dériver).
     GRID_TRACKS.forEach((track, ti) => {
         if (pattern[ti][currentStep]) {
-            triggerGridNote(track);
+            try {
+                triggerGridNote(track, stepTime);
+            } catch (err) {
+                console.warn('sequencer: track', track.name, 'trigger failed:', err.message);
+            }
         }
     });
     // Met à jour le playhead visuel sur la grille
@@ -705,16 +793,17 @@ function onSequencerStep() {
 }
 
 // Joue la note d'une piste de la grille (kick, snare, etc.) — court (16e).
-// Délègue à playNoteByConfig (mode = padConfig[note].mode).
-function triggerGridNote(track) {
+// Délègue à playNoteByConfig (mode = padConfig[note].mode). stepTime est
+// optionnel : fourni par le scheduler Tone.Transport pour des re-triggers propres.
+function triggerGridNote(track, stepTime) {
     if (typeof Tone === 'undefined') return;
     // Hat Open (F1) et Hat Closed (E1) passent par playHatNote pour respecter
     // l'état de la pédale charleston (note + durée adaptées).
     if (track.note === 'E1' || track.note === 'F1') {
-        playHatNote(hatPedalState === 'DOWN' ? 'DOWN' : (track.note === 'F1' ? 'UP' : 'DOWN'));
+        playHatNote(hatPedalState === 'DOWN' ? 'DOWN' : (track.note === 'F1' ? 'UP' : 'DOWN'), stepTime);
         return;
     }
-    playNoteByConfig(track.note);
+    playNoteByConfig(track.note, stepTime);
 }
 
 // Toggle Play/Pause. Premier appel : Tone.start() + démarrage du Transport.
@@ -724,14 +813,13 @@ async function togglePlay() {
     if (!isPlaying) {
         // Premier clic : débloque l'AudioContext (gesture utilisateur).
         await Tone.start();
-        Tone.Transport.bpm.value = Number(document.getElementById('bpm')?.value || 120);
-        // scheduleRepeat : callback appelé tous les STEP_DURATION (= 1/16e).
-        loopId = Tone.Transport.scheduleRepeat((time) => {
-            onSequencerStep();
-            Tone.Draw.schedule(() => { /* hook visuel facultatif */ }, time);
-        }, STEP_DURATION);
+        // Source unique : setBpm() met l'input + Transport + rescheduleLoop()
+        // en un seul appel. Si isPlaying est encore false ici, rescheduleLoop
+        // ne fait rien — c'est OK, on le rappelle juste après avoir démarré.
+        setBpm(Number(document.getElementById('bpm')?.value) || 120);
         Tone.Transport.start();
         isPlaying = true;
+        rescheduleLoop();
         if (playBtn) playBtn.textContent = 'Pause';
     } else {
         Tone.Transport.pause();
@@ -796,14 +884,9 @@ function loadMusiccaPreset(key) {
     if (!preset) return null;
     const grid = musicaToGrid(preset);
     applyGridToDOM(grid);
-    // BPM
-    const bpmInput = document.getElementById('bpm');
-    const bpmValue = document.getElementById('bpm-value');
-    if (bpmInput) {
-        bpmInput.value = String(preset.tempo);
-        if (bpmValue) bpmValue.textContent = String(preset.tempo);
-        if (typeof Tone !== 'undefined' && Tone.Transport) Tone.Transport.bpm.value = preset.tempo;
-    }
+    // BPM : on passe par setBpm() (source unique) qui met à jour l'input,
+    // l'affichage, le Transport ET replanifie le loop si on est en lecture.
+    setBpm(preset.tempo);
     // Swing (Jazz 1-4 → swing=true)
     if (typeof Tone !== 'undefined' && Tone.Transport) {
         try {
@@ -814,6 +897,8 @@ function loadMusiccaPreset(key) {
     // Label bouton Rythmes
     const rythmesBtn = document.getElementById('rythmes-btn');
     if (rythmesBtn) rythmesBtn.textContent = preset.name_fr + ' ▾';
+    // Persiste le preset actif pour qu'au reload le label ET la grille restent synchro.
+    saveActivePreset(preset.name_fr);
     // Highlight item dans le menu
     document.querySelectorAll('#rythmes-menu .track-sound-menu-item').forEach((el) => {
         el.classList.toggle('active', el.dataset.preset === preset.name_fr);
@@ -897,6 +982,21 @@ window.addEventListener('DOMContentLoaded', () => {
     initDrumKit();
     initRythmesMenu();
 
+    // --- Restauration du preset Rythmes sauvegardé ---
+    // loadMusiccaPreset() rejoue applyGridToDOM + setBpm + label du bouton
+    // → après reload, la grille et le bouton Rythmes sont synchro avec le
+    // dernier preset joué, sans cliquer nulle part.
+    const savedPreset = loadActivePresetName();
+    if (savedPreset) loadMusiccaPreset(savedPreset);
+
+    // --- Pré-chargement des samples configurés ---
+    // Si l'utilisateur a sauvegardé des pads en mode='sample' (ex. ◉ acoustic / kick),
+    // il faut créer les Tone.Player et lancer leur load() AVANT le 1er Play, sinon
+    // le 1er step joué tombe sur le synth fallback (le son n'est pas celui
+    // sélectionné). preloadAllSamples est async (charge les WAV) mais on n'a
+    // pas besoin d'attendre : le 1er hit attendra via getPlayerForNote si besoin.
+    preloadAllSamples();
+
     // Câble les toggles .step sur la grille vers le pattern[].
     if (gridEl) {
         gridEl.addEventListener('click', (e) => {
@@ -915,17 +1015,15 @@ window.addEventListener('DOMContentLoaded', () => {
     if (stopBtn) stopBtn.addEventListener('click', stopSequencer);
 
     // BPM + volume master : appliqués sur Tone.Transport et Tone.Destination.
+    // Le BPM passe par setBpm() (source unique) qui met aussi à jour l'input,
+    // l'affichage et replanifie le loop si la lecture est en cours.
     const bpmInput = document.getElementById('bpm');
     const bpmValue = document.getElementById('bpm-value');
     const volInput = document.getElementById('master-volume');
     const volValue = document.getElementById('vol-value');
-    if (bpmInput && typeof Tone !== 'undefined') {
-        Tone.Transport.bpm.value = Number(bpmInput.value);
-        bpmInput.addEventListener('input', () => {
-            const v = Number(bpmInput.value);
-            Tone.Transport.bpm.value = v;
-            if (bpmValue) bpmValue.textContent = String(v);
-        });
+    if (bpmInput) {
+        if (bpmValue) bpmValue.textContent = String(bpmInput.value);
+        bpmInput.addEventListener('input', () => setBpm(Number(bpmInput.value)));
     }
     if (volInput && typeof Tone !== 'undefined') {
         Tone.Destination.volume.value = Tone.gainToDb(Number(volInput.value) / 100);
