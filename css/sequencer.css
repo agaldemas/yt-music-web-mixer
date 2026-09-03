@@ -205,27 +205,30 @@ main {
 .step:hover { background: #232733; border-color: #3b4560; }
 .step:active { transform: scale(0.92); }
 
-/* Séparation visuelle des 4 temps : marge après chaque 4e pas.
-   Enfants de .track-row (display:contents) : 1=label, 2..17=steps.
-   Fins de groupe (pas 4/8/12/16) = enfants 5/9/13/17 = 4n+1. */
-.step:nth-child(4n+1) { margin-right: 10px; }
+/* Séparation visuelle des 4 temps (pas 4, 8, 12) */
+.step-row .step:nth-child(4n) {
+  margin-right: 6px;
+}
+.step-row .step:last-child {
+  margin-right: 0;
+}
 
-/* Pas actif (allumé) */
-.step.active {
+/* Pas actif (allumé) — orange pour être bien visible */
+.step-row .step.active {
+  background: #f97316;
+  border-color: #fbbf24;
+  box-shadow: 0 0 8px rgba(249, 115, 22, 0.55);
+}
+
+/* Playhead actif (curseur de lecture) — bleu comme à l'origine */
+.step-row .step.playing {
+  border-color: #3b82f6;
+  box-shadow: inset 0 0 6px rgba(59, 130, 246, 0.8), 0 0 4px rgba(59, 130, 246, 0.5);
+}
+.step-row .step.active.playing {
   background: #3b82f6;
   border-color: #60a5fa;
-  box-shadow: 0 0 8px rgba(59, 130, 246, 0.55);
-}
-
-/* Playhead actif (curseur de lecture) */
-.step.playing {
-  border-color: #fbbf24;
-  box-shadow: inset 0 0 6px rgba(251, 191, 36, 0.8), 0 0 4px rgba(251, 191, 36, 0.5);
-}
-.step.active.playing {
-  background: #fbbf24;
-  border-color: #fde68a;
-  box-shadow: 0 0 12px rgba(251, 191, 36, 0.8);
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.8);
 }
 
 /* ============================================================
@@ -233,22 +236,25 @@ main {
    ============================================================ */
 #drum-kit-view {
   display: flex;
-  justify-content: center;
-  padding: 8px 0;
+  justify-content: flex-start;
+  width: var(--seq-grid-width);
+  max-width: var(--seq-grid-width);
+  padding: 0;
 }
 
 /* Scène : ratio EXACT de l'image (2550/1664 = 1.533) pour que les % du
    stage = % de l'image. cover ne recadre plus rien : zones fixes. */
 .drum-kit-stage {
   position: relative;
-  width: 100%;
-  max-width: 900px;
+  width: var(--seq-grid-width);
+  max-width: var(--seq-grid-width);
   aspect-ratio: 2550 / 1664;
   background: url('../battery-set-above.jpeg') center / 100% 100% no-repeat;
   border: 1px solid #232733;
   border-radius: 12px;
   box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.6);
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* Trame de sol discrète (carrelage studio) */
@@ -467,17 +473,99 @@ footer {
 
 /* ============================================================
    Toggle son par piste + menu déroulant des sons disponibles.
+   Layout 2 colonnes parfaitement aligné.
    ============================================================ */
-.track-sound-wrap {
-  position: relative;
-  flex: 0 0 auto;
+:root {
+  --seq-row-height: 44px;
+  --seq-row-gap: 6px;
+  --seq-grid-width: 900px;
 }
+
+.sequencer-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.instrument-col {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--seq-row-gap);
+}
+
+.right-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: var(--seq-grid-width);
+  max-width: var(--seq-grid-width);
+  flex-shrink: 0;
+}
+
+.steps-col {
+  width: var(--seq-grid-width);
+  max-width: var(--seq-grid-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--seq-row-gap);
+  flex-shrink: 0;
+}
+
+/* Ligne d'instrument (colonne gauche) */
 .track-name-wrap {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  min-width: 0;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  background: #1a1e27;
+  border: 1px solid #232733;
+  border-radius: 6px;
+  height: var(--seq-row-height);
+  min-height: var(--seq-row-height);
+  max-height: var(--seq-row-height);
+  box-sizing: border-box;
+}
+
+.track-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #e7e7ea;
+  white-space: nowrap;
+}
+
+/* Ligne de 16 steps (colonne droite) */
+.step-row {
+  display: grid;
+  grid-template-columns: repeat(16, 1fr);
+  gap: 4px;
+  width: var(--seq-grid-width);
+  max-width: var(--seq-grid-width);
+  height: var(--seq-row-height);
+  min-height: var(--seq-row-height);
+  max-height: var(--seq-row-height);
+  align-items: stretch;
+  box-sizing: border-box;
+}
+
+.step-row .step {
+  width: 100%;
+  height: 100%;
+  /* Pas d'aspect-ratio: 1 ici — la hauteur du row est imposée par --seq-row-height
+     (44px). Un aspect-ratio 1 forcerait la cellule à 52×52 dans une grille
+     900/16 de 52px de large, ce qui DÉPASSE la hauteur du row et fait chevaucher
+     les pistes. On laisse la cellule remplir son conteneur exactement. */
+  aspect-ratio: auto;
+  border-radius: 4px;
+  background: #1a1e27;
+  border: 1px solid #2e3444;
+  cursor: pointer;
+  box-sizing: border-box;
+  margin: 0;
+  overflow: hidden;
 }
 .track-sound-toggle {
   background: #1a1e27;
@@ -554,6 +642,16 @@ footer {
   margin: 4px 0;
 }
 
+/* Dropdown Rythmes (Musicca) — réutilise track-sound-menu, variantes header */
+.rythmes-wrap { position: relative; }
+.rythmes-menu {
+  min-width: 220px;
+  max-height: 320px;
+  padding: 4px 0;
+  /* fixed positionné au clic comme track-sound-menu, z-index hérité */
+}
+.rythmes-menu .track-sound-menu-item { font-size: 0.82rem; }
+
 /* ============================================================
    Responsive
    ============================================================ */
@@ -568,7 +666,17 @@ footer {
 @media (max-width: 560px) {
   main { padding: 10px; }
   .control-group { font-size: 0.78rem; }
-  .drum-kit-stage { aspect-ratio: 2550 / 1664; max-width: 420px; margin: 0 auto; }
+  .drum-kit-stage {
+    position: relative;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 2550 / 1664;
+    background: url('../battery-set-above.jpeg') center / 100% 100% no-repeat;
+    border: 1px solid #232733;
+    border-radius: 12px;
+    box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+  }
   /* Réorganise les pads pour un format vertical */
   .pad-kick { width: 10%; height: 14%; left: 50%; top: 63.7%; }
     .pad-snare { width: 17%; left: 31.5%; top: 53.8%; }

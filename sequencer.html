@@ -27,6 +27,10 @@
                 <input type="range" id="master-volume" min="0" max="100" value="80">
                 <span id="vol-value">80%</span>
             </div>
+            <div class="rythmes-wrap" id="rythmes-wrap">
+                <button type="button" id="rythmes-btn" class="track-sound-toggle" aria-haspopup="listbox" aria-expanded="false">Rythmes ▾</button>
+                <div id="rythmes-menu" class="track-sound-menu rythmes-menu" hidden role="listbox" aria-label="Presets rythmes"></div>
+            </div>
             <div class="playback-btns">
                 <button id="play-pause">Play</button>
                 <button id="stop">Stop</button>
@@ -35,14 +39,14 @@
     </header>
 
     <main>
-        <section id="sequencer-container">
-            <div id="step-matrix" class="step-matrix">
-                <!-- Généré dynamiquement par js/sequencer-app.js -->
+        <section id="sequencer-container" class="sequencer-layout">
+            <div id="instrument-names" class="instrument-col"></div>
+            <div class="right-col">
+                <div id="step-matrix" class="steps-col"></div>
+                <section id="drum-kit-view" class="drum-kit-view">
+                    <!-- Batterie alignée sous le bloc steps, même largeur -->
+                </section>
             </div>
-        </section>
-
-        <section id="drum-kit-view" class="drum-kit-view">
-            <!-- Scène batterie (image + hotspots) générée dynamiquement -->
         </section>
     </main>
 
@@ -51,6 +55,7 @@
     </footer>
 
     <script src="js/sequencer-samples.js"></script>
+    <script src="js/musicca-presets.js"></script>
     <script src="js/sequencer-app.js"></script>
 </body>
 </html>

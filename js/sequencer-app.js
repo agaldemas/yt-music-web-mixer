@@ -45,40 +45,51 @@ const DRUM_PADS = [
 // Initialisation de la grille de pas (8 steps × 16 steps)
 // Crée la matrice HTML des pas du séquenceur.
 function initGrid() {
-    if (!gridEl) return;
+    const namesCol = document.getElementById('instrument-names');
+    const stepsCol = document.getElementById('step-matrix');
+    if (!namesCol || !stepsCol) return;
     const STEPS = 16;
-    // 2 colonnes : nom | 16 pas. Le toggle est intégré DANS le nom (à droite du texte).
-    gridEl.style.gridTemplateColumns = `minmax(260px, 1fr) repeat(${STEPS}, minmax(30px, 1fr))`;
+    // Bloc des steps (16 colonnes) = largeur batterie ; titre séparé (pas concerné)
+    // grid divisé en 2 colonnes via HTML (instrument-names | step-matrix)
     GRID_TRACKS.forEach((track) => {
-        const row = document.createElement('div');
-        row.className = 'track-row';
-        row.dataset.note = track.note;
-
-        // Nom + toggle (encapsulés dans le même wrapper, à gauche).
+        // Toggle compact (1 bouton qui switch). Visible seulement si un sample existe.
+        // Le toggle vit dans la colonne de gauche (.instrument-col) via nameWrap,
+        // PAS dans gridEl (#step-matrix) — d'où le helper findTrackToggle() plus bas.
         const nameWrap = document.createElement('div');
         nameWrap.className = 'track-name-wrap';
         const name = document.createElement('span');
         name.className = 'track-name';
         name.textContent = track.name;
         nameWrap.appendChild(name);
-        // Toggle compact (1 bouton qui switch). Visible seulement si un sample existe.
+        namesCol.appendChild(nameWrap);
+
         if (hasSampleForNote(track.note)) {
             const tog = buildTrackSoundToggle(track);
             nameWrap.appendChild(tog);
         }
-        row.appendChild(nameWrap);
 
-        // 16 cellules de pas
+        // Colonne droite : 1 ligne de 16 steps.
+        const stepRow = document.createElement('div');
+        stepRow.className = 'step-row';
+        stepRow.dataset.note = track.note;
         for (let i = 0; i < STEPS; i++) {
             const step = document.createElement('div');
             step.className = 'step';
             step.dataset.drum = track.note;
             step.dataset.step = i;
             step.onclick = () => step.classList.toggle('active');
-            row.appendChild(step);
+            stepRow.appendChild(step);
         }
-        gridEl.appendChild(row);
+        stepsCol.appendChild(stepRow);
     });
+}
+
+// Helper : retrouve le bouton toggle d'une piste. Il vit dans
+// #instrument-names (colonne de gauche), PAS dans #step-matrix (gridEl).
+function findTrackToggle(note) {
+    return document.querySelector(
+        '#instrument-names .track-sound-toggle[data-note="' + note + '"]'
+    );
 }
 
 // Construit le bouton toggle Synth/Sample pour une piste.
@@ -166,7 +177,7 @@ function populateSoundMenu(menu, note, onPick) {
     // 1) Option "Synth"
     addMenuItem(menu, '♪ Synth (MembraneSynth / MetalSynth)', cfg.mode === 'synth', () => {
         setPadMode(note, 'synth');
-        const tog = gridEl && gridEl.querySelector('.track-sound-toggle[data-note="' + note + '"]');
+        const tog = findTrackToggle(note);
         if (tog) updateToggleLabel(tog, padConfig[note]);
         onPick();
     });
@@ -192,8 +203,9 @@ function populateSoundMenu(menu, note, onPick) {
                 cfg.kit = v.kit;
                 cfg.sampleFile = v.filename;
                 preloadSample(note);
+                savePadConfig();
                 // Met à jour le bouton + ferme le menu
-                const tog = gridEl && gridEl.querySelector('.track-sound-toggle[data-note="' + note + '"]');
+                const tog = findTrackToggle(note);
                 if (tog) updateToggleLabel(tog, cfg);
                 onPick();
             });
@@ -270,12 +282,29 @@ function setPadMode(note, mode) {
         preloadSample(note);
     }
     // Met à jour le bouton toggle de l'en-tête de piste
-    const tog = gridEl && gridEl.querySelector('.track-sound-toggle[data-note="' + note + '"]');
+    const tog = findTrackToggle(note);
     if (tog) updateToggleLabel(tog, cfg);
+    savePadConfig();
 }
 
 // Change le kit et/ou le sampleFile utilisé par un pad (depuis le <select>).
 // Si le pad est en mode sample, on bascule le buffer et on pré-charge.
+function savePadConfig() {
+    try { localStorage.setItem('ytwm_padConfig', JSON.stringify(padConfig)); } catch (e) { /* ignore */ }
+}
+function loadPadConfigFromStorage() {
+    try {
+        const raw = localStorage.getItem('ytwm_padConfig');
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        Object.keys(saved).forEach((note) => {
+            if (padConfig[note] && saved[note]) {
+                padConfig[note] = { ...padConfig[note], ...saved[note] };
+            }
+        });
+    } catch (e) { /* ignore */ }
+}
+
 function setPadSample(note, kitName, fname) {
     if (!DRUM_KITS[kitName]) return;
     const cfg = padConfig[note];
@@ -283,6 +312,7 @@ function setPadSample(note, kitName, fname) {
     cfg.kit = kitName;
     cfg.sampleFile = fname;
     if (cfg.mode === 'sample') preloadSample(note);
+    savePadConfig();
 }
 
 // Son de la cymbale Hat selon l'état mémoire.
@@ -501,6 +531,7 @@ const padConfig = {};
 GRID_TRACKS.forEach((t) => {
     padConfig[t.note] = { mode: 'synth', kit: 'acoustic', sampleFile: null };
 });
+loadPadConfigFromStorage();
 
 // Liste des notes qui ont un sample disponible (kits acoustic + electronic).
 // Utile pour empêcher l'utilisateur de basculer en 'sample' sur une note sans WAV.
@@ -727,9 +758,10 @@ function stopSequencer() {
 }
 
 // Sync pattern[] quand l'utilisateur toggle un .step dans la grille.
+// On lit chaque .step-row du #step-matrix (et non .track-row qui n'existe pas).
 function syncPatternFromDOM() {
     if (!gridEl) return;
-    const rows = gridEl.querySelectorAll('.track-row');
+    const rows = gridEl.querySelectorAll('.step-row');
     rows.forEach((row, ti) => {
         const steps = row.querySelectorAll('.step');
         steps.forEach((cell, si) => {
@@ -741,10 +773,129 @@ function syncPatternFromDOM() {
 }
 
 // ============================================================
+// Presets « Rythmes » Musicca — chargement grille + BPM/swing
+// ============================================================
+function applyGridToDOM(grid) {
+    if (!gridEl) return;
+    // grid[trackIndex][stepIndex] → DOM
+    const rows = gridEl.querySelectorAll('.step-row');
+    rows.forEach((row, ti) => {
+        const steps = row.querySelectorAll('.step');
+        steps.forEach((cell, si) => {
+            const on = !!(grid[ti] && grid[ti][si]);
+            cell.classList.toggle('active', on);
+            // sync pattern[]
+            if (ti < pattern.length && si < pattern[ti].length) pattern[ti][si] = on;
+        });
+    });
+}
+
+function loadMusiccaPreset(key) {
+    if (typeof MUSICA_PRESETS === 'undefined' || typeof musicaToGrid === 'undefined') return null;
+    const preset = findMusicaPreset(key);
+    if (!preset) return null;
+    const grid = musicaToGrid(preset);
+    applyGridToDOM(grid);
+    // BPM
+    const bpmInput = document.getElementById('bpm');
+    const bpmValue = document.getElementById('bpm-value');
+    if (bpmInput) {
+        bpmInput.value = String(preset.tempo);
+        if (bpmValue) bpmValue.textContent = String(preset.tempo);
+        if (typeof Tone !== 'undefined' && Tone.Transport) Tone.Transport.bpm.value = preset.tempo;
+    }
+    // Swing (Jazz 1-4 → swing=true)
+    if (typeof Tone !== 'undefined' && Tone.Transport) {
+        try {
+            Tone.Transport.swing = preset.swing ? 0.3 : 0;
+            Tone.Transport.swingSubdivision = '16n';
+        } catch (e) { /* Tone <14 ignore */ }
+    }
+    // Label bouton Rythmes
+    const rythmesBtn = document.getElementById('rythmes-btn');
+    if (rythmesBtn) rythmesBtn.textContent = preset.name_fr + ' ▾';
+    // Highlight item dans le menu
+    document.querySelectorAll('#rythmes-menu .track-sound-menu-item').forEach((el) => {
+        el.classList.toggle('active', el.dataset.preset === preset.name_fr);
+    });
+    return preset;
+}
+
+function initRythmesMenu() {
+    const btn = document.getElementById('rythmes-btn');
+    const menu = document.getElementById('rythmes-menu');
+    const wrap = document.getElementById('rythmes-wrap');
+    if (!btn || !menu || typeof MUSICA_PRESETS === 'undefined') return;
+
+    // Peuple le menu (✓ = sélectionné, ○ = autres — pattern exclusif)
+    function populateRythmesMenu() {
+        menu.innerHTML = '';
+        MUSICA_PRESETS.forEach((p) => {
+            const isActive = btn.textContent.startsWith(p.name_fr);
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'track-sound-menu-item' + (isActive ? ' active' : '');
+            item.dataset.preset = p.name_fr;
+            item.setAttribute('role', 'option');
+            item.textContent = (isActive ? '✓ ' : '○ ') + p.name_fr + '  · ' + p.tempo + ' BPM' + (p.swing ? ' · swing' : '') + ' · ' + p.rhythm;
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                loadMusiccaPreset(p.name_fr);
+                closeMenu();
+            });
+            menu.appendChild(item);
+        });
+    }
+
+    function closeMenu() {
+        menu.hidden = true;
+        btn.classList.remove('menu-open');
+        btn.setAttribute('aria-expanded', 'false');
+        document.removeEventListener('click', onDocClick, true);
+        document.removeEventListener('keydown', onKey, true);
+    }
+    function onDocClick(ev) {
+        if (!wrap.contains(ev.target)) closeMenu();
+    }
+    function onKey(ev) {
+        if (ev.key === 'Escape') closeMenu();
+    }
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Ferme les autres menus track-sound d'abord (exclusif)
+        document.querySelectorAll('.track-sound-menu').forEach((m) => { if (m !== menu) m.hidden = true; });
+        document.querySelectorAll('.track-sound-toggle.menu-open').forEach((b) => { if (b !== btn) b.classList.remove('menu-open'); });
+        const willOpen = menu.hidden;
+        if (willOpen) {
+            populateRythmesMenu();
+            const r = btn.getBoundingClientRect();
+            menu.style.position = 'fixed';
+            menu.style.top = (r.bottom + 4) + 'px';
+            menu.style.left = r.left + 'px';
+            menu.style.minWidth = Math.max(r.width, 220) + 'px';
+            menu.hidden = false;
+            btn.classList.add('menu-open');
+            btn.setAttribute('aria-expanded', 'true');
+            setTimeout(() => {
+                document.addEventListener('click', onDocClick, true);
+                document.addEventListener('keydown', onKey, true);
+            }, 0);
+        } else {
+            closeMenu();
+        }
+    });
+
+    // Peuplement initial (pour accessibilité)
+    populateRythmesMenu();
+}
+
+// ============================================================
 // --- Démarrage de l'application ---
 window.addEventListener('DOMContentLoaded', () => {
     initGrid();
     initDrumKit();
+    initRythmesMenu();
 
     // Câble les toggles .step sur la grille vers le pattern[].
     if (gridEl) {

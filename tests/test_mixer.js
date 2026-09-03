@@ -107,7 +107,7 @@ async function main() {
   const MX = global.window.YTMixer;
   assert('window.YTMixer défini', !!MX);
   const expectedKeys = ['init', 'applyVolumes', 'setStepOptions', 'setAutoXf', 'isAutoXf',
-    'setMode', 'getMode', 'isPipedMode', 'syncBtoA', 'toggleContinuousSync', 'CONST'];
+    'setMode', 'getMode', 'isPipedMode', 'syncBtoA', 'CONST'];
   for (const k of expectedKeys) {
     assert('  - ' + k, typeof MX[k] !== 'undefined');
   }

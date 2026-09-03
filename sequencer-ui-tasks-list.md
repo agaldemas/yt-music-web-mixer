@@ -84,6 +84,37 @@
   - [ ] Sélecteur de **presets d'usine** (Rock 4/4, House/Electro, Trap/Hip-hop, Funk/Disco) — *à faire*.
 - [ ] **Contrôles avancés par piste** (Volume / Mute / Solo par piste) — *à faire*.
 
+### 4.1 🥁 Presets « Rythmes » inspirés de Musicca (`https://www.musicca.com/fr/boite-a-rythmes` — bouton « Rythmes »)
+
+Source extraite le 2026-09-03 depuis `drum-machine.min.js` (Presets = 20 entrées, format 7 pistes Musicca → mapping 9 pistes locale). Réf. image clip `clip_20260903_101459_1.png`.
+
+#### 4.1.1 Extraction & modélisation des données
+
+- [x] **Créer `js/musicca-presets.js` (module statique, 0 dépendance serveur)** : tableau `MUSICA_PRESETS` de 20 objets `{ id, name_fr, tempo, swing, rhythm, sequence: { hihatfod, sidetamlys, gulvtam, ride, hihat, lilletromme, stortromme } }` — séquences en chaînes `"0"/"1"/"2"` (0=vide, 1=hit normal, 2=variante : hihat ouvert / rimshot / tom grave). Fait le 2026-09-03.
+- [x] **Documenter le mapping 7 → 9 pistes** : `stortromme→Kick C1`, `lilletromme→Snare D1` (1 ou 2 → actif), `hihat` → split `1→Hat Closed E1` / `2→Hat Open F1`, `sidetamlys→Tom High G1` (1) / `Tom Mid A1` (2), `gulvtam→Tom Low B1`, `ride→Ride D2`, `hihatfod` (pédale) OR sur E1, `Crash C2` toujours vide. Documenté dans `js/musicca-presets.js` + `references/musicca-presets.md`.
+- [x] **Gérer les signatures** : `4/4=16 pas`, `3/4=12`, `6/8=12` (pad à 16 avec `0` pour notre grille fixe 16) ; conserver `rhythm` et `swing` dans le preset. `musicaToGrid()` padde à 16.
+- [x] **Conserver le JSON brut `/tmp/musicca_presets.json`** comme référence d'extraction + référence dans skill `web-audio-sequencer-frontend/references/musicca-presets.md`.
+
+#### 4.1.2 Moteur de chargement (mapping + tempo)
+
+- [x] **Fonction `musicaToGrid(preset) → boolean[9][16]`** : convertit les 7 chaînes Musicca en `pattern` local (GRID_TRACKS order). Vérifiée via `vm` : Pop rock 6, Jazz 1/4, Disco 1, 3/4 paddé.
+- [x] **Fonction `loadMusiccaPreset(id)`** : écrit `pattern[][]`, met à jour le DOM (`.step.active`), règle `BPM` (`preset.tempo`) + `Tone.Transport.bpm`, et `swing` (`preset.swing` → `Tone.Transport.swing` / `swingSubdivision`). Label bouton mis à jour.
+- [x] **Gestion `swing=true` (Jazz 1-4)** : appliquer le swing Musicca via `Tone.Transport.swing = 0.3` ; 110 BPM conservé (pas de division 1.33).
+- [x] **Ne pas toucher `server/server.js`** : chargement 100% client (fichier statique servi par l'allowlist existante).
+
+#### 4.1.3 UI « Rythmes » (clone du dropdown Musicca)
+
+- [x] **Ajouter bouton « Rythmes » dans `sequencer.html` header** (à côté de Paramètres/BPM), avec menu déroulant scrollable listant les 20 noms FR (Pop rock 1..6, Pop rock à 3/4, Pop rock à 6/8, Jazz 1..4, Funk 1..2, Disco 1..2, Hip-hop 1..2, Heavy metal 1..2). Inclus avant `sequencer-app.js`.
+- [x] **Style `css/sequencer.css`** : dropdown réutilise `track-sound-menu` (bords arrondis + ombre), variantes `.rythmes-wrap`/`.rythmes-menu` (220px min, 320px max-height, scroll), fermeture exclusive.
+- [x] **Interaction** : clic sur un item → `loadMusiccaPreset` + highlight `active`, fermeture du menu ; `populateRythmesMenu()` reconstruit au clic (`✓`/`○` exclusif), `menu.hidden` + `position:fixed` sous le bouton.
+- [x] **Accessibilité** : `aria-haspopup="listbox"`, `aria-expanded`, `role="listbox"/"option"`, fermeture Échap / clic extérieur.
+
+#### 4.1.4 Tests & validation
+
+- [ ] **Test unitaire `tests/test_musicca_presets.js`** : charge `musicca-presets.js` en Node (jsdom), vérifie 20 presets, longueurs séquences, mapping `hihat 2 → Hat Open`, `sidetamlys 2 → Tom Mid`, `3/4` paddé à 16.
+- [ ] **Test d'intégration `tests/validate_sequencer_presets.js`** : vérifie présence du bouton Rythmes, du fichier `js/musicca-presets.js` dans `sequencer.html`, et que `MUSICA_PRESETS.length===20`.
+- [ ] **Validation manuelle** : charger `Pop rock 6` et `Jazz 1` depuis le serveur `http://127.0.0.1:5400/sequencer` et comparer visuellement à la capture Musicca (hihat `101010...`, kick/snare, ride).
+
 ---
 
 ## 5. 🥁 Boîte à Rythmes / Kit Batterie vue du dessus

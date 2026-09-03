@@ -314,7 +314,8 @@
     getMode: getMode,
     isPipedMode: isPipedMode,
     syncBtoA: syncBtoA,
-    toggleContinuousSync: toggleContinuousSync,
+    // toggleContinuousSync : non exporté — câblé en interne par wireUI()
+    // sur le bouton #resync-toggle.
     // Constantes exportées (debug / tests)
     CONST: {
       SYNC_DRIFT_THRESHOLD_PIPED: SYNC_DRIFT_THRESHOLD_PIPED,
