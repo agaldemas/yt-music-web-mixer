@@ -43,7 +43,7 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
 - **Persistence** via `localStorage`: API key, last queries, last video IDs, gain trim, EQ, DJ filter, pitch per deck are saved and restored on reload and on mode switch.
 - **One-click launch scripts**: `start.sh` (macOS/Linux/WSL) and `start.bat` (Windows) start the local Express server on port 5400 and open the app in your default browser.
 - **Windows install script (`install.bat`)**: double-click it after the `git clone` to automatically install **Git, Node.js LTS, yt-dlp nightly, ffmpeg/ffprobe** and the project's npm dependencies (via `winget` or PowerShell as a fallback).
-- **Step Sequencer & Drum Machine**: standalone page with a 16-step programming matrix and interactive drum kit (see [Sequencer User Guide](sequencer-use.md)).
+- **Step Sequencer & Drum Machine**: standalone page at `/sequencer` with a 9-track × 16-step programming matrix and an interactive top-down drum kit. Each track has its own **Volume / Mute / Solo** controls; **🗑 Clear** wipes the grid, **🎲 Randomize** generates a musical pattern (deterministic — same seed every click), **🎵 Presets** loads hand-coded Rock 4/4, House/Electro, Trap/Hip-hop, Funk/Disco or Reggae/Dub (one-drop), and the **Rythmes** menu offers 20 patterns from Musicca (Pop rock, Jazz, Funk, Disco, Hip-hop, Heavy metal) with BPM + swing applied automatically. Charleston pedal toggles the open/closed state without playing a sound on the pedal itself. See [Sequencer User Guide](sequencer-use.md).
 - **Responsive**: collapses to a single column on small screens.
 
 ---
@@ -444,6 +444,7 @@ yt-music-web-mixer/
 7. **DJ mode only**: use the **GAIN** trim first to balance track levels, then tweak the per-deck **EQ** (Low/Mid/High), **DJ filter**, and **pitch/tempo** slider. Every DJ control shows its live value below the slider and has a nearby **↺** reset button. Watch the **BPM** badge (red during acquisition, **orange** as soon as a provisional BPM appears, **green** when locked). The **RAZ** (↺) button under the BPM value restarts detection at any time. Press **SYNC** to match deck B's tempo to deck A.
 8. The search results panel can be browsed with `‹` / `›`, collapsed with `▲`, and reopened with `▼`; collapsing preserves the result cards and does not clear the search. Use `✕` to clear the query and results.
 9. Optional: **Sync B → A** to align B to A's position.
+10. **Drum sequencer (optional)**: open `http://127.0.0.1:5400/sequencer` (or click 🥁 in the app header). Click any step in the 9×16 grid to toggle it (orange = on, blue = playhead), then press **▶️ Play** to loop at the chosen BPM. Each track has its own **Volume / Mute / Solo** controls on the left. Use **🗑 Clear** to wipe the grid, **🎲 Randomize** to generate a musical pattern, **🎵 Presets** for Rock 4/4 / House / Trap / Funk / Reggae, or **Rythmes** for the 20 Musicca patterns. The hi-hat pedal only toggles the open/closed memory state (no sound on the pedal itself) — the sound is produced only when you hit the hi-hat cymbal.
 
 ---
 

@@ -1088,10 +1088,11 @@ Règles pour l'alignement vertical et espacement :
   - Documenter les nouveaux fichiers (`piped-streams.js`, `audio-engine.js`, `audio-player.js`, `visualizer.js`, `bpm-detector.js`)
   - Documenter le dual mode (Piped / IFrame fallback)
 - [x] Mettre à jour `README.md` et `README.fr.md` :
-  - Nouvelles fonctionnalités : EQ 3 bandes, filtre DJ, pitch/tempo, BPM, waveform, cue/loop, **gain trim par voie**, **repli résultats ▲/▼**, **scratch/platine**, **bandeau now-playing enrichi** (bouton YouTube ▶ + popup description via bouton « ! »)
+  - Nouvelles fonctionnalités : EQ 3 bandes, filtre DJ, pitch/tempo, BPM, waveform, cue/loop, **gain trim par voie**, **repli résultats ▲/▼**, **scratch/platine**, **bandeau now-playing enrichi** (bouton YouTube ▶ + popup description « ! »)
   - Nouvelle architecture audio (schéma du graphe Web Audio) — graphe mis à jour avec `deckTrim`
   - Prérequis : instances Piped (pour les flux audio), pas de clé API YouTube nécessaire
   - Limitations : CORS (dépend des instances Piped), expiration des URLs, audio-only (pas de vidéo), fiabilité des instances
+- [x] Créer les guides d'utilisation dédiés au séquenceur : `sequencer-use.md` et `sequencer-use.fr.md` (incluant l'image `sequencer-ui.png` et les raccourcis clavier).
 - [ ] Documenter dans l'UI :
   - Le mode actif par voie (badge Piped / IFrame)
   - Les limites du BPM (approximatif, ±2-3 BPM)

@@ -45,7 +45,7 @@ L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le s
 - **Persistance** via `localStorage` : clé API, dernières requêtes, derniers videoIds, trim de gain, EQ, filtre DJ et pitch par voie sont sauvegardés et restaurés au reload et à la bascule de mode.
 - **Scripts de lancement en un clic** : `start.sh` (macOS/Linux/WSL) et `start.bat` (Windows) démarrent le serveur Express local sur le port 5400 et ouvrent l'app dans le navigateur par défaut.
 - **Script d'installation Windows (`install.bat`)** : double-cliquez dessus après le `git clone` pour installer automatiquement **Git, Node.js LTS, yt-dlp nightly, ffmpeg/ffprobe** et les dépendances npm du projet (via `winget` ou PowerShell en fallback).
-- **Séquenceur & Boîte à rythmes** : page autonome avec matrice de programmation 16 pas et batterie interactive (voir [Guide d'utilisation du Séquenceur](sequencer-use.fr.md)).
+- **Séquenceur & Boîte à rythmes** : page autonome sur `/sequencer` avec matrice 9 pistes × 16 pas et batterie interactive vue du dessus. Chaque piste a ses propres contrôles **Volume / Mute / Solo** ; **🗑 Clear** efface la grille, **🎲 Randomize** génère un pattern musical (déterministe — même seed à chaque clic), **🎵 Presets** charge Rock 4/4, House/Electro, Trap/Hip-hop, Funk/Disco ou Reggae/Dub (one-drop) codés à la main, et le menu **Rythmes** propose 20 patterns Musicca (Pop rock, Jazz, Funk, Disco, Hip-hop, Heavy metal) avec BPM + swing appliqués automatiquement. La pédale charleston bascule uniquement l'état open/closed (aucun son parasite). Voir [Guide d'utilisation du Séquenceur](sequencer-use.fr.md).
 - **Responsive** : passe en une colonne sur petit écran.
 
 ---
@@ -453,6 +453,7 @@ yt-music-web-mixer/
 6. Ajustez le **volume master** si besoin.
 7. **Mode DJ uniquement** : réglez l'**EQ** (Low/Mid/High), le **filtre DJ**, le slider **pitch/tempo** de chaque voie, et surveillez le badge **BPM** (rouge pendant l'acquisition, **orange** dès qu'un BPM provisoire s'affiche, **vert** quand verrouillé). Le bouton **RAZ** (↺) sous la valeur BPM relance le calcul à tout moment. Les boutons **RAZ** à côté des sliders verticaux DJ réinitialisent chaque slider à la valeur neutre. Appuyez sur **SYNC** pour matcher le tempo de la voie B sur la voie A.
 8. Optionnel : **Sync B → A** pour aligner B sur la position de A.
+9. **Séquenceur (optionnel)** : ouvrez `http://127.0.0.1:5400/sequencer` (ou cliquez 🥁 dans l'en-tête). Cliquez sur n'importe quel pas de la grille 9×16 pour le toggler (orange = actif, bleu = playhead), puis **▶️ Play** pour jouer en boucle au BPM choisi. Chaque piste a ses propres contrôles **Volume / Mute / Solo** à gauche. **🗑 Clear** efface la grille, **🎲 Randomize** génère un pattern musical, **🎵 Presets** pour Rock 4/4 / House / Trap / Funk / Reggae, ou **Rythmes** pour les 20 patterns Musicca. La pédale charleston ne sert qu'à basculer l'état open/closed (aucun son parasite) — le son est produit uniquement quand vous frappez la cymbale.
 
 ---
 
