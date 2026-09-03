@@ -470,12 +470,15 @@ function initDrumKit() {
     label.style.pointerEvents = 'none';
     pedal.append(pName, pKbd, label);
 
-    // Clic sur la pédale = toggle mémoire DOWN/UP, son adapté (fermé/ouvert)
+    // Clic sur la pédale = bascule l'état mémoire UP/DOWN. AUCUN son ici :
+    // la pédale ne sert qu'à choisir l'état ouvert/fermé de la prochaine
+    // frappe sur la cymbale Hat. Jouer un son à chaque clic de pédale
+    // serait un comportement pirate (l'utilisateur ne frappe pas la
+    // charleston, il ajuste juste la mémoire de l'instrument).
     pedal.addEventListener('mousedown', (e) => {
         e.preventDefault();
         hatPedalState = hatPedalState === 'UP' ? 'DOWN' : 'UP';
         label.textContent = hatPedalState;
-        playHatNote(hatPedalState);
     });
 
     // Note : la pédale charleston (ci-dessous) déclenche bien la note au
