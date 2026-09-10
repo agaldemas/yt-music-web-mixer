@@ -80,7 +80,7 @@
   - [x] **Play / Pause** (toggle sur le bouton `#play-pause`, label dynamique).
   - [x] **Stop** : remet le séquenceur au pas 0, libère le `scheduleRepeat`, label retour à "Play".
   - [x] Bouton **🗑 Clear** : retire `.active` de tous les `.step` puis `syncPatternFromDOM()` → `pattern[][]` à `false`. Idempotent, marche en lecture ou en pause. CSS gris neutre distinct du rouge Stop.
-  - [x] Bouton **🎲 Randomize** : pattern musicalement sensé (kick 4-on-the-floor, snare backbeat, hat 50% pas pairs, open hat rare, toms 0-1 sur impairs, etc.) — **déterministe** via PRNG mulberry32 seedé `0xC0FFEE` (même clic = même résultat, ~18% de densité vs ~50% pour du bruit blanc).
+  - [x] Bouton **🎲 Randomize** : pattern musicalement sensé (kick 4-on-the-floor, snare backbeat, hat 50% pas pairs, open hat rare, toms 0-1 sur impairs, etc.) — PRNG mulberry32 avec **nouvelle seed à chaque clic** via `crypto.getRandomValues()` (fallback `Date.now()` + `Math.random()`), ~18% de densité vs ~50% pour du bruit blanc.
   - [x] Sélecteur de **presets d'usine** 🎵 (à côté de Rythmes Musicca) : 5 genres codés en dur dans `js/factory-presets.js` — Rock 4/4 (110), House/Electro (124), Trap/Hip-hop (140), Funk/Disco (118), Reggae/Dub (72, one-drop kick 0+8 / snare 12 / hat offbeats 2-6-10-14 / tom high 3+11). Persistance `ytwm_activeFactoryPreset`.
 - [x] **Contrôles avancés par piste** (Volume / Mute / Solo par piste) — voir §4.2.
 
@@ -252,6 +252,7 @@ Mini-panneau mix par piste injecté dans chaque `.track-name-wrap`, dans l'ordre
 - [x] **Bouton Play ne déclenchait rien** → transport complet câblé : `Tone.start()`, `Tone.Transport.scheduleRepeat`, callbacks Play/Pause/Stop, scheduler 16 pas, playhead visuel.
 - [x] **Curseur de lecture bloqué sur le pas 0** → confusion entre le `step` passé en argument (jamais fourni par `scheduleRepeat`) et l'incrément manuel de `currentStep`. Corrigé : `currentStep = (currentStep + 1) % 16` en fin de callback.
 - [x] **Dropdown son figé sur le mode initial** (`populateSoundMenu` construit une fois au boot) → reconstruit au clic (`menu.innerHTML = ''` + `populateSoundMenu`) et bouton mis à jour via `updateToggleLabel` ; affichage exclusif `✓` (sélectionné) / `○` (autres).
+- [x] **Bouton Randomize qui générait toujours la même séquence** → suppression de la seed fixe `0xC0FFEE` ; génération d'une seed aléatoire à chaque clic, avec garde contre deux seeds identiques consécutives ; tooltip mis à jour.
 
 ---
 
@@ -262,7 +263,7 @@ Mini-panneau mix par piste injecté dans chaque `.track-name-wrap`, dans l'ordre
 - Matrice 9 pistes × 16 pas, clic pour activer/désactiver un pas, curseur orange sur les steps actifs, playhead bleu, layout 2 colonnes aligné au pixel près.
 - Lecture/pause/stop fonctionnels, BPM 40–240 (changement live sans Stop+Play), volume master 0–100 %.
 - **Contrôles par piste** : Volume (slider 0-100%), Mute (pastille 🔊/🔇), Solo (pastille S) — GainNode par piste dans le pipeline audio, ramp linéaire 20ms anti-clic, persistance `localStorage` (3 clés : volume, mute, solo).
-- **🗑 Clear**, **🎲 Randomize** (PRNG mulberry32 déterministe `0xC0FFEE`, pattern musicalement sensé ~18% densité).
+- **🗑 Clear**, **🎲 Randomize** (PRNG mulberry32 avec seed renouvelée à chaque clic, pattern musicalement sensé ~18% densité).
 - **🎵 Presets d'usine** : 5 genres (Rock 4/4, House/Electro, Trap/Hip-hop, Funk/Disco, Reggae/Dub one-drop) via `js/factory-presets.js`.
 - **Rythmes Musicca** : 20 patterns (Pop rock 1-6, Jazz 1-4, Funk, Disco, Hip-hop, Heavy metal) avec swing pour Jazz.
 - Batterie vue du dessus : image chargée, 8 hotspots cliquables + 1 zone pédale charleston, raccourcis clavier B/Space/S/T/Y/G/H/C/R, animation d'impact.

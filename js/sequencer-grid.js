@@ -117,7 +117,6 @@ function clearGrid() {
 }
 
 // PRNG seedé mulberry32 — petit, rapide, bonne distribution pour ce besoin.
-// Déterministe : avec le MÊME seed on a TOUJOURS la même séquence.
 // Référence : https://gist.github.com/tommyettinger/46a3b7e6f9b34a35d2b6e (mulberry32).
 function makeRng(seed) {
     let s = seed >>> 0; // force uint32
@@ -135,9 +134,28 @@ function pickFromSet(rng, set) {
     return arr[Math.floor(rng() * arr.length)];
 }
 
+let lastRandomSeed = null;
+
+// Chaque clic reçoit une nouvelle seed non prédictible quand l'API Web Crypto
+// est disponible. Le fallback garde aussi des clics successifs différents dans
+// les environnements de test ou les vieux navigateurs.
+function makeRandomSeed() {
+    let seed;
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+        const values = new Uint32Array(1);
+        window.crypto.getRandomValues(values);
+        seed = values[0];
+    } else {
+        seed = (Date.now() ^ Math.floor(Math.random() * 0x100000000)) >>> 0;
+    }
+    if (seed === lastRandomSeed) seed = (seed + 1) >>> 0;
+    lastRandomSeed = seed;
+    return seed;
+}
+
 // Génère un pattern musicalement sensé (pas du bruit blanc uniforme) et
-// l'applique à la grille DOM + au tableau pattern[][]. DÉTERMINISTE : la
-// seed est FIXE (même clic = même résultat).
+// l'applique à la grille DOM + au tableau pattern[][]. Chaque clic utilise une
+// nouvelle seed : les règles musicales restent stables, mais le pattern varie.
 //
 // Règles musicales (drum kit classique, groove rock/funk léger) :
 //   - Kick      : 4 hits / 16 — un par temps (pas 0, 4, 8, 12).
@@ -151,8 +169,7 @@ function pickFromSet(rng, set) {
 //   - Ride      : pattern 8e (pas pairs sur les 8 premiers, OU les 8 derniers).
 function randomizeGrid() {
     if (!window.SEQUENCER_CFG.gridEl) return;
-    const SEED = 0xC0FFEE;
-    const rng = makeRng(SEED);
+    const rng = makeRng(makeRandomSeed());
 
     function buildTrackSteps(trackIndex) {
         const out = new Set();
