@@ -826,7 +826,7 @@
     Mixer.applyVolumes();
     // Visualiseurs : démarrés uniquement en mode Piped (besoin d'AnalyserNode).
     if (target === 'piped') { startVisualizers(); startBpmDetection(); initScratch(); }
-    else { stopVisualizers(); stopBpmDetection(); teardownScratch(); }
+    else { stopVisualizers(); stopBpmDetection(); teardownScratch(); stopVoiceOverForMode(); }
     // Cue/loop (phase 10) : ne fonctionne qu'en mode Piped (loop précis sur
     // <audio>). En IFrame, on désactive toute boucle active et on arrête la
     // surveillance. Les marqueurs restent en mémoire (et localStorage) pour
@@ -2061,6 +2061,21 @@
     if (pitchSlider) pitchSlider.hidden = true;
     if (distSlider) distSlider.hidden = true;
     btn.setAttribute('aria-pressed', 'false');
+  }
+
+  // Coupe le micro quand on quitte le mode DJ : en IFrame la musique ne passe
+  // pas par le graphe Web Audio, le voice-over n'aurait plus rien à mixer
+  // (les contrôles sont de toute façon masqués par CSS en mode IFrame).
+  function stopVoiceOverForMode() {
+    if (window.AudioEngine && AudioEngine.isVoiceOverActive && AudioEngine.isVoiceOverActive()) {
+      try { AudioEngine.stopVoiceOver(); } catch (e) { /* ignore */ }
+    }
+    ['voiceover-fade', 'voiceover-effect', 'voiceover-pitch', 'voiceover-dist'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.hidden = true;
+    });
+    var btn = document.getElementById('voiceover-toggle');
+    if (btn) btn.setAttribute('aria-pressed', 'false');
   }
 
   // ===== Bootstrap =====

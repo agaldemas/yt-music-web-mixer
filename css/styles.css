@@ -1214,6 +1214,13 @@ body.mode-piped .dt-seek::-moz-range-thumb { background: #6ee7b7; }
 }
 .voiceover-param-slider { width: 60px; }
 
+/* Contrôles réservés au mode DJ (Web Audio) : masqués en IFrame.
+   - SYNC BPM : s'appuie sur BPMDetector (AnalyserNode) → inexistant en IFrame.
+   - Voice-over : la musique IFrame ne passe pas par le graphe Web Audio, il
+     n'y aurait rien à mixer/ducker. */
+body.mode-iframe #sync-bpm,
+body.mode-iframe .mixer-voiceover { display: none; }
+
 /* Case « 🔄 Auto XF » — crossfade progressif armé (tâche 18) */
 .mixer-check {
   display: inline-flex;

@@ -849,7 +849,9 @@ app.use(function securityHeaders(req, res, next) {
     "worker-src 'self' blob:",
     "img-src 'self' data: blob: https://*.ytimg.com https://*.googleusercontent.com https://*.private.coffee",
     "media-src 'self' blob: https:", "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
-    "connect-src 'self' blob: data: https://www.youtube.com https://*.private.coffee", "form-action 'self'"
+    // googleapis : recherche via l'API YouTube Data v3 quand l'utilisateur a
+    // saisi une clé dans les Paramètres (appel direct navigateur, CORS OK).
+    "connect-src 'self' blob: data: https://www.youtube.com https://www.googleapis.com https://*.private.coffee", "form-action 'self'"
   ].join('; '));
   next();
 });

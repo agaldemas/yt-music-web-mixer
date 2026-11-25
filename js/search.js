@@ -831,10 +831,10 @@
       return { kind: 'piped', message: 'Aucune instance publique Piped n\'a répondu (réseau ou CORS). '
         + 'Réessayer plus tard, ou coller directement une URL YouTube (youtu.be/…).' };
     }
-    // Erreur réseau / CORS / fetch a échoué
-    return { kind: 'network', message: 'Impossible de contacter l\'API YouTube (réseau ou CORS). '
-      + 'Servir l\'app via un serveur local (python3 -m http.server) '
-      + 'ou coller directement une URL YouTube.' };
+    // Erreur réseau / CORS / CSP / fetch a échoué
+    return { kind: 'network', message: 'Recherche impossible (réseau, CORS ou blocage CSP). '
+      + 'Vérifier la connexion, ou retirer la clé API dans ⚙️ Paramètres pour '
+      + 'chercher via Piped, ou coller directement une URL YouTube.' };
   }
 
   // ===== Factory par voie =====
@@ -882,6 +882,9 @@
     var resultsCollapsed = false; // panneau replié sans vider son contenu
 
     function setState(state, payload) {
+      // Une recherche (ou son échec) doit toujours être visible : on déplie
+      // le panneau s'il avait été replié via le bouton ▲.
+      if (state !== UI_STATE.IDLE && resultsCollapsed) setCollapsed(false);
       renderPanel(panelEl, state, payload);
       syncToolbar(state);
       if (clearResultsBtnEl) {
@@ -950,12 +953,7 @@
       toggleBtn.textContent = '▲';
       toggleBtn.setAttribute('aria-expanded', 'true');
       toggleBtn.addEventListener('click', function () {
-        resultsCollapsed = !resultsCollapsed;
-        panelEl.classList.toggle('is-collapsed', resultsCollapsed);
-        toggleBtn.textContent = resultsCollapsed ? '▼' : '▲';
-        toggleBtn.setAttribute('aria-expanded', resultsCollapsed ? 'false' : 'true');
-        toggleBtn.setAttribute('aria-label', resultsCollapsed ? 'Afficher les résultats' : 'Masquer les résultats');
-        toggleBtn.title = resultsCollapsed ? 'Afficher les résultats' : 'Masquer les résultats';
+        setCollapsed(!resultsCollapsed);
       });
 
       toolbar.appendChild(prevBtn);
@@ -964,6 +962,22 @@
       panelEl.insertAdjacentElement('beforebegin', toolbar);
       if (clearResultsBtnEl) clearResultsBtnEl.addEventListener('click', function () { clear(); });
       return toolbar;
+    }
+
+    // Replie / déplie le panneau sans vider son contenu.
+    // Appelé aussi à chaque nouvelle recherche : un panneau laissé replié
+    // masquerait les résultats frais et l'utilisateur croirait la recherche
+    // bloquée (seul un rechargement de page remettait le panneau visible).
+    function setCollapsed(collapsed) {
+      resultsCollapsed = !!collapsed;
+      panelEl.classList.toggle('is-collapsed', resultsCollapsed);
+      var toolbar = ensureToolbar();
+      var toggleBtn = toolbar && toolbar.querySelector('.deck-results-toggle');
+      if (!toggleBtn) return;
+      toggleBtn.textContent = resultsCollapsed ? '▼' : '▲';
+      toggleBtn.setAttribute('aria-expanded', resultsCollapsed ? 'false' : 'true');
+      toggleBtn.setAttribute('aria-label', resultsCollapsed ? 'Afficher les résultats' : 'Masquer les résultats');
+      toggleBtn.title = resultsCollapsed ? 'Afficher les résultats' : 'Masquer les résultats';
     }
 
     function syncToolbar(state) {
@@ -1004,6 +1018,53 @@
     function persistQuery(q) {
       const key = (deck === 'A') ? CFG.STORAGE_KEYS.LAST_QUERY_A : CFG.STORAGE_KEYS.LAST_QUERY_B;
       persist(key, q);
+    }
+
+    // Recherche via l'API YouTube Data officielle (clé utilisateur).
+    // Retourne la liste de vidéos normalisées (peut être vide = aucun
+    // résultat). Met à jour les tokens de pagination officiels.
+    // Lève une erreur typée en cas d'échec : le caller décide s'il affiche
+    // l'erreur ou s'il retombe sur Piped.
+    async function searchViaYtApi(query, apiKey, signal, pageToken) {
+      const data = await callSearchApi(query, apiKey, signal, pageToken);
+      nextPageToken = data.nextPageToken || null;
+      prevPageToken = data.prevPageToken || null;
+      const items = (data && data.items) || [];
+      const videoIds = items
+        .map(function (i) { return i.id && i.id.videoId; })
+        .filter(Boolean);
+      if (!videoIds.length) return [];
+
+      // Durées — best-effort (échec toléré)
+      let durations = {};
+      try {
+        durations = await callVideosApi(videoIds, apiKey, signal);
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw e; // nouvelle recherche
+        // autre erreur → on continue sans les durées
+      }
+
+      return items
+        .filter(function (i) { return i.id && i.id.videoId; })
+        .map(function (i) {
+          const id = i.id.videoId;
+          const snip = (i.snippet) || {};
+          const isLive = snip.liveBroadcastContent === 'live'
+            || snip.liveBroadcastContent === 'upcoming';
+          return {
+            id: id,
+            title: snip.title || 'Sans titre',
+            uploaderName: snip.channelTitle || '',
+            uploaderAvatar: '',
+            views: 0, // non fourni par /search (uniquement /videos stats)
+            uploaded: snip.publishedAt ? Math.floor(new Date(snip.publishedAt).getTime() / 1000) : 0,
+            uploadedDate: '',
+            isLive: isLive,
+            thumbnails: snip.thumbnails || {},
+            duration: durations[id] || '',
+            durationSec: 0,
+          };
+        });
     }
 
     async function performSearch(query, pageToken) {
@@ -1058,55 +1119,27 @@
       persistQuery(query);
 
       try {
-        let videos;
+        let videos = null;
         if (apiKey && !forcePiped) {
           // Recherche via l'API YouTube Data officielle (résultats musique,
           // pagination par pageToken).
-          lastWasPiped = false;
-          const data = await callSearchApi(query, apiKey, signal, pageToken);
-          nextPageToken = data.nextPageToken || null;
-          prevPageToken = data.prevPageToken || null;
-          const items = (data && data.items) || [];
-          const videoIds = items
-            .map(function (i) { return i.id && i.id.videoId; })
-            .filter(Boolean);
-
-          if (!videoIds.length) {
-            setState(UI_STATE.NO_RESULTS, 'Aucun résultat pour « ' + query + ' ».');
-            return;
-          }
-
-          // Durées — best-effort (échec toléré)
-          let durations = {};
           try {
-            durations = await callVideosApi(videoIds, apiKey, signal);
+            videos = await searchViaYtApi(query, apiKey, signal, pageToken);
+            lastWasPiped = false;
+            if (!videos.length) {
+              setState(UI_STATE.NO_RESULTS, 'Aucun résultat pour « ' + query + ' ».');
+              return;
+            }
           } catch (e) {
-            if (e && e.name === 'AbortError') return; // nouvelle recherche
-            // autre erreur → on continue sans les durées
+            if (e && e.name === 'AbortError') throw e;
+            // Clé invalide / quota / erreur explicite de l'API → message dédié.
+            if (e && (e.code === 400 || e.code === 403 || e.code === 429 || e.kind === 'api')) throw e;
+            // Réseau, CSP ou proxy bloquant googleapis : on ne laisse pas la
+            // recherche dans une impasse, on retombe sur Piped.
+            videos = null;
           }
-
-          videos = items
-            .filter(function (i) { return i.id && i.id.videoId; })
-            .map(function (i) {
-              const id = i.id.videoId;
-              const snip = (i.snippet) || {};
-              const isLive = snip.liveBroadcastContent === 'live'
-                || snip.liveBroadcastContent === 'upcoming';
-              return {
-                id: id,
-                title: snip.title || 'Sans titre',
-                uploaderName: snip.channelTitle || '',
-                uploaderAvatar: '',
-                views: 0, // non fourni par /search (uniquement /videos stats)
-                uploaded: snip.publishedAt ? Math.floor(new Date(snip.publishedAt).getTime() / 1000) : 0,
-                uploadedDate: '',
-                isLive: isLive,
-                thumbnails: snip.thumbnails || {},
-                duration: durations[id] || '',
-                durationSec: 0,
-              };
-            });
-        } else {
+        }
+        if (!videos) {
           // Pas de clé API, OU mode PipedSearch activé par l'utilisateur :
           // API publique Piped. Pagination via /nextpage/search, uniquement
           // vers l'avant côté API → l'historique pipedHistory permet le ‹.
