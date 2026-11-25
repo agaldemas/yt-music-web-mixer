@@ -44,6 +44,7 @@ const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const { TaskQueue } = require('./task-queue');
 const { createCacheManager } = require('./cache-manager');
+const buildMp3Filename = require('../js/mp3-filename');
 
 let express;
 try {
@@ -115,7 +116,15 @@ function fetchMeta(videoId) {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 5000);
     fetch(oembedUrl, { signal: ctrl.signal })
-      .then((r) => { clearTimeout(to); return r.json(); })
+      .then((r) => {
+        clearTimeout(to);
+        if (r.status === 429) {
+          const e = new Error('YouTube limite les requêtes oEmbed.');
+          e.code = 'rate-limited';
+          throw e;
+        }
+        return r.json();
+      })
       .then((data) => {
         if (!data || !data.title) {
           const e = new Error('Vidéo indisponible ou oEmbed vide.');
@@ -131,6 +140,7 @@ function fetchMeta(videoId) {
       })
       .catch((err) => {
         clearTimeout(to);
+        if (err.code === 'rate-limited') return reject(err);
         const e = new Error('Vidéo indisponible (privée, supprimée ou restreinte).');
         e.code = 'notfound';
         reject(e);
@@ -260,11 +270,16 @@ function runMetaYtdlp(videoId) {
       args.splice(0, 0, '--cookies-from-browser', YTDLP_COOKIES_BROWSER);
     }
     const opts = { maxBuffer: 2 * 1024 * 1024, timeout: META_TIMEOUT_MS };
-    execFile(YTDLP_BIN, args, opts, (err, stdout) => {
+    execFile(YTDLP_BIN, args, opts, (err, stdout, stderr) => {
       const out = String(stdout || '');
       if (err && RE_ANTIBOT.test(err.message + '\n' + out)) {
         const e = new Error('YouTube exige une vérification anti-bot.');
         e.code = 'antibot';
+        return reject(e);
+      }
+      if (err && /\bHTTP Error 429\b|too many requests/i.test(String(stderr || '') + err.message)) {
+        const e = new Error('YouTube limite les requêtes de métadonnées.');
+        e.code = 'rate-limited';
         return reject(e);
       }
       if (err) {
@@ -293,6 +308,61 @@ function runMetaYtdlp(videoId) {
   });
 }
 
+// Précharge uniquement les métadonnées, sans téléchargement audio.
+// Le budget porte sur les tâches de fond, pas sur les requêtes HTTP internes à yt-dlp.
+const PREFETCH_ENABLED = process.env.PREFETCH_ENABLED !== '0';
+const PREFETCH_RPM = Math.min(60, Math.max(1, Math.floor(Number(process.env.PREFETCH_MAX_PER_MIN) || 5)));
+const PREFETCH_GAP_MS = Math.ceil(60000 / PREFETCH_RPM);
+const PREFETCH_BATCH_MAX = 20;
+const PREFETCH_MAX_QUEUE = 40;
+const prefetchQueue = new Set();
+let prefetchRunning = false;
+let prefetchNextStart = 0;
+
+function schedulePrefetch(ids) {
+  let queued = 0;
+  if (!PREFETCH_ENABLED || ytdlpAvailable === false) return queued;
+  for (const id of ids) {
+    if (prefetchQueue.size >= PREFETCH_MAX_QUEUE) break;
+    if (prefetchQueue.has(id) || metaFetching.has(id) || descFetching.has(id) || readMetaCache(id) || readDescriptionCache(id)) continue;
+    prefetchQueue.add(id);
+    queued += 1;
+  }
+  void drainPrefetch();
+  return queued;
+}
+
+async function drainPrefetch() {
+  if (prefetchRunning) return;
+  prefetchRunning = true;
+  try {
+    while (prefetchQueue.size) {
+      // Ne pas passer devant une demande de métadonnées ou une lecture en cours.
+      const audio = extractQueue.stats();
+      const wait = prefetchNextStart - Date.now();
+      if (wait > 0 || metaFetching.size || descFetching.size || audio.active || audio.pending) {
+        await new Promise((resolve) => setTimeout(resolve, Math.max(wait, 250)));
+        continue;
+      }
+      const id = prefetchQueue.values().next().value;
+      prefetchQueue.delete(id);
+      if (readMetaCache(id) || readDescriptionCache(id)) continue;
+      prefetchNextStart = Date.now() + PREFETCH_GAP_MS;
+      try {
+        await fetchMetaEnriched(id);
+      } catch (err) {
+        // En cas de limitation amont, abandonner le lot plutôt qu'insister.
+        if (err.code === 'antibot' || err.code === 'rate-limited') {
+          prefetchQueue.clear();
+          prefetchNextStart = Date.now() + 5 * 60 * 1000;
+        }
+      }
+    }
+  } finally {
+    prefetchRunning = false;
+  }
+}
+
 // Dédup : évite 2 `yt-dlp -x` pour le même videoId (double-clic, decks A+B).
 const extracting = new Map();
 
@@ -309,19 +379,24 @@ const DESC_TIMEOUT_MS = 25000;               // yt-dlp description, max 25 s
 const descFetching = new Map();   // videoId → Promise (dédup par vidéo)
 let descQueue = Promise.resolve(); // chaîne globale → pas de rafale parallèle
 
-function fetchVideoDescription(videoId) {
+function readDescriptionCache(videoId) {
   const cached = descCache.get(videoId);
+  const ttl = cached && cached.ok ? DESC_OK_TTL_MS : DESC_ERR_TTL_MS;
+  return cached && Date.now() - cached.fetchedAt < ttl ? cached : null;
+}
+
+function fetchVideoDescription(videoId) {
+  const meta = readMetaCache(videoId);
+  if (meta && !meta.error && typeof meta.description === 'string') return Promise.resolve(meta.description);
+  if (metaFetching.has(videoId)) return metaFetching.get(videoId).then(entry => entry.description);
+  const cached = readDescriptionCache(videoId);
   if (cached) {
-    const ttl = cached.ok ? DESC_OK_TTL_MS : DESC_ERR_TTL_MS;
-    if ((Date.now() - cached.fetchedAt) < ttl) {
-      if (!cached.ok) {
-        // Échec récent : renvoie l'erreur immédiatement, sans relancer yt-dlp.
-        const e = new Error(cached.message || 'Description indisponible.');
-        e.code = cached.code || 'extract';
-        return Promise.reject(e);
-      }
-      return Promise.resolve(cached.desc);
+    if (!cached.ok) {
+      const e = new Error(cached.message || 'Description indisponible.');
+      e.code = cached.code || 'extract';
+      return Promise.reject(e);
     }
+    return Promise.resolve(cached.desc);
   }
   // Dédup : la même vidéo en cours d'extraction partage la promesse.
   if (descFetching.has(videoId)) return descFetching.get(videoId);
@@ -798,22 +873,7 @@ function extOf(file) {
   return i >= 0 ? b.slice(i + 1) : 'mp3';
 }
 
-// Nom de fichier de sauvegarde propre : "<titre>-<artiste>.mp3".
-// Nettoie les caractères interdits (/ \ : * ? " < > |), conserve les accents,
-// remplace les espaces multiples, tronque à 200 caractères.
-// Si artiste vide, retourne "<titre>.<ext>".
-function buildDownloadFilename(title, artist, ext) {
-  const clean = function (s) {
-    return String(s || '')
-      .replace(/[/\\:*?"<>|]/g, '-')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 200);
-  };
-  const extSafe = (ext || 'mp3').toLowerCase();
-  const base = artist ? (clean(title) + '-' + clean(artist)) : clean(title);
-  return (base || 'audio') + '.' + extSafe;
-}
+
 
 // ===== App Express =====
 function createApp() {
@@ -887,6 +947,7 @@ function capabilitySnapshot() {
       ffmpeg: !!ffmpegAvailable, ffmpegVersion: typeof ffmpegAvailable === 'string' ? ffmpegAvailable : null,
     },
     queue: extractQueue.stats(),
+    prefetch: { enabled: PREFETCH_ENABLED, pending: prefetchQueue.size, running: prefetchRunning, maxPerMinute: PREFETCH_RPM },
   };
 }
 
@@ -995,6 +1056,19 @@ app.get('/api/description/:id', async (req, res) => {
   }
 });
 
+// Métadonnées légères pour l'IFrame : aucun appel à yt-dlp.
+app.get('/api/video-info/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!RE_VIDEOID.test(id)) return res.status(400).json({ error: 'videoId invalide.' });
+  try {
+    const cached = readMetaCache(id);
+    const info = cached && cached.title ? cached : await fetchMeta(id);
+    res.json({ title: info.title, uploader: info.uploader, thumbnailUrl: info.thumbnailUrl });
+  } catch (err) {
+    res.status(err.code === 'rate-limited' ? 429 : 404).json({ error: 'Titre indisponible.' });
+  }
+});
+
 // --- GET /api/meta/:id ---
 // Métadonnées enrichies (vues, date ISO, durée, uploader, description) —
 // source unique de vérité, cache disque : 1re génération via oEmbed +
@@ -1015,6 +1089,20 @@ app.get('/api/meta/:id', async (req, res) => {
       res.status(code).json({ error: err.message || 'Métadonnées indisponibles.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
     }
   }
+});
+
+// --- POST /api/prefetch ---
+// Prépare en tâche de fond les métadonnées (description, vues, date) des
+// résultats d'une recherche. Réponse immédiate (202) : le client ne bloque
+// jamais dessus. Le worker est sérialisé et rate-limité (cf. schedulePrefetch).
+app.post('/api/prefetch', express.json({ limit: '8kb' }), (req, res) => {
+  const body = req.body || {};
+  const ids = body.ids;
+  if (!Array.isArray(ids) || !ids.length || ids.length > PREFETCH_BATCH_MAX
+    || ids.some(id => typeof id !== 'string' || !RE_VIDEOID.test(id))) {
+    return res.status(400).json({ error: 'Lot invalide : 1 à 20 identifiants vidéo attendus.' });
+  }
+  res.status(202).json({ queued: schedulePrefetch(ids) });
 });
 
 // --- GET /api/audio/:id ---
@@ -1078,44 +1166,35 @@ app.get('/api/scratch/:id', async (req, res) => {
   }
 });
 
-// --- GET /api/download/:id ---
-// Sauvegarde locale (mode DJ) : sert le MP3 du cache en téléchargement
-// (Content-Disposition: attachment). Le nom de fichier proposé est
-// "<titre>-<artiste>.mp3", construit depuis fetchMeta (oEmbed, pas de yt-dlp).
-// Réutilise extractAudio → le fichier est extrait s'il n'est pas encore en cache.
-app.get('/api/download/:id', async (req, res) => {
+function canDownloadMp3(id) {
+  return !extracting.has(id) && hasCached(id);
+}
+
+// Route dédiée : une ancienne version du serveur traite HEAD /api/download
+// comme GET et lancerait une extraction si le fichier était absent.
+app.head('/api/download-ready/:id', (req, res) => {
+  const id = req.params.id;
+  if (!RE_VIDEOID.test(id)) return res.status(400).end();
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(canDownloadMp3(id) ? 200 : 404).end();
+});
+
+// GET copie uniquement un MP3 terminé, sans lancer d'extraction.
+app.get('/api/download/:id', (req, res) => {
   const id = req.params.id;
   if (!RE_VIDEOID.test(id)) return res.status(400).json({ error: 'videoId invalide.' });
-
-  try {
-    const file = await extractAudio(id);
-    const ext = extOf(file);
-
-    // Nom de fichier proposé : "<titre>-<artiste>.mp3" (oEmbed, jamais bloquant).
-    let title = null, artist = null;
-    try {
-      const meta = await fetchMeta(id);
-      title = meta.title;
-      artist = meta.uploader;
-    } catch (_) { /* nom générique en dernier recours */ }
-    const filename = buildDownloadFilename(title, artist, ext);
-    // filename= (ASCII uniquement, fallback) ; filename*= (UTF-8, prioritaire)
-    const asciiSafe = filename.replace(/[^\x20-\x7E]/g, '_');
-    res.setHeader('Content-Type', mimeForExt(ext));
-    res.setHeader('Content-Disposition', 'attachment; filename="' + asciiSafe + '"; filename*=UTF-8\'\'' + encodeURIComponent(filename));
-    res.sendFile(file, function (err) {
-      if (err && !res.headersSent) {
-        console.error('[api] ✗ /api/download/' + id + ' → sendFile: ' + err.message);
-        res.status(500).json({ error: 'Fichier audio indisponible.' });
-      }
-    });
-  } catch (err) {
-    const code = err.code === 'antibot' ? 451 : (err.code === 'notfound' ? 404 : (err.code === 'no-ffmpeg' || err.code === 'no-yt-dlp' ? 503 : (err.code === 'queue-full' ? 429 : (err.code === 'track-too-long' || err.code === 'live-not-supported' ? 422 : 502))));
-    console.error('[api] ✗ /api/download/' + id + ' → HTTP ' + code + ' (' + (err.code || 'extract') + ') : ' + err.message);
-    if (!res.headersSent) {
-      res.status(code).json({ error: err.message || 'Extraction audio échouée.', isAntiBot: err.code === 'antibot', code: err.code || 'extract' });
-    }
+  res.setHeader('Cache-Control', 'no-store');
+  if (!canDownloadMp3(id)) {
+    return res.status(404).json({ error: 'MP3 non disponible dans le cache.' });
   }
+  const meta = readMetaCache(id);
+  res.attachment(buildMp3Filename(meta && meta.title, meta && meta.uploader, id));
+  res.sendFile(cachePathFor(id), function (err) {
+    if (err && !res.headersSent) {
+      res.removeHeader('Content-Disposition');
+      res.status(err.status === 404 ? 404 : 500).json({ error: 'Fichier audio indisponible.' });
+    }
+  });
 });
 
 // --- Frontend statique allowlisté ---

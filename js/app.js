@@ -36,6 +36,8 @@
     ready: { A: false, B: false },
     muted: { A: false, B: false },
     videoIds: { A: '', B: '' },
+    videoInfo: { A: null, B: null },
+    videoInfoLookup: { A: null, B: null },
     searches: { A: null, B: null },      // instances YTSearch par voie
     // Mode de lecture (dual mode)
     playerMode: CFG.PLAYER_MODE_DEFAULT, // 'auto' | 'piped' | 'iframe' (préférence persistée)
@@ -363,53 +365,59 @@
   // Fallback : image placeholder (fichier dans le projet - à côté d'index.html)
   var FALLBACK_THUMB = 'audio-file.png';
 
-  function updateNowPlaying(deck, overrideInfo) {
+  function fetchIFrameVideoInfo(deck, id) {
+    var api = window.LocalAPI;
+    if (!api || !api.available() || state.videoInfoLookup[deck] === id) return;
+    state.videoInfoLookup[deck] = id;
+    api.fetch('/api/video-info/' + encodeURIComponent(id)).then(function (res) {
+      return res.ok ? res.json() : null;
+    }).then(function (info) {
+      if (!info || !info.title || state.videoIds[deck] !== id || state.backendMode[deck] !== 'iframe') return;
+      var known = state.videoInfo[deck];
+      if (known && known.id === id && known.title) return;
+      state.videoInfo[deck] = Object.assign({ id: id }, info);
+      updateNowPlaying(deck);
+    }).catch(function () { /* Les métadonnées de l'IFrame peuvent encore arriver. */ });
+  }
+
+  function updateNowPlaying(deck) {
     if (!DeckTransport) return;
-    if (overrideInfo) {
-      DeckTransport.setNowPlaying(deck, overrideInfo);
-      return;
-    }
     var videoId = state.videoIds[deck];
-    var modeLabel = (state.resolvedMode === 'piped') ? 'DJ · DSP' : 'YT IFrame';
-    var info = { title: '', uploader: '', thumbnailUrl: '', modeLabel: modeLabel, id: videoId };
+    var player = state.players[deck];
+    var isDj = state.backendMode[deck] === 'piped';
+    var info = { title: '', uploader: '', thumbnailUrl: '', modeLabel: isDj ? 'DJ · DSP' : 'YT IFrame', id: videoId };
 
     if (state.sourceKind[deck] === 'local') {
-      var player = state.players[deck];
       if (player) {
         info.title = player.lastLocalTitle || 'Fichier local';
         info.uploader = player.lastLocalArtist || '';
         info.thumbnailUrl = player.lastLocalCover || FALLBACK_THUMB;
         info.modeLabel = 'Fichier local' + (player.lastLocalFileName ? ' (' + player.lastLocalFileName + ')' : '');
       }
-    } else if (state.backendMode[deck] === 'piped') {
-      var entry = PipedStreams && videoId ? PipedStreams.getCachedStream(videoId) : null;
-      if (entry) {
-        info.title = entry.title || videoId || '—';
-        info.uploader = entry.uploader || '';
-        info.thumbnailUrl = entry.thumbnailUrl || thumbnailForVideoId(videoId);
-      } else {
-        info.title = videoId ? ('Chargement… ' + videoId) : '—';
-        info.thumbnailUrl = thumbnailForVideoId(videoId);
+    } else if (videoId) {
+      var known = state.videoInfo[deck];
+      if (!known || known.id !== videoId) known = {};
+      var cached = PipedStreams && PipedStreams.getCachedStream(videoId);
+      if (!isDj && player && typeof player.getVideoData === 'function') {
+        var data = player.getVideoData();
+        // Juste après loadVideoById, YouTube peut encore renvoyer l'ancienne vidéo.
+        if (data && data.video_id === videoId && data.title) {
+          known = state.videoInfo[deck] = Object.assign({}, known, {
+            id: videoId, title: data.title, uploader: data.author || known.uploader,
+          });
+        }
       }
-    } else {
-      var player = state.players[deck];
-      if (player && typeof player.getVideoData === 'function') {
-        try {
-          var vd = player.getVideoData();
-          if (vd) {
-            info.title = vd.title || videoId || '—';
-            info.uploader = vd.author || '';
-          }
-        } catch (e) { /* ignore */ }
-      }
-      if (!info.title) info.title = videoId || '—';
-      info.thumbnailUrl = thumbnailForVideoId(videoId);
+      info.title = known.title || (cached && cached.title) || '';
+      info.uploader = known.uploader || (cached && cached.uploader) || '';
+      info.thumbnailUrl = (cached && cached.thumbnailUrl) || known.thumbnailUrl || thumbnailForVideoId(videoId);
+      if (!isDj && !known.title && !(cached && cached.title)) fetchIFrameVideoInfo(deck, videoId);
     }
 
-    DeckTransport.setNowPlaying(deck, info);
+    DeckTransport.setNowPlaying(deck, info.id && !info.title
+      ? Object.assign({}, info, { title: 'Titre indisponible' }) : info);
     // Synchronise le bouton "Save local" (local-save.js) avec l'état du deck
     if (window.LocalSave && typeof window.LocalSave.updateSaveButtonState === 'function') {
-      window.LocalSave.updateSaveButtonState(deck);
+      window.LocalSave.updateSaveButtonState(deck, info);
     }
   }
 
@@ -666,9 +674,11 @@
         if (audio && audio.parentNode) audio.parentNode.removeChild(audio);
       }
     } else {
-      // IFrame : l'iframe a remplacé le div. On le remet pour le prochain lecteur.
+      // Détruit l'iframe et ses callbacks avant de recréer le conteneur.
+      if (p && typeof p.dispose === 'function') p.dispose();
       resetPlayerDiv(deck);
     }
+    if (DeckTransport) DeckTransport.clearDownloadStatus(deck);
     state.players[deck] = null;
     state.ready[deck] = false;
     state.pendingVideoId[deck] = '';
@@ -737,6 +747,9 @@
         // On force toujours la mise à jour (même si l'état n'a pas changé)
         // pour resynchroniser l'icône après un échec de play() optimiste.
         if (DeckTransport) DeckTransport.onStateChange(deck, evt && evt.data);
+        if (!usePiped && evt && [STATE.CUED, STATE.PLAYING, STATE.PAUSED].includes(evt.data)) {
+          updateNowPlaying(deck);
+        }
         // Scratch (phase 11) : on précharge SYSTÉMATIQUEMENT le buffer PCM en
         // mémoire dès que le morceau est exploitable (CUED = chargé/ready) ou
         // lancé (PLAYING). Plus on déclenche tôt, plus le buffer est prêt au
@@ -858,8 +871,12 @@
   // ===== Sélection depuis recherche =====
 
   // Appelé par search.js quand l'utilisateur choisit un résultat
-  function onSearchSelect(deck, videoId) {
+  function onSearchSelect(deck, videoId, info) {
     state.videoIds[deck] = videoId;
+    state.sourceKind[deck] = 'youtube';
+    if (info) state.videoInfo[deck] = Object.assign({ id: videoId }, info);
+    if (DeckTransport) DeckTransport.clearDownloadStatus(deck);
+    updateNowPlaying(deck);
     persistVideoId(deck, videoId);
 
     // Marque le résultat comme "en cours" dans la grille (si elle est affichée)
@@ -880,7 +897,6 @@
     // demande explicitement la lecture à la prochaine frame "canplay" via
     // le mécanisme prévu par audio-player (_pendingPlayRequested). En mode
     // IFrame, loadVideoById joue nativement.
-    state.sourceKind[deck] = 'youtube';
     state.backendMode[deck] = state.playerType[deck] = (state.backendMode[deck] || state.playerType[deck]);
     if (player && state.backendMode[deck] === 'piped' && '_pendingPlayRequested' in player) {
       player._pendingPlayRequested = true;
@@ -919,10 +935,6 @@
     hidePlaceholder(deck);
     clearDeckError(deck);
 
-    // Rafraîchir le now-playing : en Piped l'entry vient d'être mise en cache
-    // par loadVideoById (titre/uploader/miniature) ; en IFrame, la videoData
-    // est disponible après ready.
-    updateNowPlaying(deck);
   }
 
   // ===== Bouton mute/unmute par voie =====
@@ -1548,8 +1560,8 @@
 
   function wireSearch(deck) {
     const search = SEARCH.create(deck, {
-      onSelect: function (videoId) {
-        onSearchSelect(deck, videoId);
+      onSelect: function (videoId, info) {
+        onSearchSelect(deck, videoId, info);
       },
       onSearchStart: function () {
         // Une recherche ne doit pas laisser visible une erreur de lecture

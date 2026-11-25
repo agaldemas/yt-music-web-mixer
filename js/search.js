@@ -256,22 +256,11 @@
     if (!extractVideoId(String(video.id || ''))) {
       return;
     }
-    // 1. Effectue la sélection (pour le tracking web et l'état de la liste des résultats)
-    onSelect(video.id);
-    // 2. Met à jour le lecteur principal avec les métadonnées
-    var info = {
+    onSelect(video.id, {
       title: video.title,
       uploader: video.uploaderName,
       thumbnailUrl: safeImgUrl(video.thumbnails.medium?.url),
-      modeLabel: 'Search Result'
-    };
-    if (typeof updateNowPlaying === 'function') {
-      updateNowPlaying(deck, info);
-    }
-    // Déclenche l'affichage immédiat du statut de téléchargement
-    if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
-      window.DeckTransport.setDownloadProgress(deck, 0, 0, 0);
-    }
+    });
     // 3. Met à jour le badge "En cours"
     if (typeof onMarkPlayed === 'function') onMarkPlayed(video.id);
   }
@@ -1194,15 +1183,21 @@
           return;
         }
 
-        setState(UI_STATE.RESULTS);
-        videos.forEach(function (v) {
-          panelEl.appendChild(buildResultEl(
-            deck,
-            v,
-            function (id) { onSelect(id); },
-            markActive
-          ));
-        });
+        if (signal.aborted) return;
+        renderPipedPage(videos);
+        const local = window.LocalAPI;
+        if (local && local.available()) {
+          // Envoyer les IDs par lots, sans attendre le serveur ni transmettre la clé API.
+          for (let offset = 0; offset < videos.length; offset += 20) {
+            const ids = videos.slice(offset, offset + 20).map(v => v.id);
+            void local.fetch('/api/prefetch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ids }),
+              signal: signal,
+            }).catch(() => {});
+          }
+        }
       } catch (err) {
         const info = classifyError(err);
         if (info.kind === 'abort') return; // silencieux, une nouvelle requête a pris le relais
@@ -1241,7 +1236,7 @@
         panelEl.appendChild(buildResultEl(
           deck,
           v,
-          function (id) { onSelect(id); },
+          onSelect,
           markActive
         ));
       });

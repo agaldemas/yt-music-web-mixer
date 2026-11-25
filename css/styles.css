@@ -967,7 +967,11 @@ body.mode-piped #player-B {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.np-title-text.np-title-error {
+.np-download-status {
+  font-size: 0.75rem;
+  color: #fbbf24;
+}
+.np-download-status.is-error {
   color: #ff4d4d !important;
   font-weight: 600;
 }
@@ -1059,6 +1063,8 @@ body.mode-piped #player-B {
   justify-content: flex-end;
   flex: 0 0 auto;
 }
+body.mode-iframe [id^="deck-load-local-"] { display: none; }
+
 .deck-local-btn {
   background: #1a1d25;
   color: #d7d9de;

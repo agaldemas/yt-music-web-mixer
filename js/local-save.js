@@ -1,151 +1,112 @@
-/* local-save.js — Sauvegarde locale du MP3 en cours (mode DJ)
- *
- * Fonctions :
- *   LocalSave.buildSaveFilename(title, artist)  → "<titre>-<artiste>.mp3"
- *   LocalSave.saveCurrentDj(deck)               → sauvegarde via showSaveFilePicker ou <a download>
- *   LocalSave.updateSaveButtonState(deck)        → active/désactive le bouton selon l'état du deck
- *
- * Le bouton "Save local" est dans .deck-local-row, à droite de "Load local".
- * État :
- *   - piped + videoId chargé → actif
- *   - local                 → désactivé (fichier déjà local)
- *   - iframe / aucune source → désactivé
- */
+/* local-save.js — Sauvegarde du MP3 en cache, sans agir sur le lecteur. */
 
 (function () {
   'use strict';
 
-  // ===== Fonction utilitaire de nom de fichier =====
-  // buildSaveFilename(title, artist) → "<titre>-<artiste>.mp3"
-  // Nettoie les caractères interdits en nom de fichier, conserve les accents,
-  // remplace les espaces multiples, tronque à 200 caractères.
-  // Si artiste est vide, retourne "<titre>.mp3".
-  function buildSaveFilename(title, artist) {
-    var clean = function (s) {
-      return String(s || '')
-        .replace(/[/\\:*?"<>|]/g, '-')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 200);
-    };
-    var base = artist ? (clean(title) + '-' + clean(artist)) : clean(title);
-    return (base || 'audio') + '.mp3';
+
+
+  var checks = {};
+  var saving = new Set();
+
+  function saveButton(deck) {
+    return document.getElementById('deck-save-local-' + deck.toLowerCase());
   }
 
-  // ===== Récupération des métadonnées du deck =====
-  // Lit le cache PipedStreams pour obtenir le titre et l'artiste.
-  function getDeckMeta(deck) {
+  function currentVideoId(deck) {
     var s = window.state;
-    if (!s) return { videoId: null };
-    var videoId = s.videoIds && s.videoIds[deck];
-    if (!videoId) return { videoId: null };
-
-    var entry = null;
-    if (window.PipedStreams && typeof window.PipedStreams.getCachedStream === 'function') {
-      try { entry = window.PipedStreams.getCachedStream(videoId); } catch (e) { /* ignore */ }
-    }
-    return {
-      videoId: videoId,
-      title: (entry && entry.title) || '',
-      artist: (entry && entry.uploader) || '',
-    };
+    if (!s || (s.sourceKind && s.sourceKind[deck] === 'local')) return '';
+    return (s.videoIds && s.videoIds[deck]) || '';
   }
 
-  // ===== Sauvegarde du morceau en cours (mode DJ) =====
-  // Utilise showSaveFilePicker quand disponible, sinon <a download>.
-  function saveCurrentDj(deck) {
-    var s = window.state;
-    if (!s) return;
-    var meta = getDeckMeta(deck);
-    if (!meta.videoId) return;
-
-    var filename = buildSaveFilename(meta.title, meta.artist);
-    var url = '/api/download/' + meta.videoId;
-    var btn = document.getElementById('deck-save-local-' + deck.toLowerCase());
-
-    if (btn) btn.disabled = true;
-
-    // showSaveFilePicker (Chrome 86+)
-    if (window.showSaveFilePicker) {
-      window.showSaveFilePicker({
-        suggestedName: filename,
-        types: [{
-          description: 'Fichier audio MP3',
-          accept: { 'audio/mpeg': ['.mp3'] },
-        }],
-        excludeAcceptAllOption: false,
-      }).then(function (handle) {
-        var fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
-        return Promise.all([handle.createWritable(), fetcher(url)]).then(function (values) {
-          var writer = values[0], resp = values[1];
-          if (!resp.ok) throw new Error('Erreur serveur : ' + resp.status);
-          if (resp.body && typeof resp.body.pipeTo === 'function') return resp.body.pipeTo(writer);
-          return resp.blob().then(function (blob) { return writer.write(blob).then(function () { return writer.close(); }); });
-        });
-      }).then(function () {
-        console.debug('[local-save] ✓ Sauvegarde terminée — ' + filename);
-      }).catch(function (err) {
-        if (err.name !== 'AbortError' && err.name !== 'SecurityError') {
-          console.warn('[local-save] Échec sauvegarde :', err.message || err);
-        }
-      }).finally(function () {
-        if (btn) btn.disabled = false;
-      });
-    } else {
-      var fetcher = (window.LocalAPI && window.LocalAPI.fetch) ? window.LocalAPI.fetch : fetch;
-      fetcher(url).then(function (resp) {
-        if (!resp.ok) throw new Error('Erreur serveur : ' + resp.status);
-        return resp.blob();
-      }).then(function (blob) {
-        var objectUrl = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = objectUrl; a.download = filename; a.style.display = 'none';
-        document.body.appendChild(a); a.click();
-        setTimeout(function () { URL.revokeObjectURL(objectUrl); document.body.removeChild(a); }, 1000);
-      }).catch(function (err) {
-        console.warn('[local-save] Échec sauvegarde :', err.message || err);
-      }).finally(function () { if (btn) btn.disabled = false; });
-    }
-  }
-
-  // ===== Mise à jour de l'état du bouton "Save local" =====
-  function updateSaveButtonState(deck) {
-    var btn = document.getElementById('deck-save-local-' + deck.toLowerCase());
+  function renderSaveButton(deck) {
+    var btn = saveButton(deck);
     if (!btn) return;
-    var s = window.state;
-    if (!s) { btn.disabled = true; return; }
+    var check = checks[deck];
+    var busy = saving.has(deck);
+    btn.disabled = busy || !check || !check.ready;
+    btn.title = busy ? 'Sauvegarde en cours…'
+      : !check ? 'Aucune vidéo YouTube chargée'
+      : check.ready ? 'Sauvegarder le MP3 en cache'
+      : 'MP3 pas encore disponible dans le cache local';
+  }
 
-    var backend = s.backendMode && s.backendMode[deck];
-    var sourceKind = s.sourceKind && s.sourceKind[deck];
-    var videoId = s.videoIds && s.videoIds[deck];
-
-    if (backend === 'piped' && sourceKind !== 'local' && videoId) {
-      btn.disabled = false;
-      btn.title = 'Sauvegarder le MP3 en cours sur le disque';
-    } else {
-      btn.disabled = true;
-      if (sourceKind === 'local') {
-        btn.title = 'Fichier déjà local, rien à sauvegarder';
-      } else if (backend === 'iframe') {
-        btn.title = 'Sauvegarde YouTube disponible en mode DJ (basculez en mode DJ)';
-      } else {
-        btn.title = 'Aucune source chargée';
-      }
+  function updateSaveButtonState(deck, info, retry) {
+    var api = window.LocalAPI;
+    var id = api && api.available() ? currentVideoId(deck) : '';
+    var check = checks[deck];
+    if (!id || !check || check.id !== id) {
+      if (check && check.controller) check.controller.abort();
+      check = checks[deck] = id ? { id: id, ready: false, controller: null } : null;
     }
+    if (check && info && info.id === id) check.info = info;
+    renderSaveButton(deck);
+    if (!check || check.ready || check.controller || (check.checked && !retry)) return;
+    check.checked = true;
+
+    var controller = check.controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, 5000);
+    // HEAD vérifie le disque sans télécharger ni lancer une extraction.
+    return api.fetch('/api/download-ready/' + encodeURIComponent(id), {
+      method: 'HEAD', cache: 'no-store', signal: controller.signal,
+    }).then(function (res) {
+      check.ready = res.ok;
+    }).catch(function () {
+      check.ready = false;
+    }).finally(function () {
+      clearTimeout(timeout);
+      check.controller = null;
+      if (check === checks[deck] && id === currentVideoId(deck)) renderSaveButton(deck);
+    });
+  }
+
+  function saveCurrent(deck) {
+    var check = checks[deck];
+    if (!check || !check.ready || currentVideoId(deck) !== check.id || saving.has(deck)) return;
+
+    var info = check.info || {};
+    var filename = window.buildMp3Filename(info.title, info.uploader, check.id);
+    var url = '/api/download/' + encodeURIComponent(check.id);
+    saving.add(deck);
+    renderSaveButton(deck);
+
+    function fetchMp3() {
+      return window.LocalAPI.fetch(url).then(function (resp) {
+        if (!resp.ok) {
+          if (resp.status === 404) check.ready = false;
+          throw new Error('Erreur serveur : ' + resp.status);
+        }
+        return resp;
+      });
+    }
+
+    // Laisse le gestionnaire de téléchargements du navigateur écrire le fichier.
+    var download = fetchMp3().then(function (resp) { return resp.blob(); }).then(function (blob) {
+      var objectUrl = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = objectUrl; a.download = filename; a.style.display = 'none';
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(objectUrl); a.remove(); }, 1000);
+    });
+    return download.catch(function (err) {
+      if (err.name !== 'AbortError' && err.name !== 'SecurityError') {
+        console.warn('[local-save] Échec sauvegarde :', err.message || err);
+      }
+    }).finally(function () {
+      saving.delete(deck);
+      renderSaveButton(deck);
+    });
   }
 
   // ===== Branchement des boutons =====
   function wireAll() {
-    var btnA = document.getElementById('deck-save-local-a');
-    var btnB = document.getElementById('deck-save-local-b');
-    if (btnA) {
-      btnA.addEventListener('click', function () { saveCurrentDj('A'); });
-      updateSaveButtonState('A');
-    }
-    if (btnB) {
-      btnB.addEventListener('click', function () { saveCurrentDj('B'); });
-      updateSaveButtonState('B');
-    }
+    var decks = ['A', 'B'].filter(function (deck) { return saveButton(deck); });
+    decks.forEach(function (deck) {
+      saveButton(deck).addEventListener('click', function () { saveCurrent(deck); });
+      updateSaveButtonState(deck);
+    });
+    if (decks.length) setInterval(function () {
+      decks.forEach(function (deck) { updateSaveButtonState(deck, null, true); });
+    }, 5000);
   }
 
   if (document.readyState === 'loading') {
@@ -156,8 +117,7 @@
 
   // ===== API publique =====
   window.LocalSave = {
-    buildSaveFilename: buildSaveFilename,
-    saveCurrentDj: saveCurrentDj,
+    saveCurrent: saveCurrent,
     updateSaveButtonState: updateSaveButtonState,
   };
 })();

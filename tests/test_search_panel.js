@@ -97,8 +97,19 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const search = win.YTSearch.create('A', {});
     const panel = win.document.querySelector('.deck-results[data-deck="A"]');
 
-    search.search('bob marley');
-    await wait(30);
+    const prefetch = [];
+    win.LocalAPI = {
+      available: () => true,
+      fetch(url, options) {
+        if (url !== '/api/prefetch') return win.fetch(url, options);
+        prefetch.push({ method: options.method, body: JSON.parse(options.body) });
+        return new Promise(() => {}); // La réponse ne doit pas bloquer l'affichage.
+      },
+    };
+    await search.search('bob marley');
+    ok(JSON.stringify(prefetch) === JSON.stringify([
+      { method: 'POST', body: { ids: ['AAAAAAAAAAA', 'BBBBBBBBBBB'] } },
+    ]), 'T1 : un seul lot avec tous les IDs affichés');
     ok(panel.querySelectorAll('.search-result').length === 2, 'T1 : 2 résultats Piped affichés');
     ok(panel.dataset.state === 'results', 'T1 : état = results');
 

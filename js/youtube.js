@@ -100,6 +100,10 @@
       unMute: function () { if (this._ready) this._yt.unMute(); },
       getCurrentTime: function () { return this._ready ? this._yt.getCurrentTime() : 0; },
       getDuration: function () { return this._ready ? this._yt.getDuration() : 0; },
+      getVideoData: function () {
+        if (!this._ready || typeof this._yt.getVideoData !== 'function') return null;
+        try { return this._yt.getVideoData(); } catch (_) { return null; }
+      },
       getPlayerState: function () { return this._ready ? this._yt.getPlayerState() : -1; },
       dispose: function () {
         if (this._disposed) return;
@@ -125,6 +129,7 @@
           },
           onStateChange: function (event) { if (!p._disposed) onStateChange(event); },
           onError: function (e) {
+            if (p._disposed) return;
             var code = (e && e.data) || 0;
             onError({
               code: code,

@@ -22,8 +22,9 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
 - **Search robustness**: result IDs are strictly validated at normalization, selection and startup restoration. Lowercase 11-character search terms such as `groundation` cannot be mistaken for video IDs and sent to `/api/streams/:id`.
 - **Per-deck gain trim** (±10 dB, neutral at 0 dB) before the crossfader, with live dB readout, persistence, double-click reset and a dedicated `↺` reset button.
 - **Scratch / platter** in DJ mode: lazy full-track buffer decoding, bidirectional scratch playback, position-preserving release and reduced debug logging (important engage/release milestones remain visible).
-- **Save current track locally (`💾 Save local`)**: each deck has a `💾 Save local` button (right of `📁 Load local`) that saves the current MP3 to your disk. The suggested filename is `<title>-<artist>.mp3` and the file includes YouTube metadata (title, artist, album, date, genre…) **plus the cover art** (APIC/ID3, written server-side) **and a compact ID3 comment** (`YTWM:` JSON with the video ID, duration and ISO upload date — view counts are intentionally NOT embedded, they are of no use inside an audio file). Works in **DJ mode** on a YouTube source; disabled for local files (already on disk).
+- **Save current track locally (`💾 Save local`)**: available in DJ and YouTube modes when a complete MP3 is already in the local server cache. Saving never starts an extraction or interrupts playback. The browser download manager saves it as `<title>-<artist>.mp3` (`<title>.mp3` without an artist, or `audio-<id>.mp3` without a title), preserving any embedded metadata and cover art. To choose a destination each time, enable the browser setting to ask where to save each file. `📁 Load local` remains DJ-only.
 - **Cached popup metadata**: the popup info shown on hover (views, publication date, full description) comes from a disk cache (`cache/meta/<id>.json`). The server fetches each piece of information **once** (fast oEmbed + a lightweight `yt-dlp --skip-download` for views/date/description), then serves it straight from disk — no repeated upstream requests, no `yt-dlp` on every hover. `/api/streams/:id` also returns these fields so the client can display the popup with **zero extra network request** once a track is loaded.
+- **Description prefetching**: the local server fetches descriptions for the initial results of each search in background batches of up to 20, without delaying their display or downloading audio. By default, it runs one prefetch job at a time and starts at most 5 per minute. This limit counts jobs, not HTTP requests to YouTube. Set `PREFETCH_MAX_PER_MIN` to change the limit or `PREFETCH_ENABLED=0` to turn prefetching off. If the queue is full or a description is not ready yet, hovering over the result still fetches it on demand.
 - **A↔B crossfader** (0 = full A, 100 = full B, 50 = balanced) with an *equal-power* curve to avoid the level dip in the middle.
 - **Global master volume** (0–100%).
 - **Per-deck mute/unmute buttons** (required to work around browser autoplay policies).
@@ -413,7 +414,8 @@ yt-music-web-mixer/
     ├── youtube.js       # YouTube IFrame API wrapper (IFrame fallback)
     ├── piped-streams.js # local backend first, Piped stream fallback, cache and refresh
     ├── local-load.js    # local audio/video file import (knowledge "Load local" buttons, ID3 metadata extraction)
-    ├── local-save.js    # save current MP3 (knowledge "Save local" buttons, <title>-<artist>.mp3, showSaveFilePicker)
+    ├── local-save.js    # download the cached MP3 in DJ and YouTube modes
+    ├── mp3-filename.js  # filename rules shared by browser and server
     ├── audio-player.js  # audio player used by DJ mode (autoplay-safe, optimistic play/pause)
     ├── audio-engine.js  # Web Audio graph: source, trim, EQ, filter, gain, analyser and pitch
     ├── visualizer.js    # canvas spectrum/waveform via AnalyserNode

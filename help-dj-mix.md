@@ -142,7 +142,7 @@ Chaque deck embarque une **platine vinyle tactile** (`.platter`) à droite du vi
 
 ### 📁 Load Local — Importer un fichier audio
 
-Chaque deck a un bouton **📁 Load local** qui permet d'ouvrir un fichier audio depuis le disque :
+En mode DJ, chaque deck a un bouton **📁 Load local** qui permet d'ouvrir un fichier audio depuis le disque :
 
 - **Formats supportés** : MP3, WAV, OGG, M4A, FLAC, AAC.
 - Le fichier est chargé via le même pipeline que le streaming YouTube : lecture locale, décodage Web Audio, scratch, visualiseur, BPM, etc.
@@ -153,17 +153,10 @@ Chaque deck a un bouton **📁 Load local** qui permet d'ouvrir un fichier audio
 
 ### 💾 Save Local — Sauvegarder le morceau en cours
 
-Le bouton **💾 Save local** (à droite de "Load local") télécharge le morceau en cours sur le disque :
+Le bouton **💾 Save local** copie le MP3 du morceau courant en modes DJ et YouTube, sans interrompre la lecture. Il reste grisé si aucun MP3 terminé n’existe dans le cache local (y compris si le morceau n’a été lu qu’en IFrame), si la source est déjà un fichier local, ou si aucune vidéo n’est chargée. Cliquer ne lance ni extraction ni conversion.
 
-- **Fonctionne uniquement en mode DJ** (Piped audio) avec une source YouTube chargée.
-- Le fichier est téléchargé via le backend local (`/api/download/{videoId}`) en MP3.
-- **Nom de fichier** : `{titre}-{artiste}.mp3` (généré automatiquement, caractères interdits nettoyés).
-- **Bouton désactivé** si :
-  - Le fichier est déjà local (rien à sauvegarder)
-  - Le mode IFrame est actif (pas de flux brut accessible)
-  - Aucune source n'est chargée
-
-> 💡 Utilise la fonctionnalité standard `showSaveFilePicker` du navigateur (Chrome 86+) ou un lien `<a download>` en fallback. Le fichier est téléchargé tel quel, sans transcodage.
+- **Nom proposé** : `<titre>-<artiste>.mp3`, `<titre>.mp3` sans artiste, ou `audio-<id>.mp3` sans titre.
+- **Destination** : le gestionnaire de téléchargements du navigateur prend le relais. Active « Demander où enregistrer chaque fichier » dans les paramètres de téléchargement si tu veux choisir le dossier à chaque fois.
 
 ---
 
@@ -297,7 +290,7 @@ Les réglages suivants sont sauvegardés dans le `localStorage` et restaurés au
 - **Deux boucles actives** (A et B) : tu peux avoir une boucle active sur chaque voie simultanément — utile pour caler une transition.
 - **Cue + boucle** : les deux sont indépendants. Le cue n'est pas affecté par la boucle ; tu peux boucler une section et revenir à ton cue d'un clic.
 - **Scratch** : nécessite que le buffer audio complet soit décodé en mémoire. Un préchargement automatique est lancé dès la première lecture, mais le premier scratch peut être retardé si le buffer n'est pas prêt (état « Chargement… » sur la platine).
-- **Save local** : ne fonctionne qu'en mode DJ avec une source YouTube. Les fichiers locaux ne peuvent pas être sauvegardés (ils le sont déjà).
+- **Save local** : exige un MP3 déjà prêt dans le cache du serveur local, quel que soit le mode de lecture. Un fichier importé localement n’a pas besoin d’être sauvegardé.
 - **Crossfade progressif** : le palier et l'intervalle sont réglables dans les Paramètres. Un crossfade instantané (palier = 100 %) reste le comportement par défaut.
 
 ---

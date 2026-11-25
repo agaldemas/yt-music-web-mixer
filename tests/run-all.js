@@ -12,10 +12,13 @@ const TESTS = [
   'test_audio_player.js',
   'test_mixer.js',
   'test_server.js',
+  'test_description_prefetch.js',
   'test_scratch_slice.js',
   'test_local_scratch_e2e.js',
   'test_factory_presets.js',
   'test_search_panel.js',
+  'test_now_playing.js',
+  'test_local_save.js',
 ];
 let failed = 0;
 for (const file of TESTS) {

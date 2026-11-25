@@ -1180,7 +1180,7 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 - [x] **Hauteur max 500 px** (`max-height: 500px`), largeur `min(420px, 100vw - 16px)`, corps scrollable (`.np-desc-body`).
 - [x] **Fermeture** : bouton **✕** en haut à droite (`.np-desc-close`, header `.np-desc-head`) ou **Échap** (handler global `closeAllDescPopups` sur les 2 voies).
 - [x] **État actif du bouton « ! »** : bascule `.is-active` (bleu) quand le popup est ouvert, retiré à la fermeture.
-- [x] **Reconstruction propre par morceau** : l'ancien popup est supprimé (`c.npDesc.remove()`), les boutons `#np-actions` vidés (`innerHTML=''`) à chaque `setNowPlaying` — aucun doublon entre voies A/B ni entre deux morceaux successifs. Cycle de mise à jour du titre loggé (`[title-update] Deck X -> ...`).
+- [x] **Reconstruction propre par morceau** : l'ancien popup est supprimé (`c.npDesc.remove()`), les boutons `#np-actions` vidés (`innerHTML=''`) si les informations affichées changent — aucun doublon entre voies A/B ni entre deux morceaux successifs.
 - [x] **Positionnement** : popup placé près du bouton « ! » (bord droit, dessous ; bascule au-dessus si pas de place), clampé dans la fenêtre (8 px de marge).
 
 **Pitfalls documentés :**
@@ -1199,6 +1199,22 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 - [x] **Enrichissement en tâche de fond** : au 1er `/api/audio/:id` d'un MP3 déjà en cache sans marqueur `YTWM:`, le serveur répond avec le fichier actuel puis l'enrichit en arrière-plan (idempotent via `hasMetaStamp`). mtime du cache inchangé → **aucune re-extraction**.
 - [x] **Frontend** : `buildStreamEntry` (`js/piped-streams.js`) propage `views`/`uploadDate`/`uploadDateLabel` (formateur français `formatFrenchDate` exporté)/`description` ; `js/search.js` affiche vues/date/description du popup **depuis l'entrée cache** → **zéro requête réseau** au survol une fois le morceau chargé. `fetchDescription` consulte le cache PipedStreams avant tout fetch.
 - [x] **Tests** : `/api/meta` — 2e appel ~30 ms, réponse identique (diff 0) ; MP3 enrichi sur un morceau déjà en cache — APIC 11 681 o conservée, COMM 149 o avec JSON valide, durée fichier inchangée (230,77 s), `ffprobe` lit `TAG:YTWM`. Serveur arrêté après validation.
+
+---
+
+## 19.3 Préchargement des descriptions de recherche [x]
+
+- [x] `js/search.js` affiche les premiers résultats sans attendre le `POST /api/prefetch`. La requête authentifiée n’envoie que les IDs (20 maximum par lot), jamais la clé API YouTube.
+- [x] `server/server.js` garde une file de fond de 40 IDs maximum, déduplique les demandes et réutilise les caches. Une seule tâche de préchargement à la fois, avec 5 démarrages par minute par défaut. `PREFETCH_MAX_PER_MIN` règle ce budget de tâches, pas le nombre de requêtes HTTP internes ; `PREFETCH_ENABLED=0` le désactive. Le worker n’entame pas de tâche si une extraction audio ou une récupération de métadonnées est en attente ou en cours ; en cas de limitation amont ou de rejet anti-bot, il vide le lot et attend cinq minutes avant de reprendre.
+- [x] Seules les métadonnées sont préparées (`yt-dlp --skip-download`). Le survol reste utilisable à la demande et réutilise la description préchargée quand elle est prête. Régressions : `test_search_panel.js`, `test_description_prefetch.js`.
+
+## 19.4 Bandeau et sauvegarde locale communs aux modes DJ et YouTube [x]
+
+- [x] Le bandeau reçoit le titre du résultat dès la sélection. En IFrame, il ignore les métadonnées d’une vidéo précédente et peut se replier sur `GET /api/video-info/:id` (cache ou oEmbed, sans yt-dlp). Sans titre, il affiche « Titre indisponible », pas l’ID. Les statuts « Préparation… », progression et erreur de chargement audio s’affichent à part en DJ.
+- [x] **Load local** est réservé au mode DJ ; **Save local** est visible dans les deux modes et actif uniquement pour un MP3 terminé en cache. `HEAD /api/download-ready/:id` contrôle sa présence, sans corps ni extraction. Le client ne relance plus ce contrôle une fois le MP3 confirmé ; `GET /api/download/:id` copie le fichier ou renvoie 404 si le cache ne le contient plus, sans interrompre la lecture ni lancer yt-dlp.
+- [x] `js/mp3-filename.js` partage les mêmes règles de nommage entre navigateur et serveur : `<titre>-<artiste>.mp3`, `<titre>.mp3` sans artiste et `audio-<id>.mp3` sans titre. Le bouton réutilise les métadonnées du bandeau.
+- [x] Un seul chemin de sauvegarde pour les deux modes : réponse locale authentifiée, Blob et lien `<a download>`. Le gestionnaire de téléchargements du navigateur écrit le fichier ; l’application n’utilise plus `showSaveFilePicker` ni `createWritable`. Le choix du dossier dépend des réglages du navigateur.
+- [x] Régressions : `test_now_playing.js`, `test_local_save.js`. Mesure Chromium en dossier de test : 129 Mo copiés en 389 ms, SHA-256 identique au MP3 en cache. Le temps dépend du navigateur et du dossier de destination.
 
 ---
 
@@ -1231,6 +1247,8 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 | 23 | 19.1 | Bandeau now-playing enrichi (bouton YouTube ▶ + popup description « ! ») | 🟢 Faible (deck-controls.js + CSS) | ✅ |
 | 24 | 19.2 | Métadonnées popup → cache disque (/api/meta + /api/streams enrichi) + enrichissement MP3 (COMM YTWM ≤ 3 ko, APIC conservée) | 🟢 Faible (server.js + piped-streams.js + search.js) | ✅ |
 | 25 | 21 | Voice-Over micro (capture `getUserMedia` + slider balance musique ↔ micro, header `Permissions-Policy microphone=(self)`, persistance localStorage) | 🟢 Faible (audio-engine.js + app.js + index.html + server.js) | ✅ |
+| 26 | 19.3 | Préchargement borné des descriptions, hors du chemin d’affichage | 🟡 Réseau / quotas | ✅ |
+| 27 | 19.4 | Bandeau fiable et téléchargement du MP3 en cache dans les deux modes | 🟡 Intégration | ✅ |
 
 ---
 

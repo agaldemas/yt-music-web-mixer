@@ -142,7 +142,9 @@ Résultat YouTube sélectionné
 
 ---
 
-## 2. Frontend — bouton de sauvegarde dans chaque deck `[~]`
+## 2. Frontend — bouton de sauvegarde dans chaque deck
+
+> Les phases ci-dessous conservent le plan initial. Pour le comportement livré (bouton commun DJ/YouTube, MP3 déjà en cache, gestionnaire de téléchargements), voir la [section 19.4 de la migration Piped](piped-enhancement-tasks-list.md#194-bandeau-et-sauvegarde-locale-communs-aux-modes-dj-et-youtube-x).
 
 ## ⭐ Phase 1 — Mode DJ : bouton "Save local" `[x]`
 

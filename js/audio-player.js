@@ -262,8 +262,12 @@
     function reportLoadError(err) {
       if (err && err.name === 'AbortError') return;
       const classified = PipedStreams.classifyError(err);
+      const message = classified.message || (err && err.message) || 'Erreur du mode DJ.';
+      if (window.DeckTransport && typeof window.DeckTransport.setDownloadError === 'function') {
+        window.DeckTransport.setDownloadError(deckId, message);
+      }
       try {
-        onError({ code: 0, message: classified.message || (err && err.message) || 'Erreur du mode DJ.', originalEvent: err });
+        onError({ code: 0, message: message, originalEvent: err });
       } catch (_) {}
     }
 
@@ -334,9 +338,6 @@
               if (errText) errorMessage = errText;
             }
           } catch (e) { /* ignore parse error */ }
-          if (window.DeckTransport && typeof window.DeckTransport.setDownloadError === 'function') {
-            window.DeckTransport.setDownloadError(deckId, errorMessage);
-          }
           throw new Error(errorMessage);
         }
         var mime = res.headers.get('content-type') || 'audio/mpeg';
@@ -363,6 +364,7 @@
           }
           while (true) {
             var result = await reader.read();
+            if (!isCurrent(generation)) return null;
             if (result.done) break;
             if (result.value) {
               chunks.push(result.value);
@@ -391,6 +393,7 @@
           return { buf: combined.buffer, mime: mime };
         } else {
           return res.arrayBuffer().then(function (buf) {
+            if (!isCurrent(generation)) return null;
             if (window.DeckTransport && typeof window.DeckTransport.setDownloadProgress === 'function') {
               window.DeckTransport.setDownloadProgress(deckId, null, 0, 0, '⏳ Décodage audio…');
             }
@@ -404,13 +407,6 @@
         prepareScratchDecode(AE, r.buf, generation, scratchEnabled);
         audio.src = state.blobUrl;
         audio.load();
-        // Restaure le titre une fois que l'élément audio a chargé les métadonnées et peut jouer
-        audio.addEventListener('loadedmetadata', function onLoaded() {
-          audio.removeEventListener('loadedmetadata', onLoaded);
-          if (isCurrent(generation) && window.DeckTransport && typeof window.DeckTransport.clearDownloadStatus === 'function') {
-            window.DeckTransport.clearDownloadStatus(deckId);
-          }
-        });
         console.debug('[audio:' + deckId + '] chargé en ' + (performance.now() - _t0).toFixed(0) + 'ms');
         return null;
       }).catch(function (err) {
@@ -510,6 +506,9 @@
     audio.addEventListener('loadstart', function () { reportState(STATE.UNSTARTED); });
     audio.addEventListener('emptied', function () { reportState(STATE.UNSTARTED); });
     audio.addEventListener('loadedmetadata', function () {
+      if (!state.disposed && window.DeckTransport && typeof window.DeckTransport.clearDownloadStatus === 'function') {
+        window.DeckTransport.clearDownloadStatus(deckId);
+      }
       if (audio.paused) reportState(STATE.CUED);
     });
     audio.addEventListener('loadeddata', function () {
