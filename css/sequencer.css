@@ -92,6 +92,106 @@ input { font-family: inherit; }
 .btn-randomize:hover { background: #4c3d6e; border-color: #7560a0; }
 .btn-randomize:active { transform: translateY(1px); }
 
+/* Bouton Sauvegarder 💾 — vert discret, distinct de Clear (gris) / Randomize (violet) */
+.btn-save-preset {
+  background: #1d3a2a;
+  color: #e7e7ea;
+  border: 1px solid #2e5c40;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.12s, border-color 0.12s, transform 0.05s;
+}
+.btn-save-preset:hover { background: #265139; border-color: #3a7a54; }
+.btn-save-preset:active { transform: translateY(1px); }
+
+/* === Modale de sauvegarde de preset utilisateur === */
+.save-preset-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.save-preset-modal[hidden] { display: none; }
+.save-preset-dialog {
+  background: #15181f;
+  border: 1px solid #2e3444;
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 300px;
+  max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+.save-preset-dialog h3 { margin: 0 0 12px; font-size: 1rem; color: #e7e7ea; }
+#save-preset-name {
+  width: 100%;
+  box-sizing: border-box;
+  background: #0f1115;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  color: #e7e7ea;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+#save-preset-name:focus { outline: none; border-color: #f97316; }
+.save-preset-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.save-preset-actions button {
+  background: #1c1f28;
+  color: #e7e7ea;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.save-preset-actions button:hover { border-color: #4a5265; }
+.save-preset-actions button.primary {
+  background: #f97316;
+  border-color: #f97316;
+  color: #15181f;
+}
+.save-preset-actions button.primary:hover { background: #fb8c3d; }
+.save-preset-feedback { margin: 8px 0 0; font-size: 0.85rem; }
+.save-preset-feedback.ok { color: #4ade80; }
+.save-preset-feedback.error { color: #f87171; }
+
+/* Section « Mes rythmes » dans le dropdown Rythmes */
+.track-sound-menu-header {
+  padding: 6px 12px 2px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8b93a5;
+  cursor: default;
+  user-select: none;
+}
+.track-sound-menu-sep {
+  border: none;
+  border-top: 1px solid #2e3444;
+  margin: 4px 0;
+}
+.track-sound-menu-item { position: relative; }
+.user-preset-delete {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0.6;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0 4px;
+}
+.user-preset-delete:hover { opacity: 1; color: #f87171; }
+
 /* Sliders (webkit + moz) */
 input[type="range"] {
   -webkit-appearance: none;

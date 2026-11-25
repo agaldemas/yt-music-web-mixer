@@ -40,9 +40,23 @@
                 <button id="stop">Stop</button>
                 <button id="clear-grid" type="button" class="btn-clear-grid">🗑 Clear</button>
                 <button id="randomize" type="button" class="btn-randomize" title="Génère un nouveau pattern musicalement sensé à chaque clic">🎲 Randomize</button>
+                <button id="save-preset" type="button" class="btn-save-preset" title="Sauvegarde le rythme courant (grille + BPM) sous un nom">💾 Sauvegarder</button>
             </div>
         </div>
     </header>
+
+    <!-- Modale de nommage du preset utilisateur (cachée par défaut) -->
+    <div id="save-preset-modal" class="save-preset-modal" hidden role="dialog" aria-modal="true" aria-labelledby="save-preset-title">
+        <div class="save-preset-dialog">
+            <h3 id="save-preset-title">💾 Sauvegarder le rythme</h3>
+            <input id="save-preset-name" type="text" maxlength="40" placeholder="Nom du rythme…" autocomplete="off" />
+            <div class="save-preset-actions">
+                <button id="save-preset-cancel" type="button">Annuler</button>
+                <button id="save-preset-confirm" type="button" class="primary">Sauvegarder</button>
+            </div>
+            <p id="save-preset-feedback" class="save-preset-feedback" hidden></p>
+        </div>
+    </div>
 
     <main>
         <section id="sequencer-container" class="sequencer-layout">
@@ -64,8 +78,8 @@
     <script src="js/vendor/tone.js"></script>
     <script src="js/sequencer-samples.js"></script>     <!-- DRUM_KITS, KIT_LIST -->
     <script src="js/musicca-presets.js"></script>      <!-- MUSICA_PRESETS, musicaToGrid, findMusicaPreset -->
+    <script src="js/user-presets.js"></script>         <!-- window.USER_PRESETS (format aligné pour réutiliser musicaToGrid) -->
     <script src="js/factory-presets.js"></script>      <!-- FACTORY_PRESETS, findFactoryPreset -->
-
     <!-- Sous-modules du séquenceur (ordre important) -->
     <script src="js/sequencer-config.js"></script>       <!-- GRID_TRACKS, DRUM_PADS, gridEl, état global -->
     <script src="js/sequencer-mix.js"></script>          <!-- TRACK_GAIN_NODES, buildTrackMix -->

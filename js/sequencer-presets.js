@@ -41,16 +41,18 @@ function _applyBpmAndSwing(preset) {
 
 function loadMusiccaPreset(key) {
     if (typeof MUSICA_PRESETS === 'undefined' || typeof musicaToGrid === 'undefined') return null;
-    const preset = findMusicaPreset(key);
+    // Cherche d'abord dans Musicca, sinon dans les presets utilisateur (même format).
+    const preset = findMusicaPreset(key)
+        || (typeof USER_PRESETS !== 'undefined' ? USER_PRESETS.findUserPreset(key) : null);
     if (!preset) return null;
     const grid = musicaToGrid(preset);
     if (typeof applyGridToDOM === 'function') applyGridToDOM(grid);
     _applyBpmAndSwing(preset);
     const rythmesBtn = document.getElementById('rythmes-btn');
     if (rythmesBtn) rythmesBtn.textContent = preset.name_fr + ' ▾';
-    saveActivePreset(preset.name_fr);
+    saveActivePreset(preset.id || preset.name_fr);
     document.querySelectorAll('#rythmes-menu .track-sound-menu-item').forEach((el) => {
-        el.classList.toggle('active', el.dataset.preset === preset.name_fr);
+        el.classList.toggle('active', el.dataset.preset === (preset.id || preset.name_fr));
     });
     return preset;
 }
@@ -63,6 +65,55 @@ function initRythmesMenu() {
 
     function populateRythmesMenu() {
         menu.innerHTML = '';
+
+        // 1. Presets utilisateur (s'ils existent) sous « ⭐ Mes rythmes »
+        const userPresets = (typeof USER_PRESETS !== 'undefined') ? USER_PRESETS.loadUserPresets() : [];
+        if (userPresets.length > 0) {
+            const header = document.createElement('div');
+            header.className = 'track-sound-menu-header';
+            header.textContent = '⭐ Mes rythmes';
+            menu.appendChild(header);
+
+            userPresets.forEach((p) => {
+                const isActive = btn.textContent.startsWith(p.name_fr);
+                const item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'track-sound-menu-item' + (isActive ? ' active' : '');
+                item.dataset.preset = p.id;
+                item.setAttribute('role', 'option');
+
+                const label = document.createElement('span');
+                label.textContent = (isActive ? '✓ ' : '○ ') + p.name_fr + '  · ' + p.tempo + ' BPM' + (p.swing ? ' · swing' : '');
+                item.appendChild(label);
+
+                const deleteBtn = document.createElement('span');
+                deleteBtn.className = 'user-preset-delete';
+                deleteBtn.textContent = '×';
+                deleteBtn.title = 'Supprimer ce rythme';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    if (confirm('Supprimer « ' + p.name_fr + ' » ?')) {
+                        USER_PRESETS.deleteUserPreset(p.id);
+                        populateRythmesMenu();
+                    }
+                });
+                item.appendChild(deleteBtn);
+
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    loadMusiccaPreset(p.id);
+                    closeMenu();
+                });
+                menu.appendChild(item);
+            });
+
+            const sep = document.createElement('hr');
+            sep.className = 'track-sound-menu-sep';
+            menu.appendChild(sep);
+        }
+
+        // 2. Liste Musicca originale (20 items)
         MUSICA_PRESETS.forEach((p) => {
             const isActive = btn.textContent.startsWith(p.name_fr);
             const item = document.createElement('button');
@@ -115,6 +166,60 @@ function initRythmesMenu() {
     });
 
     populateRythmesMenu();
+}
+
+// === Sauvegarde du rythme courant (bouton 💾 + modale de nommage) ===
+function initSavePresetUI() {
+    const openBtn = document.getElementById('save-preset');
+    const modal = document.getElementById('save-preset-modal');
+    const input = document.getElementById('save-preset-name');
+    const cancelBtn = document.getElementById('save-preset-cancel');
+    const confirmBtn = document.getElementById('save-preset-confirm');
+    const feedback = document.getElementById('save-preset-feedback');
+    if (!openBtn || !modal || !input || !confirmBtn) return;
+
+    function showFeedback(msg, isError) {
+        if (!feedback) return;
+        feedback.textContent = msg;
+        feedback.className = 'save-preset-feedback ' + (isError ? 'error' : 'ok');
+        feedback.hidden = false;
+    }
+
+    function openModal() {
+        modal.hidden = false;
+        if (feedback) feedback.hidden = true;
+        input.value = '';
+        setTimeout(() => input.focus(), 0);
+    }
+    function closeModal() { modal.hidden = true; }
+
+    function doSave() {
+        if (typeof USER_PRESETS === 'undefined' || typeof window.SEQUENCER_GRID === 'undefined') return;
+        const name = input.value.trim().slice(0, 40);
+        if (!name) { showFeedback('Nom requis', true); input.focus(); return; }
+        window.SEQUENCER_GRID.syncPatternFromDOM();
+        const bpmInput = document.getElementById('bpm');
+        const bpm = (bpmInput && bpmInput.value) ? Number(bpmInput.value)
+            : (typeof Tone !== 'undefined' && Tone.Transport ? Tone.Transport.bpm.value : 120);
+        const swing = (typeof Tone !== 'undefined' && Tone.Transport) ? Tone.Transport.swing > 0 : false;
+        const preset = USER_PRESETS.buildUserPreset(name, window.SEQUENCER_GRID.pattern, bpm, swing);
+        const saved = USER_PRESETS.addUserPreset(preset);
+        if (!saved) { showFeedback('Échec de la sauvegarde (stockage plein ?)', true); return; }
+        showFeedback('Rythme « ' + name + ' » sauvegardé', false);
+        // Le menu Rythmes se reconstruit au prochain clic (populateRythmesMenu).
+        setTimeout(closeModal, 1200);
+    }
+
+    openBtn.addEventListener('click', (e) => { e.stopPropagation(); openModal(); });
+    cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); closeModal(); });
+    confirmBtn.addEventListener('click', (e) => { e.stopPropagation(); doSave(); });
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+        if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
+    });
+    modal.addEventListener('click', (e) => {
+        if (!e.target.closest('.save-preset-dialog')) closeModal();
+    });
 }
 
 function loadFactoryPreset(id) {
@@ -199,4 +304,5 @@ window.SEQUENCER_PRESETS = {
     saveActiveFactoryPreset, loadActiveFactoryPresetId,
     loadMusiccaPreset, initRythmesMenu,
     loadFactoryPreset, initFactoryPresetsMenu,
+    initSavePresetUI,
 };

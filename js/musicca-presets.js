@@ -50,6 +50,8 @@ function musicaToGrid(preset) {
   const pSide = pad(seq.sidetamlys);
   const pGulv = pad(seq.gulvtam);
   const pRide = pad(seq.ride);
+  // Extension rétro-compatible : `crash` n'existe que sur les presets utilisateur
+  const pCrash = pad(seq.crash);
 
   const rows = [];
   for (let step = 0; step < STEPS; step++) {
@@ -63,7 +65,7 @@ function musicaToGrid(preset) {
     const tomHigh = pSide[step] === '1';
     const tomMid = pSide[step] === '2';
     const tomLow = pGulv[step] !== '0';
-    const crash = false;
+    const crash = pCrash[step] !== '0';
     const ride = pRide[step] !== '0';
     // Disco/Heavy : hihat contient '2' qui n'est pas hihat ouvert mais un accent charleston ouvert — on le mappe aussi à Hat Open
     // Pour être fidèle à Musicca : tout '2' sur hihat → Hat Open, tout '1' → Hat Closed

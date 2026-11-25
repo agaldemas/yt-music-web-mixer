@@ -140,6 +140,44 @@ Mini-panneau mix par piste injecté dans chaque `.track-name-wrap`, dans l'ordre
 - [x] **Fonctions** : `loadFactoryPreset(id)`, `initFactoryPresetsMenu()`, `saveActiveFactoryPreset(nameFr)`, `loadActiveFactoryPresetId()`. Le preset actif est persisté (`ytwm_activeFactoryPreset`) et réappliqué au boot.
 - [x] **Test `tests/test_factory_presets.js`** : 34/34 assertions (5 presets présents, dimensions 9×16, Reggae one-drop exact, 3 loads successifs donnent 3 grilles distinctes).
 
+### 4.4 💾 Sauvegarde de patterns utilisateur (user presets, implémenté 2026-10-22)
+
+Objectif : sauvegarder le pattern courant (grille 9×16 + BPM + nom saisi par l'utilisateur), le persister en `localStorage`, et le recharger via le menu `#rythmes-btn` existant (section dédiée « Mes rythmes » en haut du dropdown). Format de stockage aligné sur `js/musicca-presets.js` (objets `{id, name_fr, tempo, swing, rhythm, sequence}`) pour réutiliser `musicaToGrid()` et `loadMusiccaPreset()` sans nouveau moteur de chargement.
+
+#### 4.4.1 Modèle de données & sérialisation
+
+- [x] **Format de preset utilisateur** : même shape que `MUSICA_PRESETS` — `{ id: 'user:<slug>', name_fr: <nom saisi>, tempo: <BPM courant>, swing, rhythm: '4/4', sequence: {...} }` dans `js/user-presets.js` (`buildUserPreset`).
+- [x] **Fonction `gridToMusicaSequence(pattern) → sequence`** : conversion inverse de `musicaToGrid()`, Hat Open écrase Hat Closed (`'2'` prioritaire). Champ extension `crash` ajouté (rétro-compatible : les presets Musicca n'en ont pas → `crash=false`) ; `musicaToGrid()` lit `seq.crash` depuis le patch du 2026-10-22.
+- [x] **Round-trip test Node** : `gridToMusicaSequence` → `musicaToGrid` bit-exact sur pattern arbitraire (kick/snare/hat open/crash/ride/toms) — vérifié le 2026-10-22 (smoke test + round-trip).
+
+#### 4.4.2 Persistance `localStorage`
+
+- [x] **Clé `ytwm_userPresets`** : tableau JSON de presets utilisateur.
+- [x] **Helpers** : `loadUserPresets()` (parse défensif → `[]` sur JSON corrompu), `saveUserPresets(list)`, `addUserPreset(preset)`, `deleteUserPreset(id)`, `findUserPreset(key)`.
+- [x] **Slug d'id** : `'user:' + slug` + suffixe `-2`, `-3`… en cas de collision (jamais d'écrasement silencieux).
+- [x] **Quota/garde-fou** : `try/catch` sur `setItem` → `console.warn` + `return false` (remonté à l'UI comme feedback d'erreur).
+
+#### 4.4.3 UI Sauvegarde
+
+- [x] **Bouton « 💾 Sauvegarder » dans `.playback-btns`** (`sequencer.html`), à côté de Clear/Randomize.
+- [x] **Modale de nommage** `#save-preset-modal` : input (maxlength 40, focus auto), Valider/Annuler, Entrée/Échap, clic hors dialog ferme. Styles `.save-preset-modal/.save-preset-dialog/.save-preset-actions/.save-preset-feedback` dans `css/sequencer.css`.
+- [x] **Validation du nom** : trim, non vide → feedback rouge « Nom requis » sans sauvegarde. (Pas d'écrasement : collision de nom = nouvel id suffixé, deux entrées distinctes.)
+- [x] **Capture de l'état courant** (`initSavePresetUI()` dans `js/sequencer-presets.js`) : `SEQUENCER_GRID.syncPatternFromDOM()`, BPM depuis `#bpm.value` (fallback `Tone.Transport.bpm.value`), swing depuis `Tone.Transport.swing > 0`, `buildUserPreset` + `addUserPreset`, feedback vert « Rythme « nom » sauvegardé », fermeture après 1,2 s.
+- [x] **Mise à jour du menu Rythmes** : `populateRythmesMenu()` relit `loadUserPresets()` à chaque ouverture → le nouveau preset apparaît sans reload.
+
+#### 4.4.4 UI Chargement (menu `#rythmes-btn`)
+
+- [x] **Section « ⭐ Mes rythmes » en haut de `.rythmes-menu`** : `populateRythmesMenu()` liste d'abord les presets utilisateur (header `.track-sound-menu-header`), puis `<hr class="track-sound-menu-sep">`, puis les 20 presets Musicca.
+- [x] **Clic sur un preset utilisateur** → `loadMusiccaPreset(p.id)` : recherche étendue (`findMusicaPreset` → fallback `USER_PRESETS.findUserPreset`), `musicaToGrid` (format aligné, crash inclus), `applyGridToDOM`, BPM + swing, label bouton, highlight exclusif, persistance `ytwm_activePreset` (par `id` pour les users, `name_fr` pour Musicca).
+- [x] **Suppression** : bouton `×` (`.user-preset-delete`) sur chaque item utilisateur — stopPropagation + confirm + `deleteUserPreset(id)` + re-render. Pas de `×` sur les 20 presets Musicca.
+- [x] **Empty state** : section entièrement masquée (header + séparateur) quand aucun preset utilisateur.
+
+#### 4.4.5 Tests & validation
+
+- [ ] **Test unitaire `tests/test_user_presets.js`** (jsdom) : round-trip `gridToMusicaSequence`/`musicaToGrid` sur patterns arbitraires (kick 4-on-floor + crash actif → vérifie le champ `crash` étendu), slug unique sur collision de noms, `loadUserPresets()` défensif sur JSON corrompu.
+- [ ] **Test d'intégration** : étendre `tests/validate_sequencer_presets.js` (à créer, cf. §4.1.4) — présence du bouton 💾, de la modale, et de la section « Mes rythmes » dans le markup.
+- [ ] **Validation manuelle** : composer un pattern, sauvegarder « Test A », changer de pattern, recharger via le menu → grille + BPM restaurés ; reload page → « Test A » toujours présent ; supprimer « Test A » → absent du menu et du localStorage.
+
 ---
 
 ## 5. 🥁 Boîte à Rythmes / Kit Batterie vue du dessus

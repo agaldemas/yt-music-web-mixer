@@ -46,6 +46,9 @@ window.addEventListener('DOMContentLoaded', () => {
     if (_D.initDrumKit) _D.initDrumKit();
     if (_P.initRythmesMenu) _P.initRythmesMenu();
     if (_P.initFactoryPresetsMenu) _P.initFactoryPresetsMenu();
+    // --- Init modale de sauvegarde des presets utilisateur (user-presets.js chargé avant sequencer-presets.js) ---
+    if (_P.initSavePresetUI) _P.initSavePresetUI();
+
 
     // --- Restauration des presets sauvegardés ---
     const savedPreset = _P.loadActivePresetName ? _P.loadActivePresetName() : '';
