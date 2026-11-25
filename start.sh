@@ -66,7 +66,7 @@ elif [[ "$auto_open" == "no" ]]; then
 else
   # Prompt demandé à l'utilisateur
   echo "Voulez-vous ouvrir l'application dans le navigateur ?" >&2
-  read -p "Entrez (y/n) pour oui/non : " confirm
+  read -r -p "[y/N] (Entrée = non) : " confirm || confirm=n
   case "$(echo "$confirm" | tr '[:upper:]' '[:lower:]' | xargs)" in
     y|yes) 
       if command -v open >/dev/null 2>&1; then
@@ -79,7 +79,7 @@ else
         echo "Aucun navigateur par défaut détecté. Ouvrez manuellement : ${URL}"
       fi
       ;;
-    n|no) ;;  # Rien à faire, on ne lance pas le navigateur
+    ''|n|no) ;;  # Rien à faire, on ne lance pas le navigateur
     *)   echo "Réponse invalide. Laissez le serveur tourner sans ouvrir le navigateur." ;;
   esac
 fi

@@ -31,34 +31,22 @@ if errorlevel 1 (
   echo   ^(L'app basculera sur Piped/IFrame en attendant.^)
 )
 
-REM 3) Gère l'ouverture du navigateur selon le paramètre --open-app et par défaut.
-set auto_open=%1
-if "%auto_open%"=="" ( set auto_open=prompt )           REM Pas de paramètre : demander par défaut
+REM 3) N'ouvre le navigateur que sur demande explicite.
+set "auto_open=%~1"
+if /i "%auto_open%"=="yes" goto open_browser
+if /i "%auto_open%"=="y" goto open_browser
+if /i "%auto_open%"=="no" goto start_server
+if /i "%auto_open%"=="n" goto start_server
 
-REM Normalise pour accepter yes/yes/no/Y/N/etc.
-REM (cmd.exe n'a pas de lower() ; on s'appuie sur le commutateur /i de IF,
-REM  qui compare deja en case-insensitive — pas besoin de gymnastique.)
-if /i "%auto_open%"=="yes"        set "auto_open=yes"
-if /i "%auto_open%"=="y"          set "auto_open=yes"
-if /i "%auto_open%"=="no"         set "auto_open=no"
-if /i "%auto_open%"=="n"          set "auto_open=no"
-if /i "%auto_open%"=="prompt"     set "auto_open=prompt"
+set "auto_open=n"
+set /p "auto_open=Voulez-vous ouvrir l'application dans le navigateur ? [y/N] (Entree = non) : "
+if /i "%auto_open%"=="yes" goto open_browser
+if /i not "%auto_open%"=="y" goto start_server
 
-if "%auto_open%"=="yes" (
-  REM Ouverture automatique demandée
-  start "" "%URL%"
-) else if "%auto_open%"=="no" (
-  REM Ouverture automatique désactivée
-  echo Le serveur est demarré sur %URL%. Ouvrez-le manuellement.
-) else (
-  REM Prompt demandé a l'utilisateur
-  set /p confirm="Voulez-vous ouvrir l'application dans le navigateur ? (y/n): "
-  if /i "%confirm%"=="yes" (
-    start "" "%URL%"
-  ) else if /i "%confirm%"=="y" (
-    start "" "%URL%"
-  )
-)
+:open_browser
+start "" "%URL%"
+
+:start_server
 
 set PORT=%PORT%
 node server/server.js
