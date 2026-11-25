@@ -419,6 +419,18 @@
 
   <!-- Barre de mixage fixe en bas -->
   <footer class="mixer-bar">
+    <div class="mixer-group mixer-voiceover">
+      <button id="voiceover-toggle" class="mixer-btn mixer-btn-toggle" type="button" aria-pressed="false" aria-label="Micro Voice-Over">🎤</button>
+      <input id="voiceover-fade" class="crossfade-slider voiceover-slider" type="range" min="0" max="100" value="50" step="1" aria-label="Balance musique vers micro" hidden />
+      <select id="voiceover-effect" class="voiceover-effect-select" aria-label="Effet vocal" title="Effet vocal" hidden>
+        <option value="off">🎙️ Off</option>
+        <option value="pitch">🎵 Pitch</option>
+        <option value="distortion">📻 Radio</option>
+        <option value="both">🤖 Robot</option>
+      </select>
+      <input id="voiceover-pitch" class="voiceover-param-slider" type="range" min="-12" max="12" value="0" step="1" aria-label="Pitch vocal (demi-tons)" hidden title="Pitch (±12 demi-tons)" />
+      <input id="voiceover-dist" class="voiceover-param-slider" type="range" min="0" max="100" value="50" step="1" aria-label="Distortion vocale" hidden title="Distortion (0-100%)" />
+    </div>
     <div class="mixer-group mixer-transport">
       <button id="play-both" class="mixer-btn" type="button">▶️ Play both</button>
       <button id="pause-both" class="mixer-btn" type="button">⏸️ Pause both</button>

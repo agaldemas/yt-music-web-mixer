@@ -24,6 +24,13 @@ window.YT_CONFIG = {
     CUE_A: 'cueA', CUE_B: 'cueB',
     LOOP_IN_A: 'loopInA', LOOP_OUT_A: 'loopOutA',
     LOOP_IN_B: 'loopInB', LOOP_OUT_B: 'loopOutB',
+    // Voice-Over (micro) : état armé + balance musique ↔ micro (0..100).
+    VOICEOVER_ENABLED: 'voiceoverEnabled',
+    VOICEOVER_BALANCE: 'voiceoverBalance',
+    // Voice FX (Phase 2) : mode d'effet + paramètres.
+    VOICEOVER_EFFECT: 'voiceoverEffect',
+    VOICEOVER_PITCH: 'voiceoverPitch',
+    VOICEOVER_DISTORTION: 'voiceoverDistortion',
   },
   // Vidéos de test chargées au démarrage (cue, sans lecture auto)
   TEST_VIDEO_A: 'lfmxnzJAbl8',

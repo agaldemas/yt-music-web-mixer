@@ -839,7 +839,7 @@ app.use('/api', requireLocalToken);
 app.use(function securityHeaders(req, res, next) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'", "base-uri 'self'", "object-src 'none'",

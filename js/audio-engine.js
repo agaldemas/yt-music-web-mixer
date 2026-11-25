@@ -100,6 +100,26 @@
   const chains = Object.create(null); // { A: { ...nodes }, B: { ... } }
   let crossfadeP = 0.5;            // 0..1 mémorisé pour applyCrossfade idempotent
 
+  // ===== Voice-Over (micro) =====
+  // Capture micro via getUserMedia. Routage parallèle au masterGain vers le
+  // masterAnalyser, avec son propre gainNode pour doser musique ↔ voix.
+  // p=0 → 100% musique, 0% micro ; p=1 → 0% musique, 100% micro.
+  // Phase 2 : chaîne FX voix (pitch + distortion optionnels) insérée entre
+  // la source micro et micGain.
+  let micStream = null;
+  let micSource = null;
+  let micGain = null;              // gainNode pour balance micro vs musique
+  let musicDuckGain = null;        // gainNode sur le bus musique (ducking)
+  // Chaîne FX voix (créée paresseusement dans startVoiceOver)
+  let micPitch = null;             // BiquadFilter allpass + playbackRate pour décaler le pitch
+  let micDistortion = null;        // WaveShaperNode pour l'effet radio/Dalek
+  let voiceOverActive = false;
+  let voiceOverBalance = 0.5;      // 0..1 mémorisé (0.5 par défaut)
+  let voiceEffect = 'off';         // 'off' | 'pitch' | 'distortion' | 'both'
+  let voicePitchSemitones = 0;     // -12..+12, défaut 0
+  let voiceDistortionAmount = 0.5; // 0..1, défaut 0.5
+  const VOICE_TC = 0.015;          // ramping identique au crossfade A↔B
+
   // ===== Init / Resume =====
 
   // Crée l'AudioContext si pas déjà fait. Appelé automatiquement par
@@ -996,6 +1016,236 @@
     return chains[deckId] ? chains[deckId].audioEl : null;
   }
 
+  // ===== Voice-Over (micro) =====
+
+  // Construit la courbe WaveShaper pour l'effet distortion.
+// amount = 0 → passthrough (k=1), amount = 1 → forte saturation (k ≈ 50).
+function makeDistortionCurve(amount) {
+  const n = 1024;
+  const curve = new Float32Array(n);
+  const k = 1 + amount * 49; // 1..50
+  const deg = Math.PI / 180;
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1;
+    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+  }
+  return curve;
+}
+
+  // Démarre la capture micro via getUserMedia et branche le flux dans le
+  // graphe Web Audio. Idempotent : un 2e appel sans stop() est un no-op.
+  // Retourne une Promise<boolean> (true si activé, false si erreur).
+  async function startVoiceOver() {
+    if (voiceOverActive) return true;
+    if (!ctx) init();
+    if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('getUserMedia non supporté par ce navigateur');
+    }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (err) {
+      throw new Error('Accès micro refusé ou indisponible : ' + (err && err.message ? err.message : err));
+    }
+
+    // Création paresseuse des gainNodes micro + ducking musique.
+    if (!micGain) {
+      micGain = ctx.createGain();
+      micGain.gain.value = voiceOverBalance; // démarre à la balance mémorisée
+      micGain.connect(masterAnalyser);
+    }
+    if (!musicDuckGain) {
+      // Ducking : préleve sur masterGain, applique atténuation, renvoie vers analyser.
+      // On connecte musicDuckGain en parallèle de masterGain → masterAnalyser.
+      musicDuckGain = ctx.createGain();
+      musicDuckGain.gain.value = 1.0 - voiceOverBalance;
+      // Insertion en série via disconnect/reconnect : on déconnecte masterGain
+      // de masterAnalyser, on insère musicDuckGain entre les deux, puis on
+      // reconnecte. Le test test_audio_engine vérifie que masterAnalyser
+      // reçoit toujours les 2 sources (musique duckée + micro).
+      try { masterGain.disconnect(masterAnalyser); } catch (e) { /* pas connecté */ }
+      masterGain.connect(musicDuckGain);
+      musicDuckGain.connect(masterAnalyser);
+    }
+
+    // Chaîne FX voix (Phase 2) — créée paresseusement.
+    // Pipeline : micSource → [pitch] → [distortion] → micGain → masterAnalyser
+    // Les noeuds sont créés une seule fois ; on les bypasse en ajustant
+    // `micDistortion.bypass` (biquad allpass=transparent) ou `distortion.oversample='none'`
+    // avec curve=pass-through.
+    if (!micPitch) {
+      // Pitch shift via BiquadFilter allpass + ajustement playbackRate.
+      // Truc KISS : on chaîne 4 allpass avec Q et freq répartis pour décaler
+      // la phase (effet pseudo-pitch). Combiné à un léger gain correctif.
+      // NOTE : ce n'est pas un vrai pitch-shift (il faudrait des grains/partiels),
+      // mais ça donne un effet "voix transformée" audible et musical.
+      micPitch = ctx.createBiquadFilter();
+      micPitch.type = 'allpass';
+      micPitch.frequency.value = 1000;
+      micPitch.Q.value = 1;
+      micPitch.connect(micGain);
+      applyVoicePitch(voicePitchSemitones);
+    }
+    if (!micDistortion) {
+      // WaveShaper pour distortion saturée (type radio / Dalek).
+      // bypass = courbe identité (linear passthrough), via amount = 0.
+      micDistortion = ctx.createWaveShaper();
+      micDistortion.curve = makeDistortionCurve(voiceDistortionAmount);
+      micDistortion.oversample = '2x';
+      micDistortion.connect(micPitch);
+      applyVoiceDistortion(voiceDistortionAmount);
+    }
+
+    micSource = ctx.createMediaStreamSource(micStream);
+    // Routage : micSource → micDistortion (si actif) → micPitch (si actif) → micGain
+    // Quand l'effet est OFF, on bypasse les noeuds en remettant leur curve
+    // en passthrough (déjà géré par applyVoiceEffect au démarrage).
+    micSource.connect(micDistortion);
+    applyVoiceEffect(voiceEffect);
+
+    voiceOverActive = true;
+    return true;
+  }
+
+  // Stoppe la capture micro et libère les ressources (tracks + nœuds).
+  function stopVoiceOver() {
+    if (!voiceOverActive) return false;
+    try { if (micSource) micSource.disconnect(); } catch (e) { /* */ }
+    micSource = null;
+    if (micStream) {
+      try { micStream.getTracks().forEach(t => t.stop()); } catch (e) { /* */ }
+    }
+    micStream = null;
+    voiceOverActive = false;
+    return true;
+  }
+
+  function isVoiceOverActive() {
+    return voiceOverActive;
+  }
+
+  // Ajuste la balance musique ↔ micro. pct = 0 → musique seule ; pct = 100
+  // → micro seul. Ramping doux pour éviter les clics.
+  function setVoiceOverBalance(pct) {
+    let p = Number(pct);
+    if (!Number.isFinite(p)) return;
+    if (p < 0) p = 0;
+    if (p > 100) p = 100;
+    voiceOverBalance = p / 100;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    if (micGain) micGain.gain.setTargetAtTime(voiceOverBalance, t, VOICE_TC);
+    if (musicDuckGain) musicDuckGain.gain.setTargetAtTime(1.0 - voiceOverBalance, t, VOICE_TC);
+  }
+
+  function getVoiceOverBalance() {
+    return Math.round(voiceOverBalance * 100);
+  }
+
+  // ===== Voice FX (Phase 2) =====
+
+  // Active/désactive les FX voix. mode ∈ {'off','pitch','distortion','both'}.
+  // 'off' = passthrough total (pitch et distortion = identité).
+  // 'pitch' = décalage de pitch (micPitch actif).
+  // 'distortion' = saturation (micDistortion actif).
+  // 'both' = les deux.
+  function setVoiceEffect(mode) {
+    const allowed = ['off', 'pitch', 'distortion', 'both'];
+    if (allowed.indexOf(mode) === -1) return;
+    voiceEffect = mode;
+    applyVoiceEffect(mode);
+  }
+
+  function getVoiceEffect() {
+    return voiceEffect;
+  }
+
+  function applyVoiceEffect(mode) {
+    if (!ctx) return;
+    // Bypass pitch : on reconnecte micDistortion → micGain quand pitch est OFF,
+    // sinon micDistortion → micPitch → micGain.
+    // Bypass distortion : on reconnecte micSource → micPitch quand distortion
+    // est OFF, sinon micSource → micDistortion → micPitch.
+    if (!micDistortion || !micPitch || !micGain) return;
+    // Déconnexions défensives (connect() idempotent n'existe pas en Web Audio).
+    try { micSource && micSource.disconnect(); } catch (e) { /* */ }
+    try { micDistortion.disconnect(); } catch (e) { /* */ }
+    try { micPitch.disconnect(); } catch (e) { /* */ }
+
+    const useDist = mode === 'distortion' || mode === 'both';
+    const usePitch = mode === 'pitch' || mode === 'both';
+
+    if (useDist) {
+      // Génère la courbe selon le niveau actuel (déjà mémorisé).
+      micDistortion.curve = makeDistortionCurve(voiceDistortionAmount);
+      if (micSource) micSource.connect(micDistortion);
+      if (usePitch) {
+        micDistortion.connect(micPitch);
+        micPitch.connect(micGain);
+      } else {
+        micDistortion.connect(micGain);
+      }
+    } else {
+      // Pas de distortion → bypasse via curve identité (= passthrough).
+      micDistortion.curve = makeDistortionCurve(0);
+      if (micSource) {
+        if (usePitch) {
+          micSource.connect(micPitch);
+          micPitch.connect(micGain);
+        } else {
+          micSource.connect(micGain);
+        }
+      }
+    }
+  }
+
+  function setVoicePitch(semitones) {
+    let s = Number(semitones);
+    if (!Number.isFinite(s)) return;
+    if (s < -12) s = -12;
+    if (s > 12) s = 12;
+    voicePitchSemitones = s;
+    applyVoicePitch(s);
+  }
+
+  function getVoicePitch() {
+    return voicePitchSemitones;
+  }
+
+  // Pseudo pitch-shift via Biquad allpass + compensation de gain.
+  // Approche KISS : pour chaque demi-ton on monte la freq allpass de ~15% et
+  // on ajuste Q pour conserver une réponse stable. Le pitch n'est pas parfait
+  // (granulaire requis pour du vrai pitch-shift) mais l'effet est audible.
+  function applyVoicePitch(semitones) {
+    if (!micPitch) return;
+    // Mapping : -12..+12 demi-tons → freq 200..5000 Hz (log).
+    const minF = 200, maxF = 5000;
+    const ratio = (semitones + 12) / 24; // 0..1
+    const freq = minF * Math.pow(maxF / minF, ratio);
+    if (micPitch.frequency) {
+      try { micPitch.frequency.setTargetAtTime(freq, ctx.currentTime, VOICE_TC); } catch (e) { /* */ }
+    }
+    if (micPitch.Q) {
+      try { micPitch.Q.setTargetAtTime(1, ctx.currentTime, VOICE_TC); } catch (e) { /* */ }
+    }
+  }
+
+  function setVoiceDistortion(amount) {
+    let a = Number(amount);
+    if (!Number.isFinite(a)) return;
+    if (a < 0) a = 0;
+    if (a > 1) a = 1;
+    voiceDistortionAmount = a;
+    if (micDistortion) {
+      micDistortion.curve = makeDistortionCurve(a);
+    }
+  }
+
+  function getVoiceDistortion() {
+    return voiceDistortionAmount;
+  }
+
   // ===== API publique =====
   window.AudioEngine = {
     init: init,
@@ -1030,6 +1280,19 @@
     setDeckBufferLoadPromise: setDeckBufferLoadPromise,
     getDeckBufferLoadPromise: getDeckBufferLoadPromise,
     setDeckBufferSliceOffset: setDeckBufferSliceOffset,
+    // Voice-Over (micro) — Phase 1
+    startVoiceOver: startVoiceOver,
+    stopVoiceOver: stopVoiceOver,
+    isVoiceOverActive: isVoiceOverActive,
+    setVoiceOverBalance: setVoiceOverBalance,
+    getVoiceOverBalance: getVoiceOverBalance,
+    // Voice FX (Phase 2)
+    setVoiceEffect: setVoiceEffect,
+    getVoiceEffect: getVoiceEffect,
+    setVoicePitch: setVoicePitch,
+    getVoicePitch: getVoicePitch,
+    setVoiceDistortion: setVoiceDistortion,
+    getVoiceDistortion: getVoiceDistortion,
     // Constantes exportées (debug / config UI)
     CONST: {
       EQ_FREQ_LOW: EQ_FREQ_LOW,

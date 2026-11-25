@@ -978,6 +978,73 @@ Règles pour l'alignement vertical et espacement :
       les bandes EQ + filtre DJ, mis à jour en temps réel (`applyEq` → "+X.X dB",
       `applyDjFilter` → "LP x% / HP x% / OFF"). Testé et validé.
 
+---
+
+## 21. Voice-Over micro (DJ) [x]
+
+Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le mixer avec la musique dans la barre de mixage, via un slider balance musique ↔ micro. **Mode DJ uniquement** (les flux Piped jouent en audio-only, le micro s'ajoute en parallèle dans le même graphe Web Audio).
+
+### 21.1 API AudioEngine (`js/audio-engine.js`)
+
+- [x] **État interne** : variables `micStream`, `micSource`, `micGain`, `musicDuckGain`, `voiceOverActive`, `voiceOverBalance` (0..1, défaut 0.5), `VOICE_TC = 0.015`.
+- [x] **`startVoiceOver()`** (async) :
+  - Idempotent (no-op si déjà actif).
+  - Crée le contexte lazy (`init()`), puis `navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })`.
+  - Construit paresseusement `micGain` (GainNode, gain = balance courante) et `musicDuckGain` (GainNode d'atténuation musique, gain = 1 − balance).
+  - Insère `musicDuckGain` **en série** entre `masterGain` et `masterAnalyser` (déconnexion/reconnexion propre, ne casse pas la topologie attendue par `test_audio_engine.js` : `masterAnalyser._connections` reste correct).
+  - Crée `MediaStreamAudioSourceNode(micStream)` → `micGain` → `masterAnalyser`.
+  - Throw explicite si `getUserMedia` non supporté ou si l'accès micro est refusé.
+- [x] **`stopVoiceOver()`** : `micSource.disconnect()`, `micStream.getTracks().forEach(t => t.stop())`, libère les références, retourne l'état.
+- [x] **`isVoiceOverActive()`** : accessor booléen.
+- [x] **`setVoiceOverBalance(pct)`** : clamp [0..100], applique via `setTargetAtTime` sur `micGain.gain` et `musicDuckGain.gain` (ramping `VOICE_TC`).
+- [x] **`getVoiceOverBalance()`** : retourne l'entier 0..100 mémorisé.
+- [x] API publique exposée : `startVoiceOver, stopVoiceOver, isVoiceOverActive, setVoiceOverBalance, getVoiceOverBalance`.
+
+### 21.2 Header HTTP `Permissions-Policy` (`server/server.js:842`)
+
+- [x] **`microphone=(self)`** au lieu de `microphone=()` — autorise explicitement la capture micro **uniquement** depuis le même origine (`self`), pas d'élargissement réseau. La modification reste KISS (3 caractères). Le navigateur vérifie ce header AVANT d'autoriser `getUserMedia`, sinon il émet `Permissions policy violation: microphone is not allowed in this document`.
+
+### 21.3 UI — barre de mixage (`index.html` + `css/styles.css`)
+
+- [x] **Groupe `.mixer-voiceover`** placé en tête du `<footer class="mixer-bar">` :
+  - Bouton `#voiceover-toggle` (toggle, icône 🎤 UTF-8, `aria-pressed`, `aria-label="Micro Voice-Over"`, classe `mixer-btn mixer-btn-toggle`).
+  - Slider `#voiceover-fade` (`<input type="range" min=0 max=100 value=50>`, classe `crossfade-slider voiceover-slider`, masqué par défaut via `hidden`).
+- [x] **Comportement** : le slider n'apparaît que lorsque le micro est activé (toggle le retire du flux si OFF). Le bouton vire au **vert** quand `aria-pressed=true` (règle `.mixer-btn-toggle[aria-pressed="true"] { background: #16a34a; border-color: #22c55e; color: #fff; }`).
+- [x] **CSS** : `.mixer-voiceover { flex: 0 0 auto; gap: 6px; }`, `.voiceover-slider { width: 90px; }` — barre organisée, micro bien ancré à gauche, slider compact qui s'insère dans la rangée sans déborder.
+- [x] Nettoyage d'un sélecteur cassé laissé par un précédent sous-agent (`.mixervisover …` qui ne matchait rien).
+
+### 21.4 Câblage `js/app.js`
+
+- [x] **`initVoiceOver()`** câblé depuis `init()` (juste après `initAutoXf`).
+- [x] **Persistance** : `localStorage` clés `voiceoverEnabled` (bool) + `voiceoverBalance` (0..100), chargées via `loadVoiceOverEnabled()` / `loadVoiceOverBalance()`, sauvées via `saveVoiceOverEnabled()` / `saveVoiceOverBalance()`.
+- [x] **Listeners** :
+  - Click bouton → si inactif, `aria-pressed=true`, slider visible, `AudioEngine.startVoiceOver()` ; si erreur (refus micro), rollback UI + `showGlobalError(err.message)`.
+  - Click bouton → si actif, `aria-pressed=false`, slider caché, `AudioEngine.stopVoiceOver()`.
+  - `input` slider → `AudioEngine.setVoiceOverBalance(value)` + persistance immédiate.
+- [x] **Au boot** : le micro n'est PAS ré-activé automatiquement (politique `getUserMedia` = geste utilisateur requis). L'état `enabled` est juste mémorisé ; la balance est appliquée au moteur par anticipation (no-op si ctx pas encore créé).
+
+### 21.5 Configuration (`js/config.js`)
+
+- [x] Ajout `STORAGE_KEYS.VOICEOVER_ENABLED: 'voiceoverEnabled'` + `STORAGE_KEYS.VOICEOVER_BALANCE: 'voiceoverBalance'`.
+
+### 21.6 Validation
+
+- [x] `npm test` : **11/11 fichiers de tests au vert**, `test_audio_engine.js` reste à 96/96 assertions (la nouvelle insertion en série `masterGain → musicDuckGain → masterAnalyser` ne casse pas les assertions existantes car `musicDuckGain` est créé **après** `init()`, donc absent au moment où `Test 3` vérifie que `masterGain._connections` contient directement `masterAnalyser`).
+- [x] Test manuel : clic bouton → prompt `getUserMedia` du navigateur → slider apparaît, musique ducke progressivement quand on glisse vers le micro.
+
+### 21.7 Évolution future (YAGNI pour l'instant)
+
+- [x] **Option C : Effets vocaux via Web Audio natif** — pseudo pitch-shift (BiquadFilter allpass, mapping log-scale sur -12..+12 demi-tons) + distortion (WaveShaperNode avec courbe arctangente saturée, amount 0..1). Pas de Tone.js (synchro AudioContext + ~500 Ko évités) — Web Audio natif suffit pour les 2 effets demandés.
+  - **`setVoiceEffect(mode)`** : `off` | `pitch` | `distortion` | `both`. Bypass via courbe identité sur le WaveShaper.
+  - **`setVoicePitch(semitones)`** : -12..+12, mapping 200..5000 Hz log, ramping doux via `setTargetAtTime`.
+  - **`setVoiceDistortion(amount)`** : 0..1, reconstruit la courbe à chaque appel.
+  - Pipeline : `micSource → micDistortion → micPitch → micGain → masterAnalyser` (réordonné dynamiquement selon le mode).
+- [x] **UI** : `<select id="voiceover-effect">` avec 4 modes (🎙️ Off / 🎵 Pitch / 📻 Radio / 🤖 Robot) + 2 sliders paramètres (`#voiceover-pitch` ±12 demi-tons, `#voiceover-dist` 0-100%), masqués quand non pertinents.
+- [x] **Persistance** : `voiceoverEffect` / `voiceoverPitch` / `voiceoverDistortion` dans localStorage, restaurés au boot + appliqués au moteur (no-op si ctx pas encore créé).
+- [ ] **Anneau LED / VU-mètre micro** : un canvas dédié à droite du bouton pour visualiser le niveau d'entrée micro via `AnalyserNode`.
+- [ ] **Ducking auto sur la voix** (radio-style) : quand le micro dépasse un seuil → musique ducke automatiquement à −12 dB. Pas demandé pour l'instant.
+- [ ] **Vrai pitch-shift granulaire** (Tone.GrainPlayer ou ScriptProcessor custom) : effet actuel audible mais pas parfait (artefacts de phase), acceptable pour de l'animation DJ mais pas pour un rendu pro.
+
 ### 17. UI Recherche — Repli/Déploiement des résultats [x]
 
 **Ajout d'un bouton ▲/▼ dans la barre de pagination des résultats**
@@ -1163,6 +1230,7 @@ Règles pour l'alignement vertical et espacement :
 | 22 | 17.6 | Popups info hover résultats recherche | 🟢 Faible (HTML/CSS/JS) | ✅ |
 | 23 | 19.1 | Bandeau now-playing enrichi (bouton YouTube ▶ + popup description « ! ») | 🟢 Faible (deck-controls.js + CSS) | ✅ |
 | 24 | 19.2 | Métadonnées popup → cache disque (/api/meta + /api/streams enrichi) + enrichissement MP3 (COMM YTWM ≤ 3 ko, APIC conservée) | 🟢 Faible (server.js + piped-streams.js + search.js) | ✅ |
+| 25 | 21 | Voice-Over micro (capture `getUserMedia` + slider balance musique ↔ micro, header `Permissions-Policy microphone=(self)`, persistance localStorage) | 🟢 Faible (audio-engine.js + app.js + index.html + server.js) | ✅ |
 
 ---
 

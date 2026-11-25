@@ -1885,6 +1885,184 @@
     });
   }
 
+  // ===== Voice-Over (micro) =====
+
+  // Lit l'état armé/désarmé depuis localStorage.
+  function loadVoiceOverEnabled() {
+    try {
+      var v = localStorage.getItem(CFG.STORAGE_KEYS.VOICEOVER_ENABLED);
+      if (v !== null) return v === '1' || v === 'true';
+    } catch (e) { /* ignore */ }
+    return false;
+  }
+
+  // Lit la balance musique ↔ micro depuis localStorage (défaut 50).
+  function loadVoiceOverBalance() {
+    try {
+      var v = localStorage.getItem(CFG.STORAGE_KEYS.VOICEOVER_BALANCE);
+      if (v !== null) {
+        var n = parseInt(v, 10);
+        if (Number.isFinite(n) && n >= 0 && n <= 100) return n;
+      }
+    } catch (e) { /* ignore */ }
+    return 50;
+  }
+
+  function saveVoiceOverEnabled(enabled) {
+    try {
+      localStorage.setItem(CFG.STORAGE_KEYS.VOICEOVER_ENABLED, enabled ? '1' : '0');
+    } catch (e) { /* ignore */ }
+  }
+
+  function saveVoiceOverBalance(balance) {
+    try {
+      localStorage.setItem(CFG.STORAGE_KEYS.VOICEOVER_BALANCE, String(balance));
+    } catch (e) { /* ignore */ }
+  }
+
+  function loadVoiceOverEffect() {
+    try {
+      var v = localStorage.getItem(CFG.STORAGE_KEYS.VOICEOVER_EFFECT);
+      if (v && ['off', 'pitch', 'distortion', 'both'].indexOf(v) !== -1) return v;
+    } catch (e) { /* ignore */ }
+    return 'off';
+  }
+  function saveVoiceOverEffect(mode) {
+    try { localStorage.setItem(CFG.STORAGE_KEYS.VOICEOVER_EFFECT, mode); } catch (e) { /* */ }
+  }
+  function loadVoiceOverPitch() {
+    try {
+      var v = parseInt(localStorage.getItem(CFG.STORAGE_KEYS.VOICEOVER_PITCH), 10);
+      if (Number.isFinite(v) && v >= -12 && v <= 12) return v;
+    } catch (e) { /* */ }
+    return 0;
+  }
+  function saveVoiceOverPitch(semi) {
+    try { localStorage.setItem(CFG.STORAGE_KEYS.VOICEOVER_PITCH, String(semi)); } catch (e) { /* */ }
+  }
+  function loadVoiceOverDistortion() {
+    try {
+      var v = parseInt(localStorage.getItem(CFG.STORAGE_KEYS.VOICEOVER_DISTORTION), 10);
+      if (Number.isFinite(v) && v >= 0 && v <= 100) return v;
+    } catch (e) { /* */ }
+    return 50;
+  }
+  function saveVoiceOverDistortion(pct) {
+    try { localStorage.setItem(CFG.STORAGE_KEYS.VOICEOVER_DISTORTION, String(pct)); } catch (e) { /* */ }
+  }
+
+  // Toggle ON/OFF + branchement des listeners (geste utilisateur → getUserMedia).
+  function initVoiceOver() {
+    var btn = document.getElementById('voiceover-toggle');
+    var slider = document.getElementById('voiceover-fade');
+    var effectSel = document.getElementById('voiceover-effect');
+    var pitchSlider = document.getElementById('voiceover-pitch');
+    var distSlider = document.getElementById('voiceover-dist');
+    if (!btn || !slider) return;
+
+    // Charge l'état persisté et l'applique au moteur.
+    var balance = loadVoiceOverBalance();
+    slider.value = balance;
+    var effect = loadVoiceOverEffect();
+    var pitchVal = loadVoiceOverPitch();
+    var distVal = loadVoiceOverDistortion();
+    if (effectSel) effectSel.value = effect;
+    if (pitchSlider) pitchSlider.value = pitchVal;
+    if (distSlider) distSlider.value = distVal;
+    if (window.AudioEngine) {
+      if (AudioEngine.setVoiceOverBalance) AudioEngine.setVoiceOverBalance(balance);
+      if (AudioEngine.setVoiceEffect) AudioEngine.setVoiceEffect(effect);
+      if (AudioEngine.setVoicePitch) AudioEngine.setVoicePitch(pitchVal);
+      if (AudioEngine.setVoiceDistortion) AudioEngine.setVoiceDistortion(distVal / 100);
+    }
+
+    // Visibilité conditionnelle des paramètres avancés selon le mode.
+    function updateFxVisibility() {
+      var mode = effectSel ? effectSel.value : 'off';
+      if (pitchSlider) pitchSlider.hidden = !(mode === 'pitch' || mode === 'both');
+      if (distSlider) distSlider.hidden = !(mode === 'distortion' || mode === 'both');
+    }
+    updateFxVisibility();
+
+    btn.addEventListener('click', function () {
+      if (!window.AudioEngine) return;
+      var willEnable = !AudioEngine.isVoiceOverActive();
+      if (willEnable) {
+        btn.setAttribute('aria-pressed', 'true');
+        slider.hidden = false;
+        if (effectSel) effectSel.hidden = false;
+        updateFxVisibility();
+        saveVoiceOverEnabled(true);
+        AudioEngine.startVoiceOver().catch(function (err) {
+          // Rollback UI si l'utilisateur refuse le micro.
+          btn.setAttribute('aria-pressed', 'false');
+          slider.hidden = true;
+          if (effectSel) effectSel.hidden = true;
+          if (pitchSlider) pitchSlider.hidden = true;
+          if (distSlider) distSlider.hidden = true;
+          saveVoiceOverEnabled(false);
+          showGlobalError(err && err.message ? err.message : 'Accès micro indisponible');
+        });
+      } else {
+        btn.setAttribute('aria-pressed', 'false');
+        slider.hidden = true;
+        if (effectSel) effectSel.hidden = true;
+        if (pitchSlider) pitchSlider.hidden = true;
+        if (distSlider) distSlider.hidden = true;
+        saveVoiceOverEnabled(false);
+        AudioEngine.stopVoiceOver();
+      }
+    });
+
+    slider.addEventListener('input', function () {
+      var v = parseInt(slider.value, 10);
+      if (!Number.isFinite(v)) return;
+      saveVoiceOverBalance(v);
+      if (window.AudioEngine && AudioEngine.setVoiceOverBalance) {
+        AudioEngine.setVoiceOverBalance(v);
+      }
+    });
+
+    if (effectSel) {
+      effectSel.addEventListener('change', function () {
+        var mode = effectSel.value;
+        saveVoiceOverEffect(mode);
+        if (window.AudioEngine && AudioEngine.setVoiceEffect) {
+          AudioEngine.setVoiceEffect(mode);
+        }
+        updateFxVisibility();
+      });
+    }
+    if (pitchSlider) {
+      pitchSlider.addEventListener('input', function () {
+        var v = parseInt(pitchSlider.value, 10);
+        if (!Number.isFinite(v)) return;
+        saveVoiceOverPitch(v);
+        if (window.AudioEngine && AudioEngine.setVoicePitch) {
+          AudioEngine.setVoicePitch(v);
+        }
+      });
+    }
+    if (distSlider) {
+      distSlider.addEventListener('input', function () {
+        var v = parseInt(distSlider.value, 10);
+        if (!Number.isFinite(v)) return;
+        saveVoiceOverDistortion(v);
+        if (window.AudioEngine && AudioEngine.setVoiceDistortion) {
+          AudioEngine.setVoiceDistortion(v / 100);
+        }
+      });
+    }
+
+    // Au boot, on ne ré-active PAS automatiquement le micro (il faut un geste
+    // utilisateur pour getUserMedia). On mémorise juste l'intention.
+    slider.hidden = true;
+    if (effectSel) effectSel.hidden = true;
+    if (pitchSlider) pitchSlider.hidden = true;
+    if (distSlider) distSlider.hidden = true;
+    btn.setAttribute('aria-pressed', 'false');
+  }
+
   // ===== Bootstrap =====
 
   async function init() {
@@ -1904,6 +2082,7 @@
     initSettingsModal();
     initStepControls();
     initAutoXf();
+    initVoiceOver();
     wireModeButton();
     wireSettingsModeSelect();
     wireFallbackAlert();

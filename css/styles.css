@@ -1202,7 +1202,17 @@ body.mode-piped .dt-seek::-moz-range-thumb { background: #6ee7b7; }
   font-size: 0.82rem;
 }
 .mixer-btn:hover { background: #272d3b; }
-.mixer-btn-toggle[aria-pressed="true"] { background: #2563eb; border-color: #3b82f6; }
+.mixer-btn-toggle[aria-pressed="true"] { background: #16a34a; border-color: #22c55e; color: #fff; }
+.mixer-btn-toggle[aria-pressed="true"]:hover { background: #15803d; }
+
+/* Groupe Voice-Over (micro) — à gauche dans la barre de mixage */
+.mixer-voiceover { flex: 0 0 auto; gap: 6px; }
+.voiceover-slider { width: 90px; }
+.voiceover-effect-select {
+  background: #1f2430; color: #e7e7ea; border: 1px solid #2e3444;
+  border-radius: 4px; padding: 2px 6px; font-size: 0.78rem;
+}
+.voiceover-param-slider { width: 60px; }
 
 /* Case « 🔄 Auto XF » — crossfade progressif armé (tâche 18) */
 .mixer-check {
@@ -1307,14 +1317,10 @@ body.mode-piped .deck-visualizer {
 }
 
 /* Canvas master dans la barre de mixage (spectre global). Hauteur limitée à 40px. */
-.mixer-visualizer {
-  flex: 1 1 120px;
-  display: none;
-  align-self: center;
-  min-width: 90px;
-  height: 40px;
-}
-body.mode-piped .mixer-visualizer { display: flex; }
+.mixer-visualizer { flex: 0 0 auto; width: 96px; min-width:80px; max-width:110px; display:none;height:40px }
+body.mode-piped .mixer-visualizer { display:flex }
+
+
 #master-visualizer {
   width: 100%;
   height: 40px;
