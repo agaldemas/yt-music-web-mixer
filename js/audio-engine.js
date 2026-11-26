@@ -278,6 +278,7 @@
       scratchGain: scratchGain,
       scratchEngaged: false,
       scratchBuffer: null,
+      scratchBufferGeneration: 0,
       scratchNode: null,
       scratchOffset: 0,
       scratchStartTime: 0,
@@ -936,6 +937,7 @@
     }
     chain.scratchBuffer = null;
     chain.scratchLoadPromise = null; // tee: invalide aussi la promesse de décodage en cours
+    chain.scratchBufferGeneration += 1;
   }
 
   // ===== Tee: décodage du buffer scratch à partir d'un ArrayBuffer déjà téléchargé =====
@@ -955,6 +957,8 @@
     if (!ctx) init();
     if (!chain) throw new Error('loadDeckBufferFromBlob: deck absent');
     if (chain.scratchBuffer) return Promise.resolve(chain.scratchBuffer);
+    const generation = chain.scratchBufferGeneration;
+    const isCurrent = () => chains[deckId] === chain && chain.scratchBufferGeneration === generation;
 
     var copy = arrayBuffer.slice(0);
     var _t0 = performance.now();
@@ -962,6 +966,7 @@
       + (copy.byteLength / 1024 / 1024).toFixed(2) + ' Mo (tee, pas de re-fetch)', 'color:#e80');
 
     return ctx.decodeAudioData(copy).then(function (decoded) {
+      if (!isCurrent()) return null;
       chain.scratchBuffer = decoded;
       chain.scratchLoadPromise = null;
       console.debug('%c[scratch:' + deckId + '] loadDeckBufferFromBlob ✓ PRÊT'
@@ -970,6 +975,7 @@
         + '  decode=' + (performance.now() - _t0).toFixed(0) + 'ms', 'color:#0a0;font-weight:bold');
       return decoded;
     }).catch(function (err) {
+      if (!isCurrent()) return null;
       chain.scratchLoadPromise = null;
       console.error('[scratch:' + deckId + '] loadDeckBufferFromBlob decodeAudioData ÉCHEC:', err);
       throw err;

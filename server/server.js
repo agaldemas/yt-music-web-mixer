@@ -1176,7 +1176,8 @@ app.head('/api/download-ready/:id', (req, res) => {
   const id = req.params.id;
   if (!RE_VIDEOID.test(id)) return res.status(400).end();
   res.setHeader('Cache-Control', 'no-store');
-  res.status(canDownloadMp3(id) ? 200 : 404).end();
+  // Un MP3 absent ou en cours d’extraction n’est pas une erreur HTTP.
+  res.status(canDownloadMp3(id) ? 200 : 204).end();
 });
 
 // GET copie uniquement un MP3 terminé, sans lancer d'extraction.

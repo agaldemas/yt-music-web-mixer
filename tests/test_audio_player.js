@@ -23,7 +23,9 @@ window.AudioEngine={
  resume(){return Promise.resolve()},setMuted(id,v){setMutedCalls.push([id,v])},getPitch(){return 0},setPitch(){},getAnalyser(){return null},getContext(){return {}}
 };
 let progressCalls = [];
+const waveforms = {};
 window.DeckTransport = {
+  setWaveform: (deck, buffer) => { waveforms[deck] = buffer; },
   setDownloadProgress: (deck, percent, loaded, total, label) => {
     progressCalls.push({ deck, percent, loaded, total, label });
   },
@@ -68,6 +70,20 @@ const AP=window.AudioPlayer;
  await pLocal.loadLocalFile(localMockFile);
  assert('loadLocalFile charge le Blob audio', pLocal._getAudioElement().src.startsWith('blob:mock-'));
  assert('loadLocalFile marque sourceKind et backendMode', window.state.sourceKind.B === 'local' && window.state.backendMode.B === 'piped');
+ pLocal._getAudioElement()._emit('loadedmetadata');
+ await new Promise(resolve => setImmediate(resolve));
+ assert('le PCM déjà décodé est transmis au transport B', waveforms.B?.duration === 100 && waveforms.A === null);
+
+ let resolveOldDecode;
+ window.AudioEngine.loadDeckBufferFromBlob = () => new Promise(resolve => { resolveOldDecode = resolve; });
+ await pLocal.loadLocalFile(localMockFile);
+ assert('la forme d’onde est effacée au changement de source', waveforms.B === null);
+ pLocal._getAudioElement()._emit('loadedmetadata');
+ await new Promise(resolve => setImmediate(resolve));
+ await pLocal.loadLocalFile(localMockFile);
+ resolveOldDecode({ duration: 999 });
+ await new Promise(resolve => setImmediate(resolve));
+ assert('un décodage périmé ne restaure pas l’ancienne forme d’onde', waveforms.B === null);
 
  p.dispose(); assert('dispose marque le player',p._getState().disposed===true);
  pLocal.dispose();

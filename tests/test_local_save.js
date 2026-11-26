@@ -24,11 +24,16 @@ const { createApp } = require('../server/server');
     win.TextEncoder = TextEncoder;
     win.AbortController = AbortController; // Le signal est consommé par fetch de Node.
     let probes = 0;
+    const readinessStatuses = [];
     win.LocalAPI = {
       available: () => true,
       fetch: (url, options) => {
-        if (url.startsWith('/api/download-ready/')) probes++;
-        return fetch(base + url, { ...options, headers: { 'X-Local-Token': token } });
+        const readiness = url.startsWith('/api/download-ready/');
+        if (readiness) probes++;
+        return fetch(base + url, { ...options, headers: { 'X-Local-Token': token } }).then(res => {
+          if (readiness) readinessStatuses.push(res.status);
+          return res;
+        });
       },
     };
     for (const name of ['mp3-filename', 'local-save']) {
@@ -38,6 +43,7 @@ const { createApp } = require('../server/server');
     win.state.videoIds.A = id;
     await win.LocalSave.updateSaveButtonState('A');
     assert.equal(btn.disabled, true, 'Cache absent : Save reste désactivé');
+    assert.deepEqual(readinessStatuses, [204], 'Un MP3 non prêt est un état normal, pas un 404');
     assert.equal((await win.LocalAPI.fetch('/api/download/' + id)).status, 404, 'GET ne lance pas d’extraction');
 
     await win.LocalSave.updateSaveButtonState('A');
@@ -46,6 +52,7 @@ const { createApp } = require('../server/server');
     await win.LocalSave.updateSaveButtonState('A', null, true);
     assert.equal(btn.disabled, false, 'Le MP3 en cache active Save même en IFrame');
     const head = await win.LocalAPI.fetch('/api/download-ready/' + id, { method: 'HEAD' });
+    assert.equal(head.status, 200);
     assert.equal(await head.text(), '', 'HEAD ne transfère pas le fichier');
     const resp = await win.LocalAPI.fetch('/api/download/' + id);
     assert.equal(resp.headers.get('Content-Type'), 'audio/mpeg');

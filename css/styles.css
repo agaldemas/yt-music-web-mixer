@@ -8,7 +8,6 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  overflow-x: hidden;
 }
 
 button { font-family: inherit; cursor: pointer; }
@@ -457,11 +456,10 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 /* ===== Zone principale : grille 2 colonnes ===== */
 .decks {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   padding: 14px;
-  flex: 1 1 auto;
-  min-height: 0; /* permet le débordement interne */
+  flex: 1 0 auto;
 }
 
 /* Chaque voie */
@@ -571,23 +569,30 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 .search-mode-btn[hidden] { display: none; }
 .search-mode-btn[aria-pressed="true"] { background: #1e3a32; border-color: #2f6b52; color: #6ee7b7; }
 
-/* Résultats : zone autonome, au-dessus des éléments de lecture. */
+/* Ancre sans hauteur : le popup ne modifie pas la géométrie du deck. */
+.deck-results-anchor { position: relative; flex: 0 0 0; z-index: 5; }
+.deck-results-popup {
+  position: absolute;
+  inset: 0 8px auto;
+  max-height: min(360px, 52dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #15181f;
+  border: 1px solid #3b82f6;
+  border-radius: 8px;
+  box-shadow: 0 12px 24px #0009;
+}
+.deck-b .deck-results-popup { border-color: #ec4899; }
 .deck-results {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
   gap: 8px;
-  padding: 10px 14px;
-  max-height: 260px;
-  overflow-y: auto;
-  border-bottom: 1px solid #232733;
-  position: relative;
-  z-index: 2;
-  flex: 0 0 auto;
+  padding: 8px;
 }
 .deck-results:not([data-state="results"]):empty,
 .deck-results[data-state="idle"] { display: none; }
 
-/* Toolbar : pagination uniquement ; le bouton de fermeture est dans la recherche. */
+/* Pagination accessible pendant le défilement des résultats. */
 .deck-results-toolbar {
   display: flex;
   align-items: center;
@@ -595,8 +600,9 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   padding: 4px 14px;
   border-bottom: 1px solid #232733;
   background: #15181f;
-  position: relative;
-  z-index: 2;
+  position: sticky;
+  top: 0;
+  z-index: 4;
 }
 .deck-results-toolbar[hidden] { display: none; }
 .deck-nav-btn {
@@ -619,9 +625,7 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  margin-left: auto;
+  flex: 0 0 36px;
   background: #1f2430;
   color: #e7e7ea;
   border: 1px solid #2e3444;
@@ -632,7 +636,7 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
   line-height: 1;
 }
 .deck-results-toggle:hover { background: #272d3b; border-color: #3b82f6; }
-.deck-results.is-collapsed { display: none; }
+.deck-results-toggle[hidden] { display: none; }
 
 /* État non-resultats : 1 seule colonne centrée */
 .deck-results[data-state="loading"],
@@ -665,10 +669,6 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 .deck-cue-loop,
 .deck-error { position: relative; z-index: 1; }
 .deck-scratch { z-index: 0; }
-
-/* Bouton de fermeture intégré à la barre de recherche : anciennes toolbars
-   déjà présentes dans le DOM restent masquées. */
-.deck-results-toolbar .deck-results-clear { display: none; }
 
 /* Une carte résultat */
 .search-result {
@@ -798,8 +798,8 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 .search-result-popup {
   position: fixed;
   z-index: 1000;
-  max-width: 420px;
-  min-width: 200px;
+  max-width: min(420px, calc(100vw - 16px));
+  min-width: min(200px, calc(100vw - 16px));
   background: #1a1f29;
   border: 1px solid #3b82f6;
   border-radius: 10px;
@@ -862,7 +862,7 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 }
 .search-result-confirm[hidden] { display: none; }
 .confirm-icon { font-size: 0.9rem; }
-.confirm-text { flex: 1 1 auto; min-width: 200px; }
+.confirm-text { flex: 1 1 200px; min-width: 0; }
 .confirm-btn {
   padding: 4px 14px;
   border-radius: 6px;
@@ -878,12 +878,12 @@ body.mode-iframe .player-mode-btn[aria-pressed="false"] {
 
 /* Lecteur */
 .deck-player {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #000;
-  min-height: 200px;
+  min-height: 0;
   position: relative;
   overflow: hidden;
   isolation: isolate;
@@ -1090,11 +1090,12 @@ body.mode-iframe [id^="deck-load-local-"] { display: none; }
 
 /* ===== Barre de transport par voie (play/pause + seek + temps) ===== */
 .deck-transport {
+  --transport-padding-y: 8px;
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 8px 14px 10px;
-  padding: 8px 10px;
+  padding: var(--transport-padding-y) 10px;
   background: #15181f;
   border: 1px solid #232733;
   border-radius: 8px;
@@ -1131,8 +1132,33 @@ body.mode-piped .deck-transport .dt-play:hover { background: #16a34a; }
 }
 .dt-duration { text-align: right; }
 
+.dt-timeline {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+}
+.dt-waveform {
+  display: none;
+  position: absolute;
+  top: calc(-1 * var(--transport-padding-y));
+  left: 9px;
+  width: calc(100% - 18px);
+  height: calc(100% + 2 * var(--transport-padding-y));
+  pointer-events: none;
+  stroke: #60a5fa;
+  stroke-width: 0.8;
+  opacity: 0.55;
+}
+.deck-b .dt-waveform { stroke: #f472b6; }
+body.mode-piped .dt-waveform { display: block; }
+body.mode-piped .dt-seek { position: relative; background: #2e3444aa; }
+
 .dt-seek {
   flex: 1 1 auto;
+  min-width: 0;
   -webkit-appearance: none;
   appearance: none;
   height: 6px;
@@ -1302,10 +1328,27 @@ body.mode-iframe .mixer-voiceover { display: none; }
 }
 
 /* ===== Responsive ===== */
-@media (max-width: 720px) {
-  .decks { grid-template-columns: 1fr; }
-  .mixer-bar { gap: 10px; }
-  .mixer-crossfade { flex: 1 1 100%; order: 99; }
+@media (max-width: 980px) {
+  .decks { grid-template-columns: minmax(0, 1fr); }
+  .mixer-bar { position: static; gap: 10px; }
+  .mixer-group { flex-wrap: wrap; max-width: 100%; }
+  .mixer-crossfade { flex-basis: 100%; min-width: 0; flex-wrap: nowrap; padding-block: 12px; }
+  .mixer-crossfade input, .mixer-master input { min-width: 0; }
+}
+@media (max-width: 560px) {
+  .app-header { flex-wrap: wrap; gap: 10px; padding: 10px; }
+  .header-actions, .modal-tabs { flex-wrap: wrap; }
+  .decks { gap: 10px; padding: 8px; }
+  .mixer-bar { padding: 10px; }
+  .deck-search { gap: 4px; padding-inline: 8px; }
+  .search-input { font-size: 1rem; }
+  .deck-local-row { flex-wrap: wrap; }
+  .deck-dj { flex-wrap: wrap; gap: 6px; padding: 8px; }
+  .dj-eq { gap: 4px; }
+  .dj-gain, .dj-filter, .dj-pitch { padding-inline: 2px; }
+  .dj-bpm { flex: 1 1 100%; flex-direction: row; margin-left: 0; }
+  .dj-reset { width: 24px; height: 24px; }
+  .cl-btn { min-height: 32px; }
 }
 
 /* ============================================================
@@ -1320,11 +1363,10 @@ body.mode-iframe .mixer-voiceover { display: none; }
 }
 body.mode-piped .deck-visualizer {
   display: block;
-  position: static;
+  position: absolute;
+  inset: 0 auto 0 0;
   width: 50%;
-  height: auto;
-  flex: 1 1 50%;
-  min-width: 0;
+  height: 100%;
   border-top: none;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -1718,13 +1760,12 @@ body.mode-piped .deck-scratch {
   flex-direction: column;   /* platine au-dessus, infos en dessous */
   align-items: center;
   justify-content: center;
-  flex: 1 1 50%;
-  width: 50%;
+  flex: 0 0 50%;
   min-width: 0;
   border-radius: 0;
   border: none;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
-  margin: 0;
+  margin: 0 0 0 auto;
 }
 
 /* Disque circulaire de la platine. Dimension responsive : s'adapte à la

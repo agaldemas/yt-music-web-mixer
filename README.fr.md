@@ -8,13 +8,25 @@ L'utilisation recommandée passe par le serveur Express local et `yt-dlp` : le s
 
 ---
 
+## Captures d’écran
+
+### Mode YouTube IFrame
+
+![Deux voies avec les lecteurs YouTube intégrés](app-youtube-mode.png)
+
+### Mode DJ
+
+![Deux voies DJ avec analyseurs de spectre, platines et commandes de mixage](app-dj-mode.png)
+
+[Guide des commandes DJ](help-dj-mix.md)
+
 ## ✨ Fonctionnalités
 
 - **2 voies côte à côte** (A à gauche, B à droite), chacune avec son lecteur et sa barre de recherche.
 - **Mode DJ** : backend Express local + extraction `yt-dlp`, relais audio same-origin et traitements Web Audio pour le vrai crossfade audio, l'EQ, le trim de gain par voie, les filtres, l'analyse et le scratch. Si le backend local est indisponible, le lecteur peut utiliser les flux audio des instances Piped lorsque le CORS le permet.
 - **Recherche YouTube** par mot-clé **sans clé API** grâce à l'API publique [Piped](https://docs.piped.video/) (frontend YouTube alternatif, CORS activé, pas de quota Google). Plusieurs instances Piped sont essayées en cascade pour la fiabilité. Une clé API YouTube Data reste optionnelle pour des résultats plus pertinents et la pagination officielle. Saisie manuelle d'une URL / ID vidéo également possible.
 - **Bouton de bascule de mode de recherche** : quand une clé API est configurée, un bouton 🟢/⚪ permet de forcer la recherche via Piped (préserve le quota Google) ou de revenir à l'API YouTube Data officielle. Le choix est persisté en `localStorage`.
-- **Panneau de résultats** : boutons de pagination précédent/suivant et bouton `▲`/`▼` dans la barre de pagination pour replier ou déployer les résultats sans supprimer leur contenu. Le bouton existant `✕` efface toujours la requête et les résultats.
+- **Popup de résultats** : en mode DJ comme en mode YouTube, les résultats se superposent au lecteur de la voie sans le redimensionner. Sur écran étroit, les deux voies s’empilent.
 - **Popup d'information au survol d'un résultat** : après ~500 ms de survol d'une carte résultat, une info-bulle affiche les **vues**, la **date de publication** (formatée proprement — « il y a 3 mois » pour du récent, « le 21/01/2003 » pour de l'ancien, les timestamps aberrants type `-1` sont rejetés) et la **description YouTube complète** (celle du « more » / détails : tracklist, liens, crédits). La description est récupérée en priorité depuis le backend local (`/api/description/:id`, via `yt-dlp --print description`, cache serveur 24 h), avec fallback API YouTube Data puis Piped. Le popup reste visible **4 s** après la sortie de la carte (survol du popup = délai annulé) pour permettre de **sélectionner/copier** son texte ; un clic en dehors le ferme immédiatement. Un debounce 500 ms évite les rafales de requêtes lors du balayage de la grille.
 - **Détection des live streams** : les résultats en direct affichent un badge **🔴 EN DIRECT** (à la place de la durée) et le popup porte le même badge. Le clic sur un live demande **confirmation** avant chargement (« le chargement peut être long ou indéfini ») — un live n'a pas de fin et l'extraction serveur téléchargerait indéfiniment.
 - **Lien YouTube par résultat** : chaque carte porte une petite icône ▶ rouge (bouton play YouTube, ~18×13 px) qui ouvre la vidéo sur youtube.com dans un nouvel onglet, après confirmation. L'ID de la vidéo n'apparaît que dans le tooltip de l'icône et l'`aria-label` (pas dans la carte, pour préserver la place du titre). Le clic sur l'icône ne charge pas le morceau dans le deck.

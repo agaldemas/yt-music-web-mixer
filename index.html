@@ -159,7 +159,7 @@
       <div class="deck-search">
         <input type="search" class="search-input" data-deck="A" placeholder="Rechercher un morceau…" aria-label="Recherche voie A" />
         <button class="search-btn" type="button" data-deck="A">🔍</button>
-        <button class="deck-results-clear" type="button" data-deck="A" aria-label="Fermer les résultats de la voie A" title="Fermer les résultats" hidden>✕</button>
+        <button class="deck-results-clear" type="button" data-deck="A" aria-label="Effacer la recherche de la voie A" title="Effacer la recherche" hidden>✕</button>
       </div>
 
       <div class="deck-search-mode">
@@ -210,7 +210,10 @@
       <div class="deck-transport" data-deck="A">
         <button class="dt-play" type="button" aria-label="Lecture / Pause"><span class="dt-icon">▶</span></button>
         <span class="dt-current" aria-label="Position">0:00</span>
-        <input class="dt-seek" type="range" min="0" max="0" value="0" step="0.1" aria-label="Position du morceau" />
+        <div class="dt-timeline">
+          <svg class="dt-waveform" viewBox="0 0 600 100" preserveAspectRatio="none" aria-hidden="true"><path /></svg>
+          <input class="dt-seek" type="range" min="0" max="0" value="0" step="0.1" aria-label="Position du morceau" />
+        </div>
         <span class="dt-duration" aria-label="Durée">0:00</span>
       </div>
 
@@ -295,7 +298,7 @@
       <div class="deck-search">
         <input type="search" class="search-input" data-deck="B" placeholder="Rechercher un morceau…" aria-label="Recherche voie B" />
         <button class="search-btn" type="button" data-deck="B">🔍</button>
-        <button class="deck-results-clear" type="button" data-deck="B" aria-label="Fermer les résultats de la voie B" title="Fermer les résultats" hidden>✕</button>
+        <button class="deck-results-clear" type="button" data-deck="B" aria-label="Effacer la recherche de la voie B" title="Effacer la recherche" hidden>✕</button>
       </div>
 
       <div class="deck-search-mode">
@@ -345,7 +348,10 @@
       <div class="deck-transport" data-deck="B">
         <button class="dt-play" type="button" aria-label="Lecture / Pause"><span class="dt-icon">▶</span></button>
         <span class="dt-current" aria-label="Position">0:00</span>
-        <input class="dt-seek" type="range" min="0" max="0" value="0" step="0.1" aria-label="Position du morceau" />
+        <div class="dt-timeline">
+          <svg class="dt-waveform" viewBox="0 0 600 100" preserveAspectRatio="none" aria-hidden="true"><path /></svg>
+          <input class="dt-seek" type="range" min="0" max="0" value="0" step="0.1" aria-label="Position du morceau" />
+        </div>
         <span class="dt-duration" aria-label="Durée">0:00</span>
       </div>
 
@@ -473,6 +479,7 @@
   <script src="js/search.js"></script>
   <script src="js/piped-streams.js"></script>
   <script src="js/audio-engine.js"></script>
+  <script src="js/track-waveform.js"></script>
   <script src="js/audio-player.js"></script>
   <script src="js/mixer.js"></script>
   <script src="js/deck-controls.js"></script>

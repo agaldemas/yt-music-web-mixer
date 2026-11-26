@@ -161,6 +161,7 @@
       // est en cours, on attend la même promesse au lieu de relancer un fetch.
       loadPromise: null,
       loadAbort: null,
+      cancelMetadataDecode: null,
       disposed: false,
       sourceKind: 'youtube',
       // Numéro de chargement : ignore les réponses réseau d'une ancienne
@@ -231,6 +232,8 @@
         state.blobUrl = null;
       }
       state.loadPromise = null;
+      if (state.cancelMetadataDecode) state.cancelMetadataDecode();
+      setWaveform(null);
       if (options.clearBuffer !== false && AudioEngine && typeof AudioEngine.clearDeckBuffer === 'function') {
         try { AudioEngine.clearDeckBuffer(deckId); } catch (_) {}
       }
@@ -271,21 +274,35 @@
       } catch (_) {}
     }
 
+    function setWaveform(buffer) {
+      window.DeckTransport?.setWaveform?.(deckId, buffer);
+    }
+
     function prepareScratchDecode(AE, buffer, generation, scratchEnabled) {
       if (!AE || typeof AE.loadDeckBufferFromBlob !== 'function') return Promise.resolve(null);
       var promise = new Promise(function (resolve) {
-        function decodeWhenReady() {
+        function detachMetadata() {
           audio.removeEventListener('loadedmetadata', decodeWhenReady);
+          state.cancelMetadataDecode = null;
+        }
+        function decodeWhenReady() {
+          detachMetadata();
           if (!isCurrent(generation)) return resolve(null);
-          AE.loadDeckBufferFromBlob(deckId, buffer).then(resolve, function () { resolve(null); });
+          Promise.resolve().then(function () {
+            if (!isCurrent(generation)) return null;
+            return AE.loadDeckBufferFromBlob(deckId, buffer);
+          }).then(resolve, function () { resolve(null); });
         }
         if (audio.readyState >= 1 && audio.duration) {
           decodeWhenReady();
         } else {
+          state.cancelMetadataDecode = function () { detachMetadata(); resolve(null); };
           audio.addEventListener('loadedmetadata', decodeWhenReady);
         }
       });
-      promise.catch(function () {});
+      promise.then(function (decoded) {
+        if (decoded && isCurrent(generation)) setWaveform(decoded);
+      });
       if (typeof AE.setDeckBufferLoadPromise === 'function') AE.setDeckBufferLoadPromise(deckId, promise);
       return promise;
     }
@@ -690,15 +707,16 @@
           // Stocke le buffer brut complet sur le player pour les découpes de scratch ultérieures
           state.localArrayBuffer = rawBuf;
           
-          prepareScratchDecode(AE, rawBuf.slice(0), operation.generation, true);
           audio.addEventListener('loadedmetadata', function validateDuration() {
             audio.removeEventListener('loadedmetadata', validateDuration);
             var max = (window.YT_CONFIG && window.YT_CONFIG.MAX_TRACK_DURATION_SEC) || 14400;
             if (Number(audio.duration) > max && isCurrent(operation.generation)) {
+              state.loadGeneration += 1;
               resetSource({ abort: true, clearBuffer: true, detachMedia: true });
               reportLoadError(new Error('Cette piste dépasse la limite de ' + Math.round(max / 60) + ' minutes.'));
             }
           });
+          prepareScratchDecode(AE, rawBuf, operation.generation, true);
           audio.src = state.blobUrl;
           audio.load();
           var fileName = file.name || 'audio-local';

@@ -446,6 +446,14 @@ Visualiser le signal audio en temps réel via les `AnalyserNode` du moteur audio
 - [x] **Performance** : `requestAnimationFrame` (pas `setInterval`), `fftSize=2048` (bon compromis résolution/perf), limiter le FPS à 30 si besoin.
 - [x] Exposer : `window.Visualizer = { createVisualizer, start, stop }`
 
+### 8.1 Forme d’onde derrière le curseur de lecture DJ [x]
+
+- [x] **Réutiliser la forme d’onde du séquenceur.** Le tracé SVG est partagé via `js/track-waveform.js` ; les marqueurs et commandes du séquenceur restent propres au séquenceur.
+- [x] **Intégrer le fond du transport A/B.** Le SVG décoratif est superposé derrière le slider entre les deux temps, hors du flux et sans interception du pointeur. Il est masqué en mode YouTube IFrame.
+- [x] **Réutiliser le PCM déjà décodé.** Le lecteur DJ réutilise le décodage du scratch (`js/audio-player.js`). Le pic maximal remplit la hauteur disponible sans changer le son ni lancer un second chargement audio.
+- [x] **Synchroniser avec le cycle de vie des pistes.** Le tracé est vidé au changement de source ou de mode, ignore les décodages périmés et reste visible en pause. Le SVG s’adapte à la largeur sans recalculer les pics. Le slider reste indépendant du tracé.
+- [x] **Vérifier.** Chromium avec un MP3 local sur A et B : transport inchangé à 56 px, tracé sur les 54 px intérieurs aux largeurs 320, 390 et 1440 px, seek vérifié et tracés effacés en IFrame. `npm run check:syntax` et `npm test` passent.
+
 ---
 
 ## 9. Détection BPM & beatmatch [x]
@@ -1047,6 +1055,8 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 
 ### 17. UI Recherche — Repli/Déploiement des résultats [x]
 
+> Historique : la section 17.7 remplace la grille intégrée et déplace son bouton de repli près du champ de recherche.
+
 **Ajout d'un bouton ▲/▼ dans la barre de pagination des résultats**
 
 - [x] Bouton `deck-results-toggle` créé dynamiquement dans `ensureToolbar()` (à droite des boutons ‹ ›) avec `margin-left: auto`
@@ -1126,6 +1136,13 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 - [ ] Mobile/tactile → pas de popup, tap sur la carte fonctionne normalement (chargement du morceau)
 - [ ] Pagination ‹ › → popup réinitialisé, pas d'info fantôme de la page précédente
 - [ ] Grille vidée (nouvelle recherche / ✕) → aucun popup résiduel dans le DOM
+
+### 17.7 Résultats flottants et interface responsive (DJ / YouTube) [x]
+
+- [x] **Superposer les résultats** : panneau défilable ancré sous la recherche de chaque voie (`js/search.js`, `css/styles.css`), hors du flux. Pagination, chargement et erreurs restent dans le popup sans déplacement ni redimensionnement de la zone de lecture.
+- [x] **Gérer les interactions** (`js/search.js`) : ouvrir à la recherche ; fermer après sélection, avec ▲, Échap ou au clic extérieur. ▼ rouvre les résultats sans nouvel appel ; ✕ efface. La confirmation des directs et les détails des résultats restent disponibles.
+- [x] **Adapter les deux modes du mixeur** (`css/styles.css`) : une colonne à 980 px et moins, vidéo au format 16:9 et commandes adaptées aux écrans étroits.
+- [x] **Vérifier** : `tests/test_search_panel.js` couvre le repli, le focus clavier, la sélection, les réponses tardives et la confirmation du direct. Dans Chromium, avec 24 résultats simulés, les rectangles des deux lecteurs restent identiques avant, pendant et après la recherche aux largeurs 320, 390, 768, 900, 1000 et 1440 px, dans les deux modes, sans débordement horizontal. `npm test` passe.
 
 ---
 
@@ -1211,7 +1228,7 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 ## 19.4 Bandeau et sauvegarde locale communs aux modes DJ et YouTube [x]
 
 - [x] Le bandeau reçoit le titre du résultat dès la sélection. En IFrame, il ignore les métadonnées d’une vidéo précédente et peut se replier sur `GET /api/video-info/:id` (cache ou oEmbed, sans yt-dlp). Sans titre, il affiche « Titre indisponible », pas l’ID. Les statuts « Préparation… », progression et erreur de chargement audio s’affichent à part en DJ.
-- [x] **Load local** est réservé au mode DJ ; **Save local** est visible dans les deux modes et actif uniquement pour un MP3 terminé en cache. `HEAD /api/download-ready/:id` contrôle sa présence, sans corps ni extraction. Le client ne relance plus ce contrôle une fois le MP3 confirmé ; `GET /api/download/:id` copie le fichier ou renvoie 404 si le cache ne le contient plus, sans interrompre la lecture ni lancer yt-dlp.
+- [x] **Load local** est réservé au mode DJ ; **Save local** est visible dans les deux modes et actif uniquement pour un MP3 terminé en cache. `HEAD /api/download-ready/:id` contrôle sa présence, sans corps ni extraction : `200` si le MP3 est prêt, `204` s’il est absent ou en préparation, sans erreur fantôme dans la console. Le client ne relance plus ce contrôle une fois le MP3 confirmé ; `GET /api/download/:id` copie le fichier ou renvoie 404 si le cache ne le contient plus, sans interrompre la lecture ni lancer yt-dlp.
 - [x] `js/mp3-filename.js` partage les mêmes règles de nommage entre navigateur et serveur : `<titre>-<artiste>.mp3`, `<titre>.mp3` sans artiste et `audio-<id>.mp3` sans titre. Le bouton réutilise les métadonnées du bandeau.
 - [x] Un seul chemin de sauvegarde pour les deux modes : réponse locale authentifiée, Blob et lien `<a download>`. Le gestionnaire de téléchargements du navigateur écrit le fichier ; l’application n’utilise plus `showSaveFilePicker` ni `createWritable`. Le choix du dossier dépend des réglages du navigateur.
 - [x] Régressions : `test_now_playing.js`, `test_local_save.js`. Mesure Chromium en dossier de test : 129 Mo copiés en 389 ms, SHA-256 identique au MP3 en cache. Le temps dépend du navigateur et du dossier de destination.
@@ -1249,6 +1266,8 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 | 25 | 21 | Voice-Over micro (capture `getUserMedia` + slider balance musique ↔ micro, header `Permissions-Policy microphone=(self)`, persistance localStorage) | 🟢 Faible (audio-engine.js + app.js + index.html + server.js) | ✅ |
 | 26 | 19.3 | Préchargement borné des descriptions, hors du chemin d’affichage | 🟡 Réseau / quotas | ✅ |
 | 27 | 19.4 | Bandeau fiable et téléchargement du MP3 en cache dans les deux modes | 🟡 Intégration | ✅ |
+| 29 | 17.7 | Résultats flottants et mixeur responsive dans les deux modes | 🟢 Interface | ✅ |
+| 30 | 8.1 | Forme d’onde du séquenceur réutilisée dans le transport DJ | 🟢 Interface | ✅ |
 | 31 | 23 | Séquenceur responsive, alignement de la grille et de la batterie | 🟡 Interface | ✅ |
 
 ---

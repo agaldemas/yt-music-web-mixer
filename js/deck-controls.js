@@ -447,6 +447,12 @@
     setDownloadStatus(deck, '', false);
   }
 
+  function setWaveform(deck, buffer) {
+    var root = $('.deck-transport', deck);
+    var path = root && root.querySelector('.dt-waveform path');
+    if (path && window.TrackWaveform) window.TrackWaveform.render(path, buffer);
+  }
+
   window.DeckTransport = {
     bind: bind,
     onStateChange: onStateChange,
@@ -454,6 +460,7 @@
     setDownloadProgress: setDownloadProgress,
     setDownloadError: setDownloadError,
     clearDownloadStatus: clearDownloadStatus,
+    setWaveform: setWaveform,
     start: start,
     fmtTime: fmtTime,
   };

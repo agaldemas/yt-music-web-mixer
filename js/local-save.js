@@ -49,7 +49,7 @@
     return api.fetch('/api/download-ready/' + encodeURIComponent(id), {
       method: 'HEAD', cache: 'no-store', signal: controller.signal,
     }).then(function (res) {
-      check.ready = res.ok;
+      check.ready = res.status === 200;
     }).catch(function () {
       check.ready = false;
     }).finally(function () {

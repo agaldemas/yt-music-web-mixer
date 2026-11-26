@@ -1563,11 +1563,6 @@
       onSelect: function (videoId, info) {
         onSearchSelect(deck, videoId, info);
       },
-      onSearchStart: function () {
-        // Une recherche ne doit pas laisser visible une erreur de lecture
-        // appartenant au morceau précédent.
-        clearDeckError(deck);
-      },
       onError: function () { /* déjà affichée dans le panneau */ },
     });
     state.searches[deck] = search;

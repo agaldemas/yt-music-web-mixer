@@ -188,7 +188,7 @@
   // ===== Rendu =====
 
   // Construit le DOM d'un résultat (bouton cliquable : vignette + titre + durée)
-  function buildResultEl(deck, video, onSelect, onMarkPlayed) {
+  function buildResultEl(video, onPick) {
     const card = document.createElement('div');
     card.className = 'search-result' + (video.isLive ? ' search-result-is-live' : '');
     card.dataset.videoId = video.id;
@@ -242,27 +242,8 @@
       const open = window.confirm('Ouvrir cette vidéo YouTube dans un nouvel onglet ?\n\nID : ' + video.id);
       if (!open) event.preventDefault();
     });
-    selectBtn.addEventListener('click', function () {
-      if (video.isLive) return showStreamConfirm(deck, card, video, onSelect, onMarkPlayed);
-      commitSelect(deck, card, video, onSelect, onMarkPlayed);
-    });
+    selectBtn.addEventListener('click', function () { onPick(video, selectBtn); });
     return card;
-  }
-
-  // Appelé par le clic sur un résultat confirmé (stream ou non)
-  function commitSelect(deck, btn, video, onSelect, onMarkPlayed) {
-    // Garde-fou final : seul un véritable ID YouTube (11 caractères, pas un
-    // mot tout-minuscules comme "groundation") peut atteindre le lecteur.
-    if (!extractVideoId(String(video.id || ''))) {
-      return;
-    }
-    onSelect(video.id, {
-      title: video.title,
-      uploader: video.uploaderName,
-      thumbnailUrl: safeImgUrl(video.thumbnails.medium?.url),
-    });
-    // 3. Met à jour le badge "En cours"
-    if (typeof onMarkPlayed === 'function') onMarkPlayed(video.id);
   }
 
   // ===== Popup d'info partagé (1 par panneau) =====
@@ -485,7 +466,8 @@
     let left = cr.right + 8;
     if (left + pw > vw - 8) left = cr.left - pw - 8;
     // En dernier recours : centré sur la carte
-    if (left < 8) left = Math.max(8, (cr.left + cr.right - pw) / 2);
+    if (left < 8) left = (cr.left + cr.right - pw) / 2;
+    left = Math.max(8, Math.min(left, vw - pw - 8));
     // Vertical : aligné sur le haut de la carte, ou remonté si débordement
     let top = cr.top;
     if (top + ph > vh - 8) top = vh - ph - 8;
@@ -550,21 +532,8 @@
 
   // ===== Confirmation live stream =====
 
-  let confirmEl = null; // bandeau de confirmation partagé
-
-  function ensureConfirm() {
-    if (!confirmEl || !confirmEl.parentNode) {
-      confirmEl = document.createElement('div');
-      confirmEl.className = 'search-result-confirm';
-      confirmEl.setAttribute('role', 'alertdialog');
-      confirmEl.hidden = true;
-      panelEl.parentElement.insertAdjacentElement('afterbegin', confirmEl);
-    }
-    return confirmEl;
-  }
-
-  function showStreamConfirm(deck, btn, video, onSelect, onMarkPlayed) {
-    const el = ensureConfirm();
+  function showStreamConfirm(el, onConfirm, onCancel) {
+    hidePopup();
     el.innerHTML = ''
       + '<span class="confirm-icon">🔴</span>'
       + '<span class="confirm-text">Live stream — le chargement peut être long ou indéfini. Charger quand même ?</span>'
@@ -573,29 +542,19 @@
 
     el.querySelector('.confirm-no').addEventListener('click', function () {
       el.hidden = true;
+      onCancel();
     });
     el.querySelector('.confirm-yes').addEventListener('click', function () {
-      el.hidden = true;
-      commitSelect(deck, btn, video, onSelect, onMarkPlayed);
+      onConfirm();
     });
     el.hidden = false;
-  }
-
-  // Nettoie popup + confirm si le panneau est vidé (nouvelle recherche, ✕, pagination)
-  function cleanupOverlays() {
-    clearTimeout(hoverTimer);
-    clearTimeout(popupHideTimer);
-    hoverTimer = null;
-    popupHideTimer = null;
-    hidePopup();
-    if (confirmEl) confirmEl.hidden = true;
+    el.querySelector('.confirm-no').focus();
   }
 
   // Rendu du panneau selon l'état UI (data-state sur .deck-results)
   function renderPanel(panelEl, state, payload) {
     panelEl.dataset.state = state;
     panelEl.innerHTML = '';
-    cleanupOverlays(); // popup + bandeau de confirmation ne doivent pas survivre au vidage
 
     switch (state) {
       case UI_STATE.IDLE:
@@ -832,7 +791,6 @@
     callbacks = callbacks || {};
     const onSelect = callbacks.onSelect || function () {};
     const onError = callbacks.onError || function () {};
-    const onSearchStart = callbacks.onSearchStart || function () {};
 
     const panelEl = document.querySelector('.deck-results[data-deck="' + deck + '"]');
     const inputEl = document.querySelector('.search-input[data-deck="' + deck + '"]');
@@ -868,20 +826,58 @@
     var pipedCacheQuery = ''; // requête associée au cache
     var lastWasPiped = false; // les résultats affichés viennent de Piped
     var lastActiveId = null; // dernier videoId sélectionné (badge "En cours")
-    var resultsCollapsed = false; // panneau replié sans vider son contenu
+    const popup = document.createElement('div');
+    popup.className = 'deck-results-popup';
+    popup.id = 'deck-results-popup-' + deck;
+    const anchor = document.createElement('div');
+    anchor.className = 'deck-results-anchor';
+    panelEl.before(anchor);
+    anchor.appendChild(popup);
+    popup.appendChild(panelEl);
+
+    const confirmEl = document.createElement('div');
+    confirmEl.className = 'search-result-confirm';
+    confirmEl.setAttribute('role', 'group');
+    confirmEl.setAttribute('aria-label', 'Confirmer la lecture du direct');
+    confirmEl.hidden = true;
+    panelEl.before(confirmEl);
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'deck-results-toggle';
+    toggleBtn.dataset.deck = deck;
+    toggleBtn.setAttribute('aria-controls', popup.id);
+    btnEl.after(toggleBtn);
+    toggleBtn.addEventListener('click', function () { setCollapsed(!popup.hidden); });
+
+    if (clearResultsBtnEl) clearResultsBtnEl.addEventListener('click', function () {
+      clear();
+      inputEl.focus({ preventScroll: true });
+    });
+
+    document.addEventListener('pointerdown', function (event) {
+      if (popup.hidden || popup.contains(event.target) || popupEl?.contains(event.target)
+          || toggleBtn.contains(event.target) || inputEl.contains(event.target)
+          || btnEl.contains(event.target)) return;
+      setCollapsed(true);
+    });
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Escape' || event.defaultPrevented || popup.hidden) return;
+      if (event.target.closest?.('[role="dialog"]')) return;
+      setCollapsed(true);
+    });
 
     function setState(state, payload) {
-      // Une recherche (ou son échec) doit toujours être visible : on déplie
-      // le panneau s'il avait été replié via le bouton ▲.
-      if (state !== UI_STATE.IDLE && resultsCollapsed) setCollapsed(false);
+      hidePopup();
+      confirmEl.hidden = true;
       renderPanel(panelEl, state, payload);
+      popup.scrollTop = 0;
       syncToolbar(state);
-      if (clearResultsBtnEl) {
-        clearResultsBtnEl.hidden = state !== UI_STATE.RESULTS
-          && state !== UI_STATE.WARNING
-          && state !== UI_STATE.ERROR
-          && state !== UI_STATE.NO_RESULTS;
+      toggleBtn.hidden = state === UI_STATE.IDLE;
+      if (state === UI_STATE.IDLE || state === UI_STATE.LOADING) {
+        setCollapsed(state === UI_STATE.IDLE);
       }
+      if (clearResultsBtnEl) clearResultsBtnEl.hidden = state === UI_STATE.IDLE;
     }
 
     // Marque un résultat comme "en cours de lecture" (badge ▶).
@@ -906,14 +902,12 @@
       }
     }
 
-    // Barre d'outils résultats : boutons pagination ‹ › + bouton effacer ✕
+    // Barre d'outils du popup : pagination ‹ ›.
     var SVG_PREV = '<svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><polygon points="10,1 2,6 10,11"/></svg>';
     var SVG_NEXT = '<svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor"><polygon points="2,1 10,6 2,11"/></svg>';
 
-    function ensureToolbar() {
-      var toolbar = panelEl.parentElement.querySelector('.deck-results-toolbar[data-deck="' + deck + '"]');
-      if (toolbar) return toolbar;
-      toolbar = document.createElement('div');
+    function createToolbar() {
+      const toolbar = document.createElement('div');
       toolbar.className = 'deck-results-toolbar';
       toolbar.dataset.deck = deck;
       toolbar.hidden = true;
@@ -934,44 +928,30 @@
       nextBtn.innerHTML = SVG_NEXT;
       nextBtn.addEventListener('click', function () { loadPage('next'); });
 
-      var toggleBtn = document.createElement('button');
-      toggleBtn.type = 'button';
-      toggleBtn.className = 'deck-results-toggle';
-      toggleBtn.setAttribute('aria-label', 'Masquer les résultats');
-      toggleBtn.title = 'Masquer les résultats';
-      toggleBtn.textContent = '▲';
-      toggleBtn.setAttribute('aria-expanded', 'true');
-      toggleBtn.addEventListener('click', function () {
-        setCollapsed(!resultsCollapsed);
-      });
-
       toolbar.appendChild(prevBtn);
       toolbar.appendChild(nextBtn);
-      toolbar.appendChild(toggleBtn);
-      panelEl.insertAdjacentElement('beforebegin', toolbar);
-      if (clearResultsBtnEl) clearResultsBtnEl.addEventListener('click', function () { clear(); });
+      popup.prepend(toolbar);
       return toolbar;
     }
 
-    // Replie / déplie le panneau sans vider son contenu.
-    // Appelé aussi à chaque nouvelle recherche : un panneau laissé replié
-    // masquerait les résultats frais et l'utilisateur croirait la recherche
-    // bloquée (seul un rechargement de page remettait le panneau visible).
+    const toolbar = createToolbar();
+
     function setCollapsed(collapsed) {
-      resultsCollapsed = !!collapsed;
-      panelEl.classList.toggle('is-collapsed', resultsCollapsed);
-      var toolbar = ensureToolbar();
-      var toggleBtn = toolbar && toolbar.querySelector('.deck-results-toggle');
-      if (!toggleBtn) return;
-      toggleBtn.textContent = resultsCollapsed ? '▼' : '▲';
-      toggleBtn.setAttribute('aria-expanded', resultsCollapsed ? 'false' : 'true');
-      toggleBtn.setAttribute('aria-label', resultsCollapsed ? 'Afficher les résultats' : 'Masquer les résultats');
-      toggleBtn.title = resultsCollapsed ? 'Afficher les résultats' : 'Masquer les résultats';
+      if (collapsed && popup.contains(document.activeElement)) {
+        (toggleBtn.hidden ? inputEl : toggleBtn).focus({ preventScroll: true });
+      }
+      if (collapsed) {
+        hidePopup();
+        confirmEl.hidden = true;
+      }
+      popup.hidden = collapsed;
+      toggleBtn.textContent = collapsed ? '▼' : '▲';
+      toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+      toggleBtn.title = (collapsed ? 'Afficher' : 'Masquer') + ' les résultats de la voie ' + deck;
+      toggleBtn.setAttribute('aria-label', toggleBtn.title);
     }
 
     function syncToolbar(state) {
-      var toolbar = ensureToolbar();
-      if (!toolbar) return;
       toolbar.hidden = state !== UI_STATE.RESULTS;
       var prevBtn = toolbar.querySelector('.deck-nav-prev');
       var nextBtn = toolbar.querySelector('.deck-nav-next');
@@ -1065,10 +1045,6 @@
         setState(UI_STATE.IDLE);
         return;
       }
-
-      // Toute nouvelle recherche invalide l'erreur de lecture précédente :
-      // l'erreur du deck concerne le morceau chargé, pas la recherche.
-      onSearchStart(query);
 
       // 1) Fallback URL / ID brut : pas besoin de clé API (pas de pagination)
       const directId = extractVideoId(query);
@@ -1233,14 +1209,27 @@
     function renderPipedPage(videos) {
       setState(UI_STATE.RESULTS);
       videos.forEach(function (v) {
-        panelEl.appendChild(buildResultEl(
-          deck,
-          v,
-          onSelect,
-          markActive
-        ));
+        panelEl.appendChild(buildResultEl(v, pickResult));
       });
       if (lastActiveId) markActive(lastActiveId);
+    }
+
+    function pickResult(video, button) {
+      if (!extractVideoId(video.id)) return;
+      function select() {
+        setCollapsed(true);
+        onSelect(video.id, {
+          title: video.title,
+          uploader: video.uploaderName,
+          thumbnailUrl: safeImgUrl(video.thumbnails.medium?.url),
+        });
+        markActive(video.id);
+      }
+      if (video.isLive) {
+        showStreamConfirm(confirmEl, select, function () { button.focus({ preventScroll: true }); });
+      } else {
+        select();
+      }
     }
 
     function clear() {

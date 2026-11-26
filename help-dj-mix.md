@@ -40,10 +40,10 @@ Chaque deck (voie A à gauche, voie B à droite) contient, de haut en bas :
 
 | Zone | Rôle |
 |------|------|
-| **Recherche** | Champ de recherche YouTube (clé API) ou Piped (sans clé) + résultats. Bouton **✕** pour fermer les résultats. |
+| **Recherche** | Champ de recherche YouTube (clé API) ou Piped (sans clé). Les résultats se superposent au lecteur. Sélectionner un morceau, appuyer sur **Échap**, cliquer en dehors ou utiliser **▲** ferme le popup ; **▼** le rouvre et **✕** efface la recherche. |
 | **Now playing** | Miniature, titre, uploader, badge de mode (DJ · DSP / YT IFrame) |
 | **Fichier local** | Deux boutons : **📁 Load local** (importer un fichier audio depuis le disque) et **💾 Save local** (télécharger le MP3 en cours) |
-| **Lecteur + visualiseur + scratch** | Canvas spectre/waveform (remplace la vidéo YouTube en mode DJ) + **platine vinyle scratch** à droite |
+| **Lecteur + visualiseur + scratch** | Canvas spectre/waveform (remplace la vidéo YouTube en mode DJ) + **platine vinyle scratch** à droite. En mode DJ, la forme d’onde sous le curseur de lecture représente le morceau entier et reste visible en pause. |
 | **Barre de transport** | ▶/⏸ lecture/pause, curseur de position, temps courant / durée |
 | **Bloc DJ** (trim + EQ + filtre + pitch + BPM) | Fader **GAIN** (trim de voie), faders verticaux LOW/MID/HIGH, knob FILTER, fader PITCH, badge BPM |
 | **Bloc CUE & LOOP** | Boutons de cue et boucles (détaillés ci-dessous) |

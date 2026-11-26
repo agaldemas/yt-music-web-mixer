@@ -26,6 +26,7 @@ const DECK_HTML = `
   <div class="deck" data-deck="A">
     <input class="search-input" data-deck="A" />
     <button class="search-btn" data-deck="A">OK</button>
+    <button class="deck-results-clear" data-deck="A" hidden>Effacer</button>
     <div class="deck-results" data-deck="A" data-state="idle"></div>
   </div>`;
 
@@ -94,7 +95,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   {
     const win = makeDom();
     installFetch(win, { google: 'ok' });
-    const search = win.YTSearch.create('A', {});
+    const selected = [];
+    const search = win.YTSearch.create('A', { onSelect: id => selected.push(id) });
     const panel = win.document.querySelector('.deck-results[data-deck="A"]');
 
     const prefetch = [];
@@ -114,21 +116,39 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     ok(panel.dataset.state === 'results', 'T1 : état = results');
 
     // Replier via le bouton ▲ de la barre d'outils
-    const toggle = win.document.querySelector('.deck-results-toolbar[data-deck="A"] .deck-results-toggle');
+    const toggle = win.document.querySelector('.deck-results-toggle[data-deck="A"]');
     ok(!!toggle, 'T1 : bouton de repli présent');
     toggle.click();
-    ok(panel.classList.contains('is-collapsed'), 'T1 : panneau replié après clic ▲');
+    ok(toggle.getAttribute('aria-expanded') === 'false', 'T1 : panneau replié après clic ▲');
 
     // Nouvelle recherche : le panneau doit se déplier et se remplir
     search.search('peter tosh');
     await wait(30);
-    ok(!panel.classList.contains('is-collapsed'), 'T1 : nouvelle recherche déplie le panneau');
+    ok(toggle.getAttribute('aria-expanded') === 'true', 'T1 : nouvelle recherche déplie le panneau');
     ok(panel.querySelectorAll('.search-result').length === 2, 'T1 : résultats de la 2e recherche affichés');
     ok(toggle.textContent === '▲', 'T1 : libellé du bouton revenu à ▲');
 
-    // Le repli manuel doit rester possible après une recherche
+    const input = win.document.querySelector('.search-input');
+    input.value = 'peter tosh';
+    panel.querySelector('.search-result-select').focus();
+    panel.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    ok(toggle.getAttribute('aria-expanded') === 'false' && win.document.activeElement === toggle,
+      'T1 : Échap ferme le panneau et rend le focus au bouton');
+    const requestCount = prefetch.length;
     toggle.click();
-    ok(panel.classList.contains('is-collapsed'), 'T1 : repli manuel encore fonctionnel');
+    ok(panel.querySelectorAll('.search-result').length === 2 && prefetch.length === requestCount,
+      'T1 : réouverture sans requête ni perte de résultats');
+    win.document.body.dispatchEvent(new win.Event('pointerdown', { bubbles: true }));
+    ok(toggle.getAttribute('aria-expanded') === 'false', 'T1 : clic extérieur ferme le panneau');
+    toggle.click();
+    panel.querySelector('.search-result-select').click();
+    ok(selected[0] === 'AAAAAAAAAAA' && toggle.getAttribute('aria-expanded') === 'false',
+      'T1 : sélectionner charge le morceau et ferme le panneau');
+    ok(input.value === 'peter tosh', 'T1 : le repli conserve la requête');
+    win.document.querySelector('.deck-results-clear').click();
+    ok(!input.value && !panel.querySelector('.search-result') && toggle.hidden,
+      'T1 : effacer supprime la requête et le contenu');
+    win.close();
   }
 
   // --- Test 2 : API YouTube injoignable → repli Piped ---------------------
@@ -174,6 +194,36 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     await wait(30);
     ok(panel.dataset.state === 'warning', 'T4 : état = warning sur quota');
     ok(/Quota/.test(panel.textContent), 'T4 : message quota affiché');
+  }
+
+  // Fermer pendant le chargement, puis vérifier la confirmation des directs.
+  {
+    const win = makeDom();
+    let respond;
+    win.fetch = () => new Promise(resolve => { respond = resolve; });
+    const selected = [];
+    const search = win.YTSearch.create('A', { onSelect: id => selected.push(id) });
+    const request = search.search('concert en direct');
+    const toggle = win.document.querySelector('.deck-results-toggle');
+    ok(toggle.getAttribute('aria-expanded') === 'true', 'T5 : chargement visible dans le popup');
+    toggle.click();
+    const body = JSON.parse(PIPED_BODY);
+    body.items[0].isLive = true;
+    respond({ ok: true, json: () => Promise.resolve(body) });
+    await request;
+    ok(toggle.getAttribute('aria-expanded') === 'false', 'T5 : une réponse tardive ne rouvre pas le popup');
+    toggle.click();
+    const result = win.document.querySelector('.search-result-select');
+    const confirm = win.document.querySelector('.search-result-confirm');
+    result.click();
+    ok(!confirm.hidden && selected.length === 0, 'T5 : le direct attend une confirmation');
+    confirm.querySelector('.confirm-no').click();
+    ok(confirm.hidden && win.document.activeElement === result, 'T5 : annuler revient au résultat');
+    result.click();
+    confirm.querySelector('.confirm-yes').click();
+    ok(selected[0] === 'AAAAAAAAAAA' && toggle.getAttribute('aria-expanded') === 'false',
+      'T5 : le direct confirmé charge le morceau et ferme le popup');
+    win.close();
   }
 
   console.log(failures ? `\n❌ ${failures} assertion(s) en échec` : '\nSearch panel: OK');

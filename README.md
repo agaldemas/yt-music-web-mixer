@@ -8,13 +8,25 @@ The recommended setup uses the local Express server and `yt-dlp`: the server ext
 
 ---
 
+## Screenshots
+
+### YouTube IFrame mode
+
+![Two decks with embedded YouTube players](app-youtube-mode.png)
+
+### DJ mode
+
+![Two DJ decks with spectrum analysers, scratch platters and mixing controls](app-dj-mode.png)
+
+[DJ controls guide (French)](help-dj-mix.md)
+
 ## ✨ Features
 
 - **2 side-by-side decks** (A on the left, B on the right), each with its own player and search bar.
 - **DJ mode**: local Express backend + `yt-dlp` extraction, same-origin audio relay and Web Audio processing for real audio crossfading, EQ, per-deck gain trim, filters, analysis and scratch. If the local backend is unavailable, the player can fall back to audio streams from Piped instances when CORS allows it.
 - **YouTube search** by keyword **without any API key** thanks to the public [Piped](https://docs.piped.video/) API (alternative YouTube frontend, CORS-enabled, no Google quota). Multiple Piped instances are tried in cascade for reliability. A YouTube Data API key remains optional for more relevant results and official pagination. Manual entry of a URL / video ID is also supported.
 - **Search mode toggle button**: when an API key is configured, a 🟢/⚪ button lets you force search via Piped (preserves Google quota) or switch back to the official YouTube Data API. The choice is persisted in `localStorage`.
-- **Search results panel**: previous/next pagination controls plus a `▲`/`▼` toggle in the pagination toolbar to collapse or expand results without clearing their content. The existing `✕` button still clears the query and results.
+- **Search results overlay**: in both playback modes, each deck shows results above its player without resizing it. On narrow screens the decks stack vertically.
 - **Hover information popup**: after ~500 ms over a result card, a tooltip shows views, a validated publication date (relative for recent videos, exact date for older videos) and the complete YouTube description (the content revealed by YouTube's “more”/details: tracklists, links and credits). The description is fetched first from the local backend (`/api/description/:id`, `yt-dlp --print description`, server-side 24-hour cache), then YouTube Data API, then Piped. The popup stays visible for **4 seconds** after leaving the card, and hovering the popup cancels the closing timer so its text can be selected/copied. A click outside closes it immediately. A 500 ms debounce prevents request bursts while moving across the grid.
 - **Live stream detection**: live results show a **🔴 LIVE** badge instead of duration. Clicking a live result asks for confirmation because a live stream has no known end and server extraction may run indefinitely.
 - **YouTube link per result**: each card includes a compact red YouTube play icon (~18×13 px). It shows the video ID in its tooltip, asks for confirmation, then opens the video on YouTube in a new tab without loading it into the deck.
@@ -445,7 +457,7 @@ yt-music-web-mixer/
 5. Move the **crossfader** to gradually transition from A to B. In DJ mode this uses Web Audio gain nodes; in IFrame mode it controls player volumes.
 6. Adjust the **master volume** as needed.
 7. **DJ mode only**: use the **GAIN** trim first to balance track levels, then tweak the per-deck **EQ** (Low/Mid/High), **DJ filter**, and **pitch/tempo** slider. Every DJ control shows its live value below the slider and has a nearby **↺** reset button. Watch the **BPM** badge (red during acquisition, **orange** as soon as a provisional BPM appears, **green** when locked). The **RAZ** (↺) button under the BPM value restarts detection at any time. Press **SYNC** to match deck B's tempo to deck A.
-8. The search results panel can be browsed with `‹` / `›`, collapsed with `▲`, and reopened with `▼`; collapsing preserves the result cards and does not clear the search. Use `✕` to clear the query and results.
+8. Browse results with `‹` / `›`. Choosing a track, pressing Escape, clicking outside, or using `▲` closes the overlay. Use `▼` beside Search to reopen it or `✕` to clear the query and results.
 9. Optional: **Sync B → A** to align B to A's position.
 9bis. **Microphone voice-over (🎤)**: in the mixer bar, click the microphone button on the left to start the capture (the browser will ask for permission once). The slider that appears next to it dials the music ↔ mic balance: at 0 you hear only the music, at 100 only your voice, in the middle the music ducks automatically. An effect selector (🎙️ Off / 🎵 Pitch / 📻 Radio / 🤖 Robot) appears to the right of the slider: choose **Pitch** to thicken or brighten your voice (-12..+12 semitones via the dedicated slider), **Radio** for a saturated talk-show effect (intensity via the 0-100% slider), or **Robot** to combine both. The two parameter sliders only appear when relevant for the selected mode. Disabled in IFrame mode.
 10. **Drum sequencer (optional)**: open `http://127.0.0.1:5400/sequencer` (or click 🥁 in the app header). Click any step in the 9×16 grid to toggle it (orange = on, blue = playhead), then press **▶️ Play** to loop at the chosen BPM. Each track has its own **Volume / Mute / Solo** controls on the left. Use **🗑 Clear** to wipe the grid, **🎲 Randomize** to generate a musical pattern, **🎵 Presets** for Rock 4/4 / House / Trap / Funk / Reggae, or **Rythmes** for the 20 Musicca patterns. The hi-hat pedal only toggles the open/closed memory state (no sound on the pedal itself) — the sound is produced only when you hit the hi-hat cymbal.
