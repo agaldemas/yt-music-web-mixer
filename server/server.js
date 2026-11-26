@@ -60,8 +60,8 @@ const HOST = process.env.HOST || '127.0.0.1';
 const CACHE_DIR = path.join(__dirname, '..', 'cache', 'audio');
 try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch (_) {}
 
-// yt-dlp : appelé paresseusement (uniquement dans extractAudio).
 const YTDLP_BIN = process.env.YTDLP_BIN || 'yt-dlp';
+const YTDLP_VERSION_TIMEOUT_MS = 60000;
 let YTDLP_BIN_TIMEOUT_MS = Math.max(10000, Number(process.env.YTDLP_BIN_TIMEOUT_MS) || 600000); // 10 min
 const FFMPEG_TIMEOUT_MS = 60000;
 let MAX_TRACK_DURATION_SEC = Math.max(60, Number(process.env.MAX_TRACK_DURATION_SEC) || 14400); // 4h
@@ -1219,12 +1219,18 @@ app.use((req, res) => res.sendStatus(404));
 
 
 // ===== Démarrage =====
-// On ne teste QUE ffmpeg (rapide). yt-dlp est testé paresseusement au 1er
-// /api/audio/:id (son --version met ~8s, on ne le met pas sur la voie critique).
+// Le diagnostic de démarrage vérifie les deux binaires en parallèle.
+// La version standalone de yt-dlp peut mettre plus de 10 s à répondre.
 function checkExecutable(bin, args, timeout) {
   return new Promise((resolve) => {
     execFile(bin, args, { timeout: timeout }, (err, stdout) => {
-      if (err) return resolve(false);
+      if (err) {
+        const reason = err.code === 'ENOENT' ? 'introuvable'
+          : err.killed ? 'délai dépassé (' + timeout / 1000 + ' s)'
+          : 'échec (' + (err.code ?? err.signal ?? 'inconnu') + ')';
+        console.warn('[démarrage] ' + path.basename(bin) + ' : ' + reason);
+        return resolve(false);
+      }
       const text = String(stdout || '').trim();
       const m = /(?:version\s+)?(\S+)/i.exec(text);
       resolve(m ? m[1] : true);
@@ -1232,7 +1238,7 @@ function checkExecutable(bin, args, timeout) {
   });
 }
 function checkFfmpeg() { return checkExecutable('ffmpeg', ['-version'], FFMPEG_TIMEOUT_MS); }
-function checkYtdlp() { return checkExecutable(YTDLP_BIN, ['--version'], 10000); }
+function checkYtdlp() { return checkExecutable(YTDLP_BIN, ['--version'], YTDLP_VERSION_TIMEOUT_MS); }
 
 async function startServer() {
   const values = await Promise.all([checkFfmpeg(), checkYtdlp()]);
@@ -1250,7 +1256,7 @@ async function startServer() {
       else console.log('  ⚠ ffmpeg INTROUVABLE — le mode DJ local est désactivé.');
       console.log('  Cache audio : ' + CACHE_DIR);
       console.log('  Cookies navigateur : ' + (YTDLP_COOKIES_BROWSER === 'none' ? 'désactivés (défaut sûr)' : YTDLP_COOKIES_BROWSER));
-      console.log('  yt-dlp : ' + (ytdlpAvailable ? 'détecté' : 'INTROUVABLE') + '.');
+      console.log('  yt-dlp : ' + (ytdlpAvailable ? 'détecté' : 'indisponible') + '.');
       console.log('  Limite piste DJ : ' + Math.round(MAX_TRACK_DURATION_SEC / 60) + ' min.');
       console.log('  Ctrl+C pour arrêter.');
       console.log('');

@@ -529,6 +529,18 @@ Le bouton play/pause par voie existait déjà (`js/deck-controls.js`), mais il s
 
 ---
 
+### 10.3 Sauvegarder une boucle DJ en MP3 [ ]
+
+**Résultat attendu :** depuis les marqueurs IN/OUT du deck A ou B, enregistrer **une seule répétition** de l’extrait sous le nom proposé `sample-<youtube-id>.mp3`. La source est le MP3 en cache, à son tempo d’origine : on ne capture ni la sortie master, ni le micro, ni l’autre deck. La lecture peut continuer pendant l’export.
+
+- [ ] **1 — Mutualiser la sauvegarde navigateur (§19.4).** Dans `js/local-save.js:62`, isoler la partie commune de `saveCurrent` qui reçoit la réponse authentifiée, crée le Blob, déclenche le lien `<a download>` puis le nettoie. Le morceau entier et la boucle doivent appeler cette même fonction ; seuls les paramètres de l’extrait et le nom proposé changent. Pas de second téléchargeur, de sélecteur de fichier ni de dossier de samples géré par l’application. Vérifier d’abord la non-régression avec `node tests/test_local_save.js`.
+- [ ] **2 — Découper le MP3 en cache.** Étendre la route authentifiée `GET /api/download/:id` (`server/server.js:1183`) avec une variante IN/OUT ; sans paramètres, conserver la copie intégrale à l’identique. Vérifier côté serveur que les deux bornes sont finies et que `0 ≤ IN < OUT ≤ durée du morceau`. Produire avec ffmpeg uniquement l’intervalle demandé, en secondes, sans modifier le cache ni relancer `yt-dlp`. Si le cache a été évincé ou si la découpe échoue, signaler l’erreur, ne jamais livrer le morceau entier à la place et nettoyer les ressources temporaires.
+- [ ] **3 — Inscrire la provenance dans l’extrait.** Réutiliser la convention de commentaire ID3 `YTWM:` (§19.2 ; `server/server.js:804`). Limiter **le commentaire complet à 512 caractères**, préfixe et JSON compris. Y conserver en priorité l’ID YouTube, IN, OUT, la durée `OUT − IN` en secondes et le BPM du morceau source (pas le BPM modifié par le pitch). Si le BPM n’est pas disponible, écrire `null` plutôt qu’une valeur inventée. Le titre et l’artiste source sont facultatifs : les raccourcir ou les omettre avant sérialisation, sans tronquer le JSON ni perdre les champs obligatoires.
+- [ ] **4 — Relier l’action aux marqueurs des deux decks.** Ajouter « Save loop » près de IN/OUT. Réutiliser les marqueurs de `wireDeckCueLoop` (`js/app.js:1421`) et l’état de disponibilité du cache (`js/local-save.js:33`). Activer l’action en mode DJ uniquement, avec un ID YouTube, un MP3 prêt et des bornes valides, même si la répétition est en pause. Au clic, figer ID, bornes et BPM du même deck ; un changement de piste pendant l’export ne doit pas mélanger audio, nom et tags.
+- [ ] **5 — Valider le fichier réellement téléchargé.** Sur un MP3 de test local contenant trois passages distincts, placer IN/OUT autour du passage central. Vérifier avec ffmpeg/ffprobe que seul ce passage est présent, que la durée correspond à `OUT − IN` à la tolérance d’encodage MP3 près, et que le commentaire relu est valide et respecte la limite, y compris avec un titre Unicode long ou un BPM inconnu. Tester A et B, bornes absentes/inversées, cache absent et mode IFrame. Dans le navigateur, vérifier le nom proposé et un seul téléchargement ; vérifier aussi que « Save local » restitue toujours le MP3 intégral, octet pour octet. Terminer par `npm test`.
+
+---
+
 ## 11. Scratch / platine vinyle — `js/scratch.js` [ ]
 
 Permettre de « scratcher » un morceau (lecture avant/arrière à vitesse variable pilotée par un geste) comme sur une platine vinyle DJ. **Feature avancée — mode Piped uniquement.**
@@ -1266,6 +1278,7 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 | 25 | 21 | Voice-Over micro (capture `getUserMedia` + slider balance musique ↔ micro, header `Permissions-Policy microphone=(self)`, persistance localStorage) | 🟢 Faible (audio-engine.js + app.js + index.html + server.js) | ✅ |
 | 26 | 19.3 | Préchargement borné des descriptions, hors du chemin d’affichage | 🟡 Réseau / quotas | ✅ |
 | 27 | 19.4 | Bandeau fiable et téléchargement du MP3 en cache dans les deux modes | 🟡 Intégration | ✅ |
+| 28 | 10.3 | Sauvegarde d’une boucle DJ en MP3 via « Save local » | 🟡 Découpe audio et métadonnées ID3 | [ ] |
 | 29 | 17.7 | Résultats flottants et mixeur responsive dans les deux modes | 🟢 Interface | ✅ |
 | 30 | 8.1 | Forme d’onde du séquenceur réutilisée dans le transport DJ | 🟢 Interface | ✅ |
 | 31 | 23 | Séquenceur responsive, alignement de la grille et de la batterie | 🟡 Interface | ✅ |
@@ -1280,7 +1293,6 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 - [x] **Validation** : Chromium à 320, 390, 768, 1024 et 1440 px avec contrôle de l’alignement, des débordements, des menus, des zones de frappe et de la forme d’onde avec MP3. `npm run check:syntax` et `npm test` passent. Aucun changement serveur.
 
 ---
-
 
 ## Notes
 
