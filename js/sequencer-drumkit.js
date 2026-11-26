@@ -25,6 +25,7 @@ window.SEQUENCER_CFG.DRUM_PADS.forEach((pad) => {
 });
 
 document.addEventListener('keydown', (e) => {
+    if (e.target.closest?.('#sample-track')) return;
     const pad = KEY_TO_PAD.get(e.key.toLowerCase());
     if (!pad || e.repeat) return;
     if (e.key === ' ') e.preventDefault();

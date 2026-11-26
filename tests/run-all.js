@@ -16,6 +16,7 @@ const TESTS = [
   'test_scratch_slice.js',
   'test_local_scratch_e2e.js',
   'test_factory_presets.js',
+  'test_sequencer_sample_track.js',
   'test_search_panel.js',
   'test_now_playing.js',
   'test_local_save.js',

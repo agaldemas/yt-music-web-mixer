@@ -61,12 +61,48 @@
     <main>
         <section id="sequencer-container" class="sequencer-layout">
             <div id="instrument-names" class="instrument-col"></div>
-            <div class="right-col">
-                <div id="step-matrix" class="steps-col"></div>
-                <section id="drum-kit-view" class="drum-kit-view">
-                    <!-- Batterie alignée sous le bloc steps, même largeur -->
-                </section>
-            </div>
+            <div id="step-matrix" class="steps-col"></div>
+            <section id="sample-track" aria-labelledby="sample-track-title">
+                <div class="sample-track-left">
+                    <h2 id="sample-track-title">Piste audio</h2>
+                    <div class="track-name-wrap sample-track-controls">
+                        <span id="sample-name" class="track-name">Aucun fichier</span>
+                        <button id="sample-load" type="button" class="track-sound-toggle" aria-label="Charger un échantillon audio">Charger</button>
+                        <input id="sample-file" type="file" accept="audio/*,.mp3" hidden>
+                        <fieldset id="sample-options" aria-label="Mode de lecture" disabled>
+                            <label class="sample-loop-control">
+                                <input id="sample-loop" type="checkbox" checked>
+                                <span class="track-sound-toggle">Boucler</span>
+                            </label>
+                        </fieldset>
+                        <button id="sample-remove" type="button" class="track-sound-toggle" aria-label="Retirer l’échantillon audio" title="Retirer l’échantillon audio" disabled>×</button>
+                    </div>
+                    <p id="sample-status" role="status"></p>
+                </div>
+                <div class="sample-waveform">
+                    <p id="sample-empty">Dépose un fichier audio ici.</p>
+                    <div id="sample-timeline" role="group" aria-label="Forme d’onde et bornes du passage" hidden>
+                        <div class="sample-marker-lane sample-start-lane">
+                            <span class="sample-marker-label" id="sample-start-time"></span>
+                            <div id="sample-start" class="sample-marker" title="Déplacer le début" aria-hidden="true"></div>
+                        </div>
+                        <div class="sample-waveform-plot">
+                            <svg viewBox="0 0 600 100" preserveAspectRatio="none" aria-hidden="true">
+                                <path id="sample-peaks" />
+                            </svg>
+                            <div class="sample-waveform-shade" aria-hidden="true"></div>
+                            <span id="sample-duration" aria-label="Durée totale"></span>
+                        </div>
+                        <div class="sample-marker-lane sample-end-lane">
+                            <div id="sample-end" class="sample-marker" title="Déplacer la fin" aria-hidden="true"></div>
+                            <span class="sample-marker-label" id="sample-end-time"></span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section id="drum-kit-view" class="drum-kit-view">
+                <!-- Batterie alignée sous le bloc steps, même largeur -->
+            </section>
         </section>
     </main>
 
@@ -88,6 +124,7 @@
     <script src="js/sequencer-drumkit.js"></script>      <!-- initDrumKit, triggerPadDown/Up -->
     <script src="js/sequencer-presets.js"></script>      <!-- loadMusiccaPreset, initRythmesMenu, loadFactoryPreset -->
     <script src="js/sequencer-transport.js"></script>    <!-- setBpm, togglePlay, stopSequencer -->
+    <script src="js/sequencer-sample-track.js"></script> <!-- Piste audio locale indépendante -->
 
     <!-- Orchestrateur (doit être chargé EN DERNIER) -->
     <script src="js/sequencer-app.js"></script>

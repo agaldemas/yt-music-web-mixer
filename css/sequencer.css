@@ -605,11 +605,15 @@ footer {
   --seq-row-height: 44px;
   --seq-row-gap: 6px;
   --seq-grid-width: 900px;
+  --seq-instrument-width: 400px;
+  --seq-column-gap: 16px;
 }
 
 .sequencer-layout {
-  display: flex;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: max-content max-content;
+  column-gap: var(--seq-column-gap);
+  row-gap: var(--seq-row-gap);
   align-items: flex-start;
   width: 100%;
 }
@@ -620,20 +624,156 @@ footer {
      (jusqu'à ~150px sur les noms de samples longs type
      "acoustic / hihat-closed") + padding 12+12 = ~360px min.
      400px laisse une marge confortable et reste raisonnable à l'écran. */
-  width: 400px;
+  width: var(--seq-instrument-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: var(--seq-row-gap);
 }
 
-.right-col {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  width: var(--seq-grid-width);
-  max-width: var(--seq-grid-width);
-  flex-shrink: 0;
+.sequencer-layout > #drum-kit-view { grid-column: 2; margin-top: 14px; }
+
+#sample-track {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: var(--seq-instrument-width) minmax(0, 1fr);
+  width: min(100%, calc(100vw - 32px));
+  gap: 0 var(--seq-column-gap);
+  align-items: stretch;
+}
+.sample-track-left {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  background: #1a1e27;
+}
+#sample-track .sample-track-controls {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 4px 5px;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  padding: 4px 0 0;
+  border: 0;
+  background: transparent;
+}
+#sample-track-title {
+  margin: 0;
+  font-size: 0.75rem;
+}
+#sample-name {
+  flex: 1 1 8rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#sample-options {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+.sample-loop-control { position: relative; }
+.sample-loop-control input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.sample-loop-control span { display: inline-block; }
+.sample-loop-control input:checked + span { color: #93c5fd; border-color: #3b82f6; }
+.sample-loop-control input:focus-visible + span { outline: 2px solid #93c5fd; outline-offset: 2px; }
+#sample-options:disabled, #sample-remove:disabled { opacity: 0.5; }
+#sample-options:disabled .track-sound-toggle, #sample-remove:disabled { cursor: default; }
+#sample-status {
+  margin: 6px 0 0;
+  color: #bfc7d5;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+#sample-status:empty { margin: 0; }
+#sample-status.sample-error { color: #fca5a5; }
+.sample-waveform {
+  min-width: 0;
+  padding: 6px 16px 4px;
+  border: 1px solid #2e3444;
+  border-radius: 6px;
+  background: #101217;
+}
+#sample-track.sample-dragover .sample-track-left,
+#sample-track.sample-dragover .sample-waveform { border-color: #60a5fa; background: #1e3a5f; }
+#sample-empty { margin: 6px 0; color: #bfc7d5; font-size: 0.78rem; }
+.sample-waveform-plot { position: relative; height: 102px; background: #08090b; }
+.sample-waveform-plot svg { display: block; width: 100%; height: 100%; }
+#sample-peaks { stroke: #cbd0d7; stroke-width: 0.72; }
+.sample-waveform-shade {
+  position: absolute;
+  inset: 0;
+  border-inline: 1px solid transparent;
+  background: linear-gradient(to right, #08090bbb var(--sample-start), transparent var(--sample-start),
+    transparent var(--sample-end), #08090bbb var(--sample-end));
+}
+#sample-duration {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  padding: 1px 4px;
+  background: #08090b;
+  color: #f3f4f6;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+.sample-marker-lane { position: relative; height: 28px; }
+.sample-start-lane { --marker-position: var(--sample-start); color: #93c5fd; }
+.sample-end-lane { --marker-position: var(--sample-end); color: #fdba74; }
+.sample-marker {
+  position: absolute;
+  top: 0;
+  left: var(--marker-position);
+  transform: translateX(-50%);
+  width: 32px;
+  height: 26px;
+  touch-action: none;
+  user-select: none;
+  cursor: ew-resize;
+}
+.sample-marker::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border: 8px solid transparent;
+  border-top: 0;
+  border-bottom: 11px solid currentColor;
+}
+.sample-start-lane .sample-marker { top: auto; bottom: 0; height: 19px; }
+.sample-start-lane .sample-marker::before {
+  top: 5px;
+  border-top: 11px solid currentColor;
+  border-bottom: 0;
+}
+.sample-locked .sample-marker { cursor: default; opacity: 0.55; }
+.sample-marker-label {
+  position: absolute;
+  top: 16px;
+  left: clamp(2.5rem, var(--marker-position), calc(100% - 2.5rem));
+  transform: translateX(-50%);
+  font-size: 0.73rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.sample-start-lane .sample-marker-label { top: 0; }
+@media (max-width: 800px) {
+  #sample-track {
+    position: sticky;
+    left: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--seq-row-gap);
+  }
+}
+@media (max-width: 560px) {
+  #sample-track { width: min(100%, calc(100vw - 20px)); }
 }
 
 .steps-col {
@@ -906,6 +1046,7 @@ footer {
 
 @media (max-width: 560px) {
   main { padding: 10px; }
+  .playback-btns { flex-wrap: wrap; justify-content: center; }
   .control-group { font-size: 0.78rem; }
   .drum-kit-stage {
     position: relative;

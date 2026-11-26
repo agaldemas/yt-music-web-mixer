@@ -34,7 +34,7 @@
 - [x] **Matrice de pas (Step Sequencer UI)** :
   - [x] Grille 9 pistes × 16 pas avec séparation visuelle des 4 temps (groupes de 4 doubles-croches via `.step:nth-child(4n+1)`).
   - [x] Styles des boutons de pas (état inactif, actif/allumé `.active`, surbrillance du playhead `.playing`).
-  - [x] En-têtes de piste : **nom + contrôles Volume/Mute/Solo + bouton de choix du son** (cf. §4.2 — `track-mix` à gauche, `track-name`, `track-sound-toggle` à droite, dans cet ordre). L'import audio utilisateur reste à faire (voir §6).
+  - [x] En-têtes de piste : **nom + contrôles Volume/Mute/Solo + bouton de choix du son** (cf. §4.2 — `track-mix` à gauche, `track-name`, `track-sound-toggle` à droite, dans cet ordre). L’import audio utilisateur se fait dans une piste indépendante (voir §6).
 - [x] **Batterie vue du dessus (Drum Kit Top-View UI)** :
   - [x] Rendu basé sur l'image réelle `battery-set-above.jpeg` en fond de scène (les fûts/cymbales sont DANS l'image, pas en CSS).
   - [x] Composition conforme à l'image : 3 toms (High, Mid + Low/Floor à droite), caisse claire, grosse caisse (pédale), charleston à gauche (2 cymbales + pédale), 2 cymbales (Crash + Ride).
@@ -66,7 +66,7 @@
   - [x] **Manifest** dans `js/sequencer-samples.js` (mapping `DRUM_KITS[kit].samples[note] → filename`).
   - [x] **Cache de players** (`PLAYER_CACHE: Map<note, {player, currentUrl}>`) avec rechargement auto quand l'URL change.
   - [x] `CREDITS.md` à la racine documente les sources et licences.
-  - [ ] **Lecteur d'échantillons personnalisés (Custom Samples uploadés par l'utilisateur)** — *non implémenté* (voir §6).
+  - [x] **Piste audio indépendante pour les fichiers utilisateur** — voir §6 ; aucun remplacement des sons de batterie.
 
 ---
 
@@ -202,14 +202,24 @@ Objectif : sauvegarder le pattern courant (grille 9×16 + BPM + nom saisi par l'
 
 ---
 
-## 6. 📁 Importation d'échantillons audio personnalisés
+## 6. 📁 Piste audio indépendante
 
-- [ ] **Sélection de fichiers locaux** — *non implémenté*. Le pipeline est prêt (`Tone.Player` + cache `PLAYER_CACHE`) : il suffira d'ajouter un `<input type="file">` par pad qui charge le fichier via `URL.createObjectURL()` et pousse dans `padConfig[note].sampleUrl`.
-- [ ] **Drag & Drop** — *non implémenté*.
-- [ ] **Gestion des sources** (affichage du nom, reset) — *non implémenté*.
-- [ ] **Capture depuis le mixer (extraction d'une tranche de MP3)** — *à faire plus tard* (chantier séparé utilisant la route existante `/api/scratch/:id?t=N`).
+- [x] **Import local** : choisir ou déposer un MP3 (ou un autre fichier audio décodable par le navigateur, 20 Mio maximum) dans la piste sous la grille. Le nom s’affiche et le bouton Retirer vide la piste. Le fichier reste en mémoire jusqu’au rechargement de la page ; aucun envoi au serveur.
+- [x] **Passage à jouer** : déplacer les marqueurs Début/Fin sur la forme d’onde, puis lire une fois ou en boucle. Les sons des pads restent inchangés.
+- [x] **Transport commun** : Play lance l’audio avec la batterie, Pause conserve la position, Stop remet l’audio au début du passage. Le son passe par le volume Master et garde sa vitesse d’origine (pas d’alignement automatique sur le BPM).
+- [ ] **Capture directe depuis le mixer** : hors périmètre de cette piste.
 
-> Le pipeline samples est en place (toggle Synth/Sample par pad, 2 kits CC0/PD inclus). Manque uniquement l'UI d'import utilisateur et la persistance localStorage du `padConfig`.
+### 6.1 Forme d’onde et sélection visuelle du passage [x]
+
+**Références visuelles :** capture #3 pour la disposition actuelle ; capture #4 pour la forme d’onde, dans l’esprit de SoundCloud. Le panneau central ne doit plus afficher le nom du fichier.
+
+- [x] **6.1.1 — Intégrer la piste sous la grille.** Dans `sequencer.html` et `css/sequencer.css`, le cadre de gauche contient le titre « Piste audio », le nom du fichier et les commandes Charger, Boucler et Retirer, dans le style du séquenceur. Il a la même hauteur que le cadre de la forme d’onde à droite. Sur écran étroit, la forme d’onde passe sous les commandes. Le nom du fichier reste séparé des messages de chargement ou d’erreur.
+- [x] **6.1.2 — Dessiner la forme d’onde du fichier entier.** `js/sequencer-sample-track.js` calcule et normalise les pics de tous les canaux à partir de l’`AudioBuffer` décodé. Le tracé occupe 102 px, hors marqueurs. Les marqueurs peuvent bouger sans redécoder le fichier. Le retrait efface la forme d’onde ; un échec de remplacement conserve le fichier précédent. Aucun changement serveur ni nouvelle dépendance.
+
+Validation de la mise en page : avec un MP3 chargé à 1 440 px de largeur dans Chromium, les deux cadres mesurent 170 px de haut. À 375 px, la forme d’onde reste dans la largeur visible.
+- [x] **6.1.3 — Ajouter les marqueurs Début et Fin.** Placer le triangle Début au-dessus de la forme d’onde, pointé vers le bas, et le triangle Fin en dessous, pointé vers le haut. Les déplacer uniquement à la souris ou au tactile, sans réglage clavier. Afficher le temps au-dessus du triangle Début et sous le triangle Fin (format `m:ss,cc`, ex. `0:09,02`). Le libellé suit le triangle et se met à jour pendant le glissement, sans attendre le relâchement. Garder les deux temps lisibles aux bords et lorsque les triangles sont proches (décaler les libellés verticalement si nécessaire). Surligner le passage entre les deux et atténuer l’extérieur. Remplacer les champs numériques de la barre par ces poignées, sans maintenir deux états concurrents : le transport et les marqueurs partagent les mêmes bornes (`clip.start` et `clip.end` dans `js/sequencer-sample-track.js`). Initialiser sur le fichier entier, empêcher le croisement et conserver `0 ≤ début < fin ≤ durée`. Garder le verrouillage du réglage pendant la lecture, ainsi que le comportement actuel de Boucler, Pause et Stop.
+- [x] **6.1.4 — Préserver le clavier de la batterie.** Ne pas ajouter de raccourci ni de gestionnaire clavier pour les poignées Début et Fin ; elles ne font pas partie de l’ordre de tabulation. Garder les boutons de la piste dans `#sample-track` (`sequencer.html:65`) pour réutiliser la protection de `js/sequencer-drumkit.js:27` : Espace sur un bouton de la piste ne déclenche pas la grosse caisse. Hors de la piste, vérifier que les raccourcis `B`, Espace, `S`, `H`, `T`, `Y`, `G`, `C` et `R` restent inchangés.
+- [x] **6.1.5 — Vérifier le rendu et le transport.** Adapter `tests/test_sequencer_sample_track.js:43` à la nouvelle UI : import, déplacement des bornes, bornes qui ne se croisent pas, passage réellement joué, boucle, pause/reprise, stop et retrait. Vérifier dans le navigateur avec `oh-yeah.mp3` (ou un audio local équivalent) : nom à gauche uniquement, forme d’onde au centre, deux marqueurs manipulables, temps au-dessus du triangle Début et sous le triangle Fin, mis à jour pendant le glissement et lisibles même aux bords ou lorsque les marqueurs se rapprochent, durée totale visible et disposition sans débordement sur mobile. Terminer par `node tests/test_sequencer_sample_track.js`, `npm run check:syntax` et `npm test`.
 
 ---
 
@@ -310,6 +320,5 @@ Objectif : sauvegarder le pattern courant (grille 9×16 + BPM + nom saisi par l'
 - Sécurité : CSP complète documentée dans `SECURITY.md`.
 
 **Ce qui reste à faire (prochains milestones)** :
-- Import de samples custom (input file + drag & drop) — pipeline prêt, UI à faire.
 - Intégration des tests `validate_sequencer*` dans `tests/run-all.js` (déjà créés mais pas exécutés par `npm test`).
 - Tests unitaires du moteur audio (Tone.js mocké).
