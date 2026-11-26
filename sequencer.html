@@ -60,8 +60,12 @@
 
     <main>
         <section id="sequencer-container" class="sequencer-layout">
-            <div id="instrument-names" class="instrument-col"></div>
-            <div id="step-matrix" class="steps-col"></div>
+            <div class="sequencer-matrix-scroll" role="region" aria-label="Grille des 16 pas" tabindex="0">
+                <div class="sequencer-matrix-layout">
+                    <div id="instrument-names" class="instrument-col"></div>
+                    <div id="step-matrix" class="steps-col"></div>
+                </div>
+            </div>
             <section id="sample-track" aria-labelledby="sample-track-title">
                 <div class="sample-track-left">
                     <h2 id="sample-track-title">Piste audio</h2>

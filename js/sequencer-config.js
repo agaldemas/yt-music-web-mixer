@@ -40,6 +40,32 @@ const DRUM_PADS = [
 const gridEl = document.getElementById('step-matrix');
 const drumKitEl = document.getElementById('drum-kit-view');
 
+// Positionne le menu ouvert dans la fenêtre, y compris après un scroll ou un resize.
+let activeSequencerMenu;
+function positionSequencerMenu(button, menu) {
+    activeSequencerMenu = { button, menu };
+    const { clientWidth, clientHeight } = document.documentElement;
+    const margin = 8;
+    const gap = 4;
+    const rect = button.getBoundingClientRect();
+    const below = clientHeight - rect.bottom - gap - margin;
+    const above = rect.top - gap - margin;
+    const preferredHeight = menu.matches('.rythmes-menu, .factory-menu') ? 320 : 360;
+    const openAbove = below < Math.min(menu.scrollHeight, preferredHeight) && above > below;
+    menu.style.maxHeight = Math.max(0, Math.min(preferredHeight, openAbove ? above : below)) + 'px';
+    menu.style.left = Math.max(margin, Math.min(rect.left, clientWidth - margin - menu.offsetWidth)) + 'px';
+    const top = openAbove ? rect.top - gap - menu.offsetHeight : rect.bottom + gap;
+    menu.style.top = Math.max(margin, Math.min(top, clientHeight - margin - menu.offsetHeight)) + 'px';
+}
+function repositionSequencerMenu(event) {
+    const entry = activeSequencerMenu;
+    if (entry && !entry.menu.hidden && event.target !== entry.menu) {
+        positionSequencerMenu(entry.button, entry.menu);
+    }
+}
+window.addEventListener('resize', repositionSequencerMenu);
+window.addEventListener('scroll', repositionSequencerMenu, true);
+
 // --- État global du séquenceur ---
 let isPlaying = false;
 let currentStep = 0;

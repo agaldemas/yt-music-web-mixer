@@ -1249,8 +1249,19 @@ Fonctionnalité d'animation radio/DJ : capturer le micro de l'utilisateur et le 
 | 25 | 21 | Voice-Over micro (capture `getUserMedia` + slider balance musique ↔ micro, header `Permissions-Policy microphone=(self)`, persistance localStorage) | 🟢 Faible (audio-engine.js + app.js + index.html + server.js) | ✅ |
 | 26 | 19.3 | Préchargement borné des descriptions, hors du chemin d’affichage | 🟡 Réseau / quotas | ✅ |
 | 27 | 19.4 | Bandeau fiable et téléchargement du MP3 en cache dans les deux modes | 🟡 Intégration | ✅ |
+| 31 | 23 | Séquenceur responsive, alignement de la grille et de la batterie | 🟡 Interface | ✅ |
 
 ---
+
+## 23. Mise en page responsive du séquenceur [x]
+
+- [x] **Grille et piste audio** (`sequencer.html`, `css/sequencer.css`) : chaque instrument reste aligné avec ses 16 pas. Sur écran large, la forme d’onde s’aligne sous les pas et les commandes restent à gauche. Sur téléphone, seuls les pas défilent horizontalement ; les instruments restent visibles.
+- [x] **Batterie interactive** (`.drum-kit-stage`, `.drum-pad`) : l’image conserve ses proportions et les zones de frappe leurs positions et tailles relatives. La scène s’aligne sous les pas sur écran large et prend toute la largeur utile sur téléphone.
+- [x] **Menu supérieur** (`#sequencer-header`, `.transport-controls`) : les commandes passent sur plusieurs lignes. Les menus de rythmes, de presets et de sons se repositionnent dans la fenêtre lors d’un redimensionnement.
+- [x] **Validation** : Chromium à 320, 390, 768, 1024 et 1440 px avec contrôle de l’alignement, des débordements, des menus, des zones de frappe et de la forme d’onde avec MP3. `npm run check:syntax` et `npm test` passent. Aucun changement serveur.
+
+---
+
 
 ## Notes
 

@@ -30,7 +30,7 @@
 - [x] **Thème sombre & Responsive** :
   - [x] Cohérence graphique avec `css/styles.css` (palette sombre #0f1115 / #15181f, accents néon/or/cuivre).
   - [x] Disposition en 2 blocs principaux (Séquenceur en haut, Batterie vue du dessus en bas).
-  - [x] Media queries `≤ 900px` et `≤ 560px` (responsive mobile, pads réagencés).
+  - [x] En-tête et grille adaptatifs. Sur téléphone, les instruments restent visibles pendant le défilement des pas et la batterie se redimensionne sans déplacer les zones de frappe. Voir le §7.1.
 - [x] **Matrice de pas (Step Sequencer UI)** :
   - [x] Grille 9 pistes × 16 pas avec séparation visuelle des 4 temps (groupes de 4 doubles-croches via `.step:nth-child(4n+1)`).
   - [x] Styles des boutons de pas (état inactif, actif/allumé `.active`, surbrillance du playhead `.playing`).
@@ -234,12 +234,13 @@ Validation de la mise en page : avec un MP3 chargé à 1 440 px de largeur dans 
   - [x] Sauvegarde dans `localStorage` au changement (`setPadMode` / `setPadSample`).
   - [x] Restauration au boot (`loadPadConfigFromStorage`) avant `initGrid` / `initDrumKit`.
 
-### 7.1 Bugfixes layout 2 colonnes + alignement instrument/piste (2026-09-03)
+### 7.1 Mise en page responsive et alignement des pistes
 
-- [x] **Variables CSS partagées `:root` `--seq-row-height: 44px`, `--seq-row-gap: 6px`, `--seq-grid-width: 900px`** : une seule source de vérité (hauteur, gap, largeur) → les 9 lignes de gauche alignées au pixel près avec les 9 lignes de droite.
-- [x] **`.step-row` adopte `grid-template-columns: repeat(16, 1fr)`** (plus `calc(900px / 16)`) : 16 colonnes = 100% de `.steps-col` (900px), parfaitement superposées au `.drum-kit-stage` (900px) en dessous.
-- [x] **`.step-row .step` vire `aspect-ratio: 1` → `auto`** + `overflow: hidden` : cellule fait 100% du grid cell (~52×44px) au lieu de forcer 52×52 qui débordait → plus de chevauchement des rows.
-- [x] **`.drum-kit-stage` calé sur `var(--seq-grid-width)`** : batterie strictement alignée sous le bloc des 16 steps.
+- [x] **Colonnes et lignes partagées** : la largeur des instruments et l’écart entre colonnes sont communs à la grille et à la piste audio ; les neuf lignes d’instruments et de pas partagent la même hauteur et le même espacement. Sur écran large, forme d’onde et batterie s’alignent sous les pas.
+- [x] **Écrans étroits (≤ 700 px)** : seuls les pas défilent horizontalement. La colonne des instruments reste visible ; la forme d’onde passe sous ses commandes et la batterie occupe la largeur utile sans recadrage. Les zones de frappe conservent leurs coordonnées relatives.
+- [x] **Commandes supérieures** : l’en-tête revient à la ligne et les menus ouverts se repositionnent dans la fenêtre au redimensionnement.
+
+Suivi et résultats de validation : [tâche 23](piped-enhancement-tasks-list.md#23-mise-en-page-responsive-du-séquenceur-x).
 
 ### 7.2 Bugfixes dropdowns de choix d'instrument + son du séquenceur (2026-09-03)
 
@@ -281,7 +282,7 @@ Validation de la mise en page : avec un MP3 chargé à 1 440 px de largeur dans 
 - [x] **Vérifications fonctionnelles** :
   - [x] Test en `file://` : la page se charge mais **Tone.js nécessite un contexte sécurisé** — selon les navigateurs, `file://` peut bloquer certaines features Web Audio. Recommandé : passer par le serveur `http://127.0.0.1:5400/sequencer`.
   - [x] Test via serveur local Express : `http://127.0.0.1:5400/sequencer` → 200 OK, tous les assets servis, séquenceur fonctionnel.
-  - [x] Validation responsive : media queries `≤ 900px` (header centré) et `≤ 560px` (pads redimensionnés).
+  - [x] Validation responsive dans Chromium à 320, 390, 768, 1024 et 1440 px : grille alignée, menus visibles, zones de frappe stables et forme d’onde avec MP3 chargé.
 - [x] **Documentation utilisateur** :
   - [x] Mise à jour du `README.md` et `README.fr.md` mentionnant la boîte à rythmes / séquenceur, les contrôles par piste (Volume/Mute/Solo), les boutons Clear/Randomize, les presets d'usine, le menu Rythmes Musicca.
   - [x] `SECURITY.md` créé (justification CSP, `worker-src 'self' blob:`, etc.).

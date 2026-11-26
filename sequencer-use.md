@@ -1,51 +1,42 @@
 # 🥁 Sequencer & Drum Machine — User Guide
 
-The Sequencer is an integrated module of the YT Music Web Mixer that transforms your browser into a full-featured drum machine. It combines a step-by-step programming matrix with an interactive drum kit interface.
+Open **🥁 Sequencer** from the Mixer header, or go to `http://127.0.0.1:5400/sequencer` while the local server is running.
 
-## 🚀 How to Access
-From the main Mixer page, click the **🥁 Sequencer** button in the header to open the interface.
+## 🖼️ Interface overview
 
----
+![Drum sequencer with a 16-step grid, the oh-yeah.mp3 audio waveform, and the interactive drum kit](sequencer-ui.png)
 
-## 🖼️ UI Overview
+From top to bottom: transport and presets, drum grid, audio track with waveform, and interactive drum kit. On wide screens, the audio controls sit below the instrument controls, and the waveform and drum kit align with the steps. On phones, swipe the steps horizontally to reach the end of the grid; the instrument controls stay visible. The waveform stacks below the audio controls, and the kit fits the page without cropping.
 
-![Sequencer Interface](sequencer-ui.png)
+## 1. Program a drum pattern
 
-*(Legend: From top to bottom $\rightarrow$ Transport & Presets $\rightarrow$ Programming Matrix $\rightarrow$ Interactive Drum Kit)*
+- Click any cell in the **9-track × 16-step** grid to toggle a hit. Orange marks active steps; blue marks the current playback step.
+- Set the tempo with **BPM** (40–240). **Volume Master** controls the overall volume. Drum tracks also have individual volume, mute and solo controls.
+- **Play/Pause** starts or pauses playback. **Stop** returns to the first step. **Clear** empties the grid; **Randomize** generates a new pattern.
+- **Rythmes** loads Musicca patterns and **Presets** loads factory patterns. Presets can change the grid, BPM and swing. Click **Sauvegarder** to name and save your rhythm; find it again under **Mes rythmes** in the **Rythmes** menu.
 
----
+## 2. Play a local audio file alongside the drums
 
-## 🎛️ Feature Guide
+1. In **Piste audio** below the grid, click **Charger** or drop an MP3 or another audio file your browser can decode (up to 20 MiB).
+2. The waveform initially shows the entire file as the selected passage. Drag the start marker above the waveform and the end marker below it to trim the passage. Pause or stop playback before moving the markers.
+3. Leave **Boucler** on to repeat the passage, or turn it off to play the passage once. Use **Play/Pause** and **Stop** at the top: they control both the drums and audio. Pause keeps the current position; Stop takes the audio back to the start marker.
+4. Click **×** to remove the file. It stays in the browser until you reload the page and is never uploaded.
 
-### 1. The Step Sequencer Matrix
-The grid allows you to compose your own rhythms over 16 steps (sixteenth notes).
+The audio track does not replace any drum sound. It plays at its original speed, without automatic matching to the drum BPM.
 
-- **Programming**: Click a cell to activate or deactivate a note. A cell lit up in blue will be triggered when the playhead passes over it.
-- **Tracks**: You have 9 instruments available (Kick, Snare, Hats, Toms, Crash, Ride).
-- **Playhead**: The yellow cursor indicates the current playback position in real-time.
-- **BPM**: Adjust the rhythm speed using the slider (from 40 to 240 BPM).
+## 3. Play the interactive kit
 
-### 2. The Interactive Drum Kit (Top-View)
-Below the grid, you'll find a top-down view of your drum kit.
+Click a drum or cymbal to trigger it directly. You can also use the keyboard:
 
-- **Direct Hit**: Click on a drum or cymbal to trigger the sound instantly.
-- **Keyboard Shortcuts**: Play like a pro using your keyboard:
-  - `B` or `Space` $\rightarrow$ Bass Drum (Kick)
-  - `S` $\rightarrow$ Snare Drum
-  - `H` $\rightarrow$ Hi-hat
-  - `T`/`Y`/`G` $\rightarrow$ Toms (High, Mid, Low)
-  - `C` $\rightarrow$ Crash
-  - `R` $\rightarrow$ Ride
-- **Hi-hat Pedal**: Click the pedal (bottom-left) to toggle between **UP** (open) and **DOWN** (closed) states. This modifies the hi-hat sound, whether triggered via the grid or the keyboard.
+- `B` or `Space`: kick
+- `S`: snare
+- `H`: hi-hat
+- `T` / `Y` / `G`: high, mid and low toms
+- `C`: crash
+- `R`: ride
 
-### 3. "Rhythms" Presets
-Don't start from scratch! Use the pre-defined rhythms inspired by the most common genres.
+Click the hi-hat pedal to switch between **UP** (open) and **DOWN** (closed). The pedal changes the hi-hat state without playing a hit itself.
 
-- **Rhythms Menu**: Click the **Rhythms ▾** button to open the dropdown menu.
-- **Selection**: Choose from various styles (Pop rock, Jazz, Funk, Disco, Hip-hop, Heavy metal).
-- **Impact**: Loading a preset automatically adjusts the grid, the BPM, and the swing mode (specifically for Jazz).
+## 4. Change a drum sound
 
-### 4. Sound Customization
-Each track has a configuration menu:
-- **Synthesis**: Sound generated in real-time by Tone.js.
-- **Samples**: Use high-quality WAV files (Acoustic or Electronic kits).
+Use the sound button on the right of a drum track to choose a Tone.js synth or a built-in WAV sample from the Acoustic or Electronic kit. To play your own file alongside the pattern, use the separate **Piste audio** instead.

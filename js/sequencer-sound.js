@@ -184,18 +184,14 @@ function buildTrackSoundToggle(track) {
 
     b.addEventListener('click', (e) => {
         e.stopPropagation();
-        document.querySelectorAll('.track-sound-menu').forEach((m) => { m.hidden = true; });
+        document.querySelectorAll('.track-sound-menu').forEach((m) => { if (m !== menu) m.hidden = true; });
         document.querySelectorAll('.track-sound-toggle.menu-open').forEach((tb) => { tb.classList.remove('menu-open'); });
         menu.hidden = !menu.hidden;
         b.classList.toggle('menu-open', !menu.hidden);
         menu.innerHTML = '';
         populateSoundMenu(menu, track.note, closeMenu);
         if (!menu.hidden) {
-            const r = b.getBoundingClientRect();
-            menu.style.position = 'fixed';
-            menu.style.top = (r.bottom + 4) + 'px';
-            menu.style.left = r.left + 'px';
-            menu.style.minWidth = Math.max(r.width, 180) + 'px';
+            positionSequencerMenu(b, menu);
             setTimeout(() => {
                 document.addEventListener('click', onDocClick, true);
                 document.addEventListener('keydown', onKey, true);

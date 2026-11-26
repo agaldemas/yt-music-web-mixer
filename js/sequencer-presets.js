@@ -148,12 +148,8 @@ function initRythmesMenu() {
         const willOpen = menu.hidden;
         if (willOpen) {
             populateRythmesMenu();
-            const r = btn.getBoundingClientRect();
-            menu.style.position = 'fixed';
-            menu.style.top = (r.bottom + 4) + 'px';
-            menu.style.left = r.left + 'px';
-            menu.style.minWidth = Math.max(r.width, 220) + 'px';
             menu.hidden = false;
+            positionSequencerMenu(btn, menu);
             btn.classList.add('menu-open');
             btn.setAttribute('aria-expanded', 'true');
             setTimeout(() => {
@@ -279,12 +275,8 @@ function initFactoryPresetsMenu() {
         const willOpen = menu.hidden;
         if (willOpen) {
             populateFactoryMenu();
-            const r = btn.getBoundingClientRect();
-            menu.style.position = 'fixed';
-            menu.style.top = (r.bottom + 4) + 'px';
-            menu.style.left = r.left + 'px';
-            menu.style.minWidth = Math.max(r.width, 220) + 'px';
             menu.hidden = false;
+            positionSequencerMenu(btn, menu);
             btn.classList.add('menu-open');
             btn.setAttribute('aria-expanded', 'true');
             setTimeout(() => {
