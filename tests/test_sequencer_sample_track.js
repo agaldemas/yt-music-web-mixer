@@ -32,6 +32,7 @@ async function run() {
                 }),
             }),
         };
+        w.eval(read('js/track-waveform.js'));
         w.eval(read('js/sequencer-sample-track.js'));
         await new Promise(resolve => w.addEventListener('DOMContentLoaded', resolve, { once: true }));
         async function drop(name, size) {
@@ -44,6 +45,7 @@ async function run() {
         assert.equal(get('sample-name')?.textContent, 'boucle.mp3');
         assert.equal(get('sample-status').textContent, '');
         assert.equal(get('sample-end-time').textContent, '0:04,00');
+        assert.match(get('sample-peaks').getAttribute('d'), /M375\.00 -2\.00V102\.00/);
         assert.equal(starts.length, 0);
         const axis = get('sample-timeline');
         axis.getBoundingClientRect = () => ({ left: 50, width: 400 });

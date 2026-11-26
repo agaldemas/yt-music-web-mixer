@@ -2,30 +2,6 @@
 // fournissent la même horloge Web Audio que les frappes de la batterie.
 (() => {
     const MAX_FILE_SIZE = 20 * 1024 * 1024;
-    const WAVEFORM_BARS = 600;
-
-    function waveformPath(buffer) {
-        const count = Math.min(buffer.length, WAVEFORM_BARS);
-        const peaks = new Float32Array(count);
-        for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-            const samples = buffer.getChannelData(channel);
-            for (let bar = 0, from = 0; bar < count; bar++) {
-                const to = Math.floor((bar + 1) * samples.length / count);
-                let peak = peaks[bar];
-                for (let i = from; i < to; i++) peak = Math.max(peak, Math.abs(samples[i]));
-                peaks[bar] = peak;
-                from = to;
-            }
-        }
-        const maxPeak = Math.max(...peaks, 0.0001);
-        return Array.from(peaks, (peak, bar) => {
-            const x = ((bar + 0.5) * WAVEFORM_BARS / count).toFixed(2);
-            // Normalise le morceau pour que son pic touche la zone utile :
-            // le silence vertical doit venir des marqueurs, pas du niveau du fichier.
-            const height = Math.max(0.6, (peak / maxPeak) * 52);
-            return `M${x} ${(50 - height).toFixed(2)}V${(50 + height).toFixed(2)}`;
-        }).join('');
-    }
 
     function formatTime(seconds) {
         const ticks = Math.round(seconds * 100);
@@ -177,13 +153,12 @@
             try {
                 const buffer = await Tone.getContext().decodeAudioData(await file.arrayBuffer());
                 if (id !== importId) return;
-                const path = waveformPath(buffer);
+                window.TrackWaveform.render(peaks, buffer, { halfHeight: 52 });
                 cancelDrag();
                 stopVoice(Tone.immediate());
                 elapsed = 0;
                 clip = { buffer, start: 0, end: buffer.duration };
                 name.textContent = name.title = file.name;
-                peaks.setAttribute('d', path);
                 duration.textContent = formatTime(buffer.duration);
                 renderBounds();
                 empty.hidden = true;
@@ -226,7 +201,7 @@
             remove.disabled = true;
             name.textContent = initialName;
             name.removeAttribute('title');
-            peaks.removeAttribute('d');
+            window.TrackWaveform.render(peaks, null);
             timeline.hidden = true;
             empty.hidden = false;
             show('');
